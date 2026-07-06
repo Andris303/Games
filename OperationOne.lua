@@ -168,9 +168,9 @@ local function Render()
         if inst:IsA("Model") and inst.PrimaryPart then
             if not inst.PrimaryPart then continue end
             if not inst.PrimaryPart:IsA("Part") and not inst.PrimaryPart:IsA("UnionOperation") then continue end
-            --if inst:FindFirstChild("Owner") then
-            --    if inst.Owner:IsA("BillboardGui") then continue end
-            --end
+            if inst:FindFirstChild("Owner") then
+                if inst.Owner:IsA("BillboardGui") then continue end
+            end
 
             local Continue = false
             for _, v in GadgetWhitelist do
