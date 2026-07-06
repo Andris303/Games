@@ -144,12 +144,11 @@ local function PostLocal()
     Timer = os.clock()
 
     for ID, inst in _G.ESPList do
+		if inst.Name == "LocalViewmodel" then continue end
         if not inst or not inst.Parent then
             ESP.RemovePlayer(ID)
 			continue
 		end
-		if inst.Name == "LocalViewmodel" then continue end
-
 		if type(inst:GetChildren()) == "table" then
 			local Tool
 			for _, part in inst:GetChildren() do
