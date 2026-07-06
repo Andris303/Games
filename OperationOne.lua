@@ -79,7 +79,7 @@ local function Encoder(String)
 end
 
 local function ColorGun(inst)
-    task.wait(.5)
+    task.wait(.7)
 	if inst:IsA("UnionOperation") or inst:IsA("Part") then
 		memory.writei32(inst, Color3Offset, Encoder(BaseColor))
 	end
@@ -199,6 +199,25 @@ local function Render()
     if type(workspace:GetChildren()) ~= "table" then return end
 
     for _, inst in workspace:GetChildren() do
+		if inst:IsA("Model") then
+			local Map = inst:FindFirstChildOfClass("Folder")
+			if Map then
+				if Map:FindFirstChild("DefaultCameras") then
+					if type(Map.DefaultCameras:GetChildren()) == "table" then
+						for _, part in Map.DefaultCameras:GetChildren() do
+							if part:GetAttribute("Disabled") == "false" and part:FindFirstChild("Cam") and not part:FindFirstChild("Owner") then
+								HLib.Highlight(part.Cam, HighlightColor, 0.2, 0.8, 1)
+								local Position, Visible = Camera:WorldToScreenPoint(part.Cam.Position)
+								if Visible then
+									local NewPos = Vector2.new(Position.x, Position.y - 6.5)
+									DrawingImmediate.OutlinedText(NewPos, 13, TextColor, 1, "Hacked Camera", true)
+								end
+							end
+						end
+					end
+				end
+			end
+        end
         if inst:IsA("Model") and inst.PrimaryPart then
             if not inst.PrimaryPart then continue end
             if not inst.PrimaryPart:IsA("Part") and not inst.PrimaryPart:IsA("UnionOperation") then continue end
@@ -226,7 +245,7 @@ local function Render()
                 local NewPos = Vector2.new(Position.x, Position.y - 6.5)
                 DrawingImmediate.OutlinedText(NewPos, 13, TextColor, 1, AddSpaces(inst.Name), true)
             end
-        end
+		end
     end
 end
 
@@ -239,3 +258,4 @@ if Color3Offset ~= 0 then
 end
 RunService.PostLocal:Connect(PostLocal)
 RunService.Render:Connect(Render)
+
