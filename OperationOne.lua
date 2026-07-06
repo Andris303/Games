@@ -146,18 +146,48 @@ local function PostLocal()
     for ID, inst in _G.ESPList do
         if not inst or not inst.Parent then
             ESP.RemovePlayer(ID)
+		else
+			if type(inst:GetChildren()) == "table" then
+				local Tool
+				for _, part in inst:GetChildren() do
+					if part:GetAttribute("loadout_type") then
+						Tool = part
+					end
+				end
+				if Tool then
+					if _G.ESPData[ID]["Toolname"] ~= Tool.Name then
+						print(_G.ESPData[ID]["Toolname"], Tool.Name)
+						--_G.ESPList = {}
+						--clear_model_data()
+						_G.ESPData[ID]["Toolname"] = Tool.Name
+						ESP.RemovePlayer(ID)
+					end
+				end
+			end
         end
     end
 
     for _, inst in workspace.Viewmodels:GetChildren() do
         if not inst or not inst.Parent then continue end
 
+		local TeamName = "Enemy"
         if not inst:FindFirstChild("head") then continue end
-        if inst.head:FindFirstChild("Username") then continue end
+        if inst.head:FindFirstChild("Username") then
+			TeamName = "LocalPlayer"
+			continue
+		end
+
+		local ToolName = "None"
+		for _, part in inst:GetChildren() do
+			if part:GetAttribute("loadout_type") then
+				ToolName = part.Name
+			end
+		end
+
         if inst.Name == "LocalViewmodel" then continue end
         if not inst:FindFirstChildOfClass("Model") then continue end
 
-        ESP.AddPlayer(inst, false, nil, nil, nil, nil, nil, nil, nil, true)
+        ESP.AddPlayer(inst, false, nil, nil, nil, nil, nil, TeamName, ToolName, true)
     end
 end
 
@@ -171,6 +201,11 @@ local function Render()
             if inst:FindFirstChild("Owner") then
                 if inst.Owner:IsA("BillboardGui") then continue end
             end
+
+			if inst.Name == "Defuser" then
+				if not inst.PrimaryPart then continue end
+				if inst.PrimaryPart:FindFirstChild("DefuserFlag") then continue end
+			end
 
             local Continue = false
             for _, v in GadgetWhitelist do
@@ -198,6 +233,5 @@ print("Loaded")
 if Color3Offset ~= 0 then
     RunService.PreLocal:Connect(PreLocal)
 end
-
 RunService.PostLocal:Connect(PostLocal)
 RunService.Render:Connect(Render)
