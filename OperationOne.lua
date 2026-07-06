@@ -1,3 +1,6 @@
+--!optimize 2
+--!strict
+
 local BaseColor = _G.BaseColor or "8479D9"
 local AttachmentColor = _G.AttachmentColor or "B5A8EF"
 local Color3Offset = _G.Color3Offset or 0 -- Offset is 0x148 as of version-5cf2272675e145f5
