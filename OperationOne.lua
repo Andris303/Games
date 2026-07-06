@@ -156,9 +156,6 @@ local function PostLocal()
 				end
 				if Tool then
 					if _G.ESPData[ID]["Toolname"] ~= Tool.Name then
-						print(_G.ESPData[ID]["Toolname"], Tool.Name)
-						--_G.ESPList = {}
-						--clear_model_data()
 						_G.ESPData[ID]["Toolname"] = Tool.Name
 						ESP.RemovePlayer(ID)
 					end
