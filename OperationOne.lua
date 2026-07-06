@@ -14,11 +14,16 @@ local RunService = game:GetService("RunService")
 local Timer = 0
 local ColoredPrimary
 local ColoredSecondary
+local PlayerList
+local ModList = {"_1"}
 
 local GadgetWhitelist = {"Defuser", "ImpactGrenade", "DeployableShield", "BreachCharge", "Drone", "FragGrenade", "SmokeGrenade", "StunGrenade", "ShockBattery", "EMPGrenade", "RemoteC4", "IncendiaryGrenade", "ToxicCharge", "StickyCamera", "ProximityAlarm", "HardBreachCharge", "DeployableShield", "Claymore", "BarbedWire", "BulletproofCamera", "ThermiteCharge", "SignalDisruptor"}
 
+_G.PixelOffset = 5
+_G.Outline = true
 local ESP = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/ESP.lua"))()
 local HLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))()
+local Text = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Text.lua"))()
 
 _G.CustomParts = {
     RigType = "R15",
@@ -99,6 +104,35 @@ local function PreLocal()
 	local Inventory = LocalPlayer:FindFirstChild("Items")
 	local Primary
 	local Secondary
+
+	if workspace:GetAttribute("Gamemode") then
+		if not PlayerList then
+			PlayerList = {}
+			for _, inst in Players:GetChildren() do
+				table.insert(PlayerList, inst.Name)
+			end
+		else
+			for _, inst in Players:GetChildren() do
+				if not table.find(PlayerList, inst.Name) then
+					table.insert(PlayerList, inst.Name)
+					table.insert(ModList, inst.Name)
+					if inst:GetAttribute("Team") ~= "Blue" and inst:GetAttribute("Team") ~= "Red" then
+						Text.Add(inst.Name, "Moderator \"" .. inst.Name .. "\" ingame.", Color3.fromRGB(255, 255, 255))
+						send_notification("Moderator \"" .. inst.Name .. "\" joined." , "warning")
+					end
+				end
+			end
+			for i, inst in ModList do
+				if not Players:FindFirstChild(inst) then
+					table.remove(ModList, i)
+					if inst ~= "_1" then
+						Text.Remove(inst)
+						send_notification("Moderator \"" .. inst .. "\" left." , "warning")
+					end
+				end
+			end
+		end
+	end
 
 	if LocalModel and type(LocalModel:GetChildren()) == "table" then
 		for _, inst in LocalModel:GetChildren() do
@@ -258,4 +292,3 @@ if Color3Offset ~= 0 then
 end
 RunService.PostLocal:Connect(PostLocal)
 RunService.Render:Connect(Render)
-
