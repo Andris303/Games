@@ -1,9 +1,9 @@
 local BaseColor = _G.BaseColor or "8479D9"
 local AttachmentColor = _G.AttachmentColor or "B5A8EF"
-local Color3Offset = _G.Color3Offset or 0 -- Offset is 0x148 as of version-5cf2272675e145f5
+local Color3Offset = _G.Color3Offset or 0x148 -- Offset is 0x148 as of version-5cf2272675e145f5
 local HighlightColor = _G.HighlightColor or Color3.fromRGB(16, 167, 234)
 local TextColor = _G.TextColor or Color3.fromRGB(16, 167, 234)
-
+local TeammateESP = _G.TeammateESP or false
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
@@ -76,7 +76,7 @@ local function Encoder(String)
 end
 
 local function ColorGun(inst)
-    task.wait(.3)
+    task.wait(.5)
 	if inst:IsA("UnionOperation") or inst:IsA("Part") then
 		memory.writei32(inst, Color3Offset, Encoder(BaseColor))
 	end
@@ -166,12 +166,13 @@ local function PostLocal()
 
     for _, inst in workspace.Viewmodels:GetChildren() do
         if not inst or not inst.Parent then continue end
+		if not inst:FindFirstChildOfClass("Model") then continue end
 
-		local TeamName = "Enemy"
+		local TeamName = "Enemies"
         if not inst:FindFirstChild("head") then continue end
         if inst.head:FindFirstChild("Username") then
-			TeamName = "LocalPlayer"
-			continue
+			if not TeammateESP then continue end
+			TeamName = "Friendly"
 		end
 
 		local ToolName = "None"
@@ -181,10 +182,12 @@ local function PostLocal()
 			end
 		end
 
-        if inst.Name == "LocalViewmodel" then continue end
-        if not inst:FindFirstChildOfClass("Model") then continue end
+		local IsLocal = false
+        if inst.Name == "LocalViewmodel" then
+			IsLocal = true
+		end
 
-        ESP.AddPlayer(inst, false, nil, nil, nil, nil, nil, TeamName, ToolName, true)
+        ESP.AddPlayer(inst, IsLocal, nil, nil, nil, nil, nil, TeamName, ToolName, true)
     end
 end
 
