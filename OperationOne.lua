@@ -115,8 +115,8 @@ local function PreLocal()
 			for _, inst in Players:GetChildren() do
 				if not table.find(PlayerList, inst.Name) then
 					table.insert(PlayerList, inst.Name)
-					table.insert(ModList, inst.Name)
 					if inst:GetAttribute("Team") ~= "Blue" and inst:GetAttribute("Team") ~= "Red" then
+						table.insert(ModList, inst.Name)
 						Text.Add(inst.Name, "Moderator \"" .. inst.Name .. "\" ingame.", Color3.fromRGB(255, 255, 255))
 						send_notification("Moderator \"" .. inst.Name .. "\" joined." , "warning")
 					end
@@ -292,3 +292,4 @@ if Color3Offset ~= 0 then
 end
 RunService.PostLocal:Connect(PostLocal)
 RunService.Render:Connect(Render)
+
