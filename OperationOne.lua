@@ -25,7 +25,7 @@ local ESP = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303
 local HLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))()
 local Text = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Text.lua"))()
 
-G.CustomParts = {
+_G.CustomParts = {
     RigType = "R15",
     HumanoidRootPart = "torso",
     Head = "head",
