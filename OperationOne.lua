@@ -16,7 +16,7 @@ local ColoredPrimary
 local ColoredSecondary
 local PlayerList
 local ModList = {"_1"}
-
+local Mods = {"lustin2800", "mmmmmonster", "RazvanWar28", "Fastesfern", "poipser", "Slender", "PandoraSkywalk2r", "AimDynamics", "Bunlawgs", "turner22", "Blazzy_Blaz",}
 local GadgetWhitelist = {"Defuser", "ImpactGrenade", "DeployableShield", "BreachCharge", "Drone", "FragGrenade", "SmokeGrenade", "StunGrenade", "ShockBattery", "EMPGrenade", "RemoteC4", "IncendiaryGrenade", "ToxicCharge", "StickyCamera", "ProximityAlarm", "HardBreachCharge", "DeployableShield", "Claymore", "BarbedWire", "BulletproofCamera", "ThermiteCharge", "SignalDisruptor"}
 
 _G.PixelOffset = 5
@@ -99,6 +99,28 @@ local function ColorGun(inst)
 	end
 end
 
+local function ModelToPlayer(inst)
+	if not inst or not inst.Parent then return nil end
+	if not inst:FindFirstChild("torso") then return nil end
+	for _, plr in Players:GetChildren() do
+		local Char = plr.Character
+		if Char then
+			if Char:FindFirstChild("collision") then
+				if not Char:FindFirstChild("Humanoid") then continue end
+				local p = Char.collision.Position
+				local ModelPos = inst.torso.Position
+				CharPos = Vector3.new(p.x + .02, p.y + .25, p.z + .1)
+				local Desync = math.floor(vector.magnitude(ModelPos - CharPos) * 100) / 100
+
+				if Desync < .7 then
+					return plr
+				end
+			end
+		end
+	end
+	return nil
+end
+
 local function PreLocal()
 	local LocalModel = workspace.Viewmodels:FindFirstChild("LocalViewmodel")
 	local Inventory = LocalPlayer:FindFirstChild("Items")
@@ -115,7 +137,11 @@ local function PreLocal()
 			for _, inst in Players:GetChildren() do
 				if not table.find(PlayerList, inst.Name) then
 					table.insert(PlayerList, inst.Name)
-					if inst:GetAttribute("Team") ~= "Blue" and inst:GetAttribute("Team") ~= "Red" then
+					local BAdd = false
+					for _, mod in Mods do
+						if inst.Name == mod then BAdd = true end
+					end
+					if BAdd then
 						table.insert(ModList, inst.Name)
 						Text.Add(inst.Name, "Moderator \"" .. inst.Name .. "\" ingame.", Color3.fromRGB(255, 255, 255))
 						send_notification("Moderator \"" .. inst.Name .. "\" joined." , "warning")
@@ -197,8 +223,12 @@ local function PostLocal()
 				if _G.ESPData[ID]["Toolname"] ~= Tool.Name then
 					_G.ESPData[ID]["Toolname"] = Tool.Name
 					ESP.RemovePlayer(ID)
+					continue
 				end
 			end
+		end
+		if _G.ESPHealths[ID] ~= _G.ESPData[ID].Humanoid.Health then
+			ESP.EditHealth(ID, math.floor(_G.ESPData[ID].Humanoid.Health))
 		end
     end
 
@@ -225,7 +255,16 @@ local function PostLocal()
 			IsLocal = true
 		end
 
-        ESP.AddPlayer(inst, IsLocal, nil, nil, nil, nil, nil, TeamName, ToolName, true)
+		local Player = ModelToPlayer(inst)
+		if Player then
+			local Human = Player.Character.Humanoid
+			local Health = Human.Health
+			local MaxHealth = Human.MaxHealth
+			local Username = Player.Name
+			local DisplayName = Player.DisplayName
+			local UserId = Player.UserId
+			ESP.AddPlayer(inst, IsLocal, Health, MaxHealth, Username, DisplayName, UserId, TeamName, ToolName, true, Human)
+		end
     end
 end
 
