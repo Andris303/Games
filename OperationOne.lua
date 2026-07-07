@@ -25,7 +25,7 @@ local ESP = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303
 local HLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))()
 local Text = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Text.lua"))()
 
-_G.CustomParts = {
+G.CustomParts = {
     RigType = "R15",
     HumanoidRootPart = "torso",
     Head = "head",
@@ -102,9 +102,9 @@ end
 local function ModelToPlayer(inst)
 	if not inst or not inst.Parent then return nil end
 	if not inst:FindFirstChild("torso") then return nil end
-	for _, plr in Players:GetChildren() do
-		local Char = plr.Character
-		if Char then
+	for _, Char in workspace:GetChildren() do
+		local IsPlr = Char:GetAttribute("Team")
+		if IsPlr then
 			if Char:FindFirstChild("collision") then
 				if not Char:FindFirstChild("Humanoid") then continue end
 				local p = Char.collision.Position
@@ -112,8 +112,8 @@ local function ModelToPlayer(inst)
 				CharPos = Vector3.new(p.x + .02, p.y + .25, p.z + .1)
 				local Desync = math.floor(vector.magnitude(ModelPos - CharPos) * 100) / 100
 
-				if Desync < .7 then
-					return plr
+				if Desync < 1.3 then
+					return Players:FindFirstChild(Char.Name)
 				end
 			end
 		end
@@ -264,6 +264,7 @@ local function PostLocal()
 			local DisplayName = Player.DisplayName
 			local UserId = Player.UserId
 			ESP.AddPlayer(inst, IsLocal, Health, MaxHealth, Username, DisplayName, UserId, TeamName, ToolName, true, Human)
+			continue
 		end
     end
 end
@@ -331,4 +332,3 @@ if Color3Offset ~= 0 then
 end
 RunService.PostLocal:Connect(PostLocal)
 RunService.Render:Connect(Render)
-
