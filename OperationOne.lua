@@ -15,6 +15,9 @@ local Timer = 0
 local ColoredPrimary
 local ColoredSecondary
 local PlayerList
+local TempHealth = {}
+local MaxHealths = {}
+local Humanoids = {}
 local ModList = {"_1"}
 local Mods = {"lustin2800", "mmmmmonster", "RazvanWar28", "Fastesfern", "poipser", "Slender", "PandoraSkywalk2r", "AimDynamics", "Bunlawgs", "turner22", "Blazzy_Blaz",}
 local GadgetWhitelist = {"Defuser", "ImpactGrenade", "DeployableShield", "BreachCharge", "Drone", "FragGrenade", "SmokeGrenade", "StunGrenade", "ShockBattery", "EMPGrenade", "RemoteC4", "IncendiaryGrenade", "ToxicCharge", "StickyCamera", "ProximityAlarm", "HardBreachCharge", "DeployableShield", "Claymore", "BarbedWire", "BulletproofCamera", "ThermiteCharge", "SignalDisruptor"}
@@ -44,6 +47,11 @@ _G.CustomParts = {
     LeftLowerLeg = "leg2",
     LeftFoot = "leg2",
 }
+
+local function InstId(inst)
+    if not inst or not inst.Parent then return nil end
+    return tostring(tonumber(inst.Data))
+end
 
 local function AddSpaces(string)
 	local result = ""
@@ -209,6 +217,15 @@ local function PostLocal()
     for ID, inst in _G.ESPList do
 		if inst.Name == "LocalViewmodel" then continue end
         if not inst or not inst.Parent then
+			if TempHealth[InstId(inst)] then
+				TempHealth[InstId(inst)] = nil
+			end
+			if MaxHealths[InstId(inst)] then
+				MaxHealths[InstId(inst)] = nil
+			end
+			if Humanoids[InstId(inst)] then
+				Humanoids[InstId(inst)] = nil
+			end
             ESP.RemovePlayer(ID)
 			continue
 		end
@@ -222,17 +239,22 @@ local function PostLocal()
 			if Tool then
 				if _G.ESPData[ID]["Toolname"] ~= Tool.Name then
 					_G.ESPData[ID]["Toolname"] = Tool.Name
+					TempHealth[ID] = _G.ESPHealths[ID]
+					MaxHealths[ID] = Humanoids[ID].MaxHealth
 					ESP.RemovePlayer(ID)
 					continue
 				end
 			end
 		end
-		if _G.ESPHealths[ID] ~= _G.ESPData[ID].Humanoid.Health then
-			if _G.ESPData[ID].Humanoid.Health <= 0 then
+		if Humanoids[ID] and _G.ESPHealths[ID] ~= math.floor(Humanoids[ID].Health) then
+			if Humanoids[ID].Health <= 0 then
+				TempHealth[InstId(inst)] = nil
+				MaxHealths[InstId(inst)] = nil
+				Humanoids[InstId(inst)] = nil
 				ESP.RemovePlayer(ID)
 				continue
 			else
-				ESP.EditHealth(ID, math.floor(_G.ESPData[ID].Humanoid.Health))
+				ESP.EditHealth(ID, math.floor(Humanoids[ID].Health))
 			end
 		end
     end
@@ -261,13 +283,29 @@ local function PostLocal()
 		end
 
 		local Player = ModelToPlayer(inst)
-		if Player then
-			local Human = Player.Character.Humanoid
+		if Player and InstId(inst) then
+			local Human = Player.Character:FindFirstChild("Humanoid")
 			local Health = Human.Health
+			if Health <= 0 then continue end
 			local MaxHealth = Human.MaxHealth
+			if TempHealth[InstId(inst)] then
+				if TempHealth[InstId(inst)] > 0 then
+					Health = TempHealth[InstId(inst)]
+					MaxHealth = MaxHealths[InstId(inst)]
+					TempHealth[InstId(inst)] = nil
+				else
+					TempHealth[InstId(inst)] = nil
+					MaxHealths[InstId(inst)] = nil
+					Humanoids[InstId(inst)] = nil
+					ESP.RemovePlayer(ID)
+					continue
+				end
+			end
 			local Username = Player.Name
 			local DisplayName = Player.DisplayName
 			local UserId = Player.UserId
+			Humanoids[InstId(inst)] = Human
+			MaxHealths[InstId(inst)] = MaxHealth
 			ESP.AddPlayer(inst, IsLocal, Health, MaxHealth, Username, DisplayName, UserId, TeamName, ToolName, true, Human)
 			continue
 		end
