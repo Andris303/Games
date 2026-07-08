@@ -228,7 +228,12 @@ local function PostLocal()
 			end
 		end
 		if _G.ESPHealths[ID] ~= _G.ESPData[ID].Humanoid.Health then
-			ESP.EditHealth(ID, math.floor(_G.ESPData[ID].Humanoid.Health))
+			if _G.ESPData[ID].Humanoid.Health <= 0 then
+				ESP.RemovePlayer(ID)
+				continue
+			else
+				ESP.EditHealth(ID, math.floor(_G.ESPData[ID].Humanoid.Health))
+			end
 		end
     end
 
