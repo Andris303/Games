@@ -16,7 +16,6 @@ local ColoredPrimary
 local ColoredSecondary
 local PlayerList
 local TempHealth = {}
-local MaxHealths = {}
 local Humanoids = {}
 local ModList = {"_1"}
 local Mods = {"lustin2800", "mmmmmonster", "RazvanWar28", "Fastesfern", "poipser", "Slender", "PandoraSkywalk2r", "AimDynamics", "Bunlawgs", "turner22", "Blazzy_Blaz",}
@@ -220,9 +219,6 @@ local function PostLocal()
 			if TempHealth[InstId(inst)] then
 				TempHealth[InstId(inst)] = nil
 			end
-			if MaxHealths[InstId(inst)] then
-				MaxHealths[InstId(inst)] = nil
-			end
 			if Humanoids[InstId(inst)] then
 				Humanoids[InstId(inst)] = nil
 			end
@@ -240,7 +236,6 @@ local function PostLocal()
 				if _G.ESPData[ID]["Toolname"] ~= Tool.Name then
 					_G.ESPData[ID]["Toolname"] = Tool.Name
 					TempHealth[ID] = _G.ESPHealths[ID]
-					MaxHealths[ID] = Humanoids[ID].MaxHealth
 					ESP.RemovePlayer(ID)
 					continue
 				end
@@ -249,7 +244,6 @@ local function PostLocal()
 		if Humanoids[ID] and _G.ESPHealths[ID] ~= math.floor(Humanoids[ID].Health) then
 			if Humanoids[ID].Health <= 0 then
 				TempHealth[InstId(inst)] = nil
-				MaxHealths[InstId(inst)] = nil
 				Humanoids[InstId(inst)] = nil
 				ESP.RemovePlayer(ID)
 				continue
@@ -291,11 +285,9 @@ local function PostLocal()
 			if TempHealth[InstId(inst)] then
 				if TempHealth[InstId(inst)] > 0 then
 					Health = TempHealth[InstId(inst)]
-					MaxHealth = MaxHealths[InstId(inst)]
 					TempHealth[InstId(inst)] = nil
 				else
 					TempHealth[InstId(inst)] = nil
-					MaxHealths[InstId(inst)] = nil
 					Humanoids[InstId(inst)] = nil
 					ESP.RemovePlayer(ID)
 					continue
@@ -305,7 +297,6 @@ local function PostLocal()
 			local DisplayName = Player.DisplayName
 			local UserId = Player.UserId
 			Humanoids[InstId(inst)] = Human
-			MaxHealths[InstId(inst)] = MaxHealth
 			ESP.AddPlayer(inst, IsLocal, Health, MaxHealth, Username, DisplayName, UserId, TeamName, ToolName, true, Human)
 			continue
 		end
