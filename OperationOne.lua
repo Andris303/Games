@@ -112,7 +112,7 @@ local function ModelToPlayer(inst)
 	for _, Char in workspace:GetChildren() do
 		local IsPlr = Char:GetAttribute("Team")
 		if IsPlr then
-			if Char:FindFirstChild("collision") then
+			if Char:FindFirstChild("collision") and Char:FindFirstChild("Electronic") then
 				if not Char:FindFirstChild("Humanoid") then continue end
 				local p = Char.collision.Position
 				local ModelPos = inst.torso.Position
@@ -120,7 +120,7 @@ local function ModelToPlayer(inst)
 				local Desync = math.floor(vector.magnitude(ModelPos - CharPos) * 100) / 100
 
 				if Desync < 1.3 then
-					return Players:FindFirstChild(Char.Name)
+					return Players:FindFirstChild(Char.Name), Char
 				end
 			end
 		end
@@ -216,12 +216,6 @@ local function PostLocal()
     for ID, inst in _G.ESPList do
 		if inst.Name == "LocalViewmodel" then continue end
         if not inst or not inst.Parent then
-			if TempHealth[InstId(inst)] then
-				TempHealth[InstId(inst)] = nil
-			end
-			if Humanoids[InstId(inst)] then
-				Humanoids[InstId(inst)] = nil
-			end
             ESP.RemovePlayer(ID)
 			continue
 		end
@@ -243,8 +237,6 @@ local function PostLocal()
 		end
 		if Humanoids[ID] and _G.ESPHealths[ID] ~= math.floor(Humanoids[ID].Health) then
 			if Humanoids[ID].Health <= 0 then
-				TempHealth[InstId(inst)] = nil
-				Humanoids[InstId(inst)] = nil
 				ESP.RemovePlayer(ID)
 				continue
 			else
@@ -276,9 +268,9 @@ local function PostLocal()
 			IsLocal = true
 		end
 
-		local Player = ModelToPlayer(inst)
+		local Player, Char = ModelToPlayer(inst)
 		if Player and InstId(inst) then
-			local Human = Player.Character:FindFirstChild("Humanoid")
+			local Human = Char:FindFirstChild("Humanoid")
 			local Health = Human.Health
 			if Health <= 0 then continue end
 			local MaxHealth = Human.MaxHealth
