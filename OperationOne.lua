@@ -7,16 +7,21 @@ local Color3Offset = _G.Color3Offset or 0 -- Offset is 0x148 as of version-5cf22
 local HighlightColor = _G.HighlightColor or Color3.fromRGB(16, 167, 234)
 local TextColor = _G.TextColor or Color3.fromRGB(16, 167, 234)
 local TeammateESP = _G.TeammateESP or false
+local Keybind1 = _G.ProjTPKeybind or "OEM_1"
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 local RunService = game:GetService("RunService")
+local InputService = game:GetService("UserInputService")
 local Timer = 0
 local ColoredPrimary
 local ColoredSecondary
 local PlayerList
 local TempHealth = {}
 local Humanoids = {}
+local TweenObj = {}
+local BKeybind1 = false
+local CKeybind1 = false
 local ModList = {"_1"}
 local Mods = {"lustin2800", "mmmmmonster", "RazvanWar28", "Fastesfern", "poipser", "Slender", "PandoraSkywalk2r", "AimDynamics", "Bunlawgs", "turner22", "Blazzy_Blaz",}
 local GadgetWhitelist = {"Defuser", "ImpactGrenade", "DeployableShield", "BreachCharge", "Drone", "FragGrenade", "SmokeGrenade", "StunGrenade", "ShockBattery", "EMPGrenade", "RemoteC4", "IncendiaryGrenade", "ToxicCharge", "StickyCamera", "ProximityAlarm", "HardBreachCharge", "DeployableShield", "Claymore", "BarbedWire", "BulletproofCamera", "ThermiteCharge", "SignalDisruptor"}
@@ -128,6 +133,63 @@ local function ModelToPlayer(inst)
 	return nil
 end
 
+local function Tween(inst, goal, speed)
+    local LastTime = os.clock()
+
+    while true do
+        local dt = os.clock() - LastTime
+        LastTime = os.clock()
+
+        if not goal or not goal.Parent then break end
+        goalp = goal.Position
+
+        if not inst or not inst.Parent then break end
+        if inst.Parent.Parent ~= workspace then break end
+        local instp = inst.Position
+
+        local Direction = goalp - instp
+        local Distance = vector.magnitude(Direction)
+
+        if Distance <= speed * dt then
+            inst.Velocity = vector.zero
+            task.wait(.05)
+            inst.Position = goalp
+            task.wait(.05)
+        else
+            inst.Velocity = vector.zero
+            task.wait(.05)
+            inst.Position += vector.normalize(Direction) * speed * dt
+            task.wait(.05)
+        end
+    end
+
+    return
+end
+
+local function GetTargetPlayer()
+    local Viewmodels = workspace.Viewmodels
+    local ClosestPlayer
+    local ClosestDistance = 9e9
+
+    for _, inst in Viewmodels:GetChildren() do
+        if inst.Name ~= "LocalViewmodel" and inst:FindFirstChildOfClass("Model") and inst:FindFirstChild("head") and inst:FindFirstChild("torso") then
+            if inst.head:FindFirstChild("Username") then continue end
+            local v2pos, visible = Camera:WorldToScreenPoint(inst.torso.Position)
+            if visible then
+                local Mouse = InputService:GetMouseLocation()
+                local Distance = vector.magnitude(Vector2.new(v2pos.x, v2pos.y) - Vector2.new(Mouse.x, Mouse.y))
+
+                if Distance < ClosestDistance then
+                    ClosestDistance = Distance
+                    ClosestPlayer = inst.torso
+                end
+            end
+        end
+    end
+
+    return ClosestPlayer
+end
+
 local function PreLocal()
 	local LocalModel = workspace.Viewmodels:FindFirstChild("LocalViewmodel")
 	local Inventory = LocalPlayer:FindFirstChild("Items")
@@ -235,12 +297,12 @@ local function PostLocal()
 				end
 			end
 		end
-		if Humanoids[ID] and _G.ESPHealths[ID] ~= math.floor(Humanoids[ID].Health) then
+		if Humanoids[ID] and _G.ESPHealths[ID] ~= Humanoids[ID].Health then
 			if Humanoids[ID].Health <= 0 then
 				ESP.RemovePlayer(ID)
 				continue
 			else
-				ESP.EditHealth(ID, math.floor(Humanoids[ID].Health))
+				ESP.EditHealth(ID, Humanoids[ID].Health)
 			end
 		end
     end
@@ -292,6 +354,47 @@ local function PostLocal()
 			ESP.AddPlayer(inst, IsLocal, Health, MaxHealth, Username, DisplayName, UserId, TeamName, ToolName, true, Human)
 			continue
 		end
+    end
+
+	if table.find(getpressedkeys(), Keybind1) then
+        if not BKeybind1 and not CKeybind1 then
+            BKeybind1 = true
+            CKeybind1 = true
+            send_notification("Projectile TP | ON", "success")
+        elseif BKeybind1 and not CKeybind1 then
+            BKeybind1 = false
+            CKeybind1 = true
+            send_notification("Projectile TP | OFF", "warning")
+        end
+        return
+    end
+    CKeybind1 = false
+
+    if not BKeybind1 then return end
+
+    for _, inst in workspace:GetChildren() do
+        if inst.Name == "FragGrenade" or inst.Name == "IncendiaryGrenade" or inst.Name == "StunGrenade" or inst.Name == "SmokeGrenade" then
+            if TweenObj[InstId(inst)] then continue end
+            local Root = inst.PrimaryPart
+			local Char = LocalPlayer.Character
+			local hrp
+			if Char then
+				hrp = Char:FindFirstChild("HumanoidRootPart")
+			end
+            if Root and hrp then
+				local hp = hrp.Position
+                local p = Root.Position
+				if vector.magnitude(p - Vector3.new(hp.x, hp.y + 2, hp.z)) >= 5 then
+					TweenObj[InstId(inst)] = inst
+					continue
+				end
+                local Target = GetTargetPlayer()
+                if Target then
+                    TweenObj[InstId(inst)] = inst
+                    task.spawn(Tween, Root, Target, 300)
+                end
+            end
+        end
     end
 end
 
