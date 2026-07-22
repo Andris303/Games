@@ -3,7 +3,7 @@
 
 local BaseColor = _G.BaseColor or "8479D9"
 local AttachmentColor = _G.AttachmentColor or "B5A8EF"
-local Color3Offset = _G.Color3Offset or 0 -- Offset is 0x148 as of version-5cf2272675e145f5
+local Color3Offset = _G.Color3Offset or 0 -- Offset is 0x148 as of version-ddf02245bdbb428c
 local HighlightColor = _G.HighlightColor or Color3.fromRGB(16, 167, 234)
 local TextColor = _G.TextColor or Color3.fromRGB(16, 167, 234)
 local TeammateESP = _G.TeammateESP or false
@@ -24,7 +24,7 @@ local BKeybind1 = false
 local CKeybind1 = false
 local ModList = {"_1"}
 local Mods = {"lustin2800", "mmmmmonster", "RazvanWar28", "Fastesfern", "poipser", "Slender", "PandoraSkywalk2r", "AimDynamics", "Bunlawgs", "turner22", "Blazzy_Blaz",}
-local GadgetWhitelist = {"Defuser", "ImpactGrenade", "DeployableShield", "BreachCharge", "Drone", "FragGrenade", "SmokeGrenade", "StunGrenade", "ShockBattery", "EMPGrenade", "RemoteC4", "IncendiaryGrenade", "ToxicCharge", "StickyCamera", "ProximityAlarm", "HardBreachCharge", "DeployableShield", "Claymore", "BarbedWire", "BulletproofCamera", "ThermiteCharge", "SignalDisruptor"}
+local GadgetWhitelist = {"Defuser", "ImpactGrenade", "DeployableShield", "BreachCharge", "Drone", "FragGrenade", "SmokeGrenade", "StunGrenade", "ShockBattery", "EMPGrenade", "RemoteC4", "IncendiaryGrenade", "ToxicCharge", "StickyCamera", "ProximityAlarm", "HardBreachCharge", "DeployableShield", "Claymore", "BarbedWire", "BulletproofCamera", "ThermiteCharge", "SignalDisruptor", "NeedleMine"}
 
 _G.PixelOffset = 5
 _G.Outline = true
@@ -421,9 +421,15 @@ local function Render()
 				end
 			end
         end
-        if inst:IsA("Model") and inst.PrimaryPart then
-            if not inst.PrimaryPart then continue end
-            if not inst.PrimaryPart:IsA("Part") and not inst.PrimaryPart:IsA("UnionOperation") then continue end
+        if inst:IsA("Model") then
+			local PPart = inst.PrimaryPart
+			if inst.Name ~= "Claymore" then
+				if not PPart then continue end
+				if not PPart:IsA("Part") and not PPart:IsA("UnionOperation") then continue end
+			elseif inst:FindFirstChild("Root") then
+				PPart = inst.Root
+			end
+
             if inst:FindFirstChild("Owner") then
                 if inst.Owner:IsA("BillboardGui") then continue end
             end
@@ -439,11 +445,11 @@ local function Render()
             end
             if not Continue then continue end
 
-            if not inst.PrimaryPart then continue end
-            HLib.Highlight(inst.PrimaryPart, HighlightColor, 0.2, 0.8, 1)
+            if not PPart then continue end
+			HLib.Highlight(PPart, HighlightColor, 0.2, 0.8, 1)
 
-            if not inst.PrimaryPart then continue end
-            local Position, Visible = Camera:WorldToScreenPoint(inst.PrimaryPart.Position)
+            if not PPart then continue end
+            local Position, Visible = Camera:WorldToScreenPoint(PPart.Position)
             if Visible then
                 local NewPos = Vector2.new(Position.x, Position.y - 6.5)
                 DrawingImmediate.OutlinedText(NewPos, 13, TextColor, 1, AddSpaces(inst.Name), true)
