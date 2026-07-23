@@ -152,14 +152,14 @@ local function Tween(inst, goal, speed)
 
         if Distance <= speed * dt then
             inst.Velocity = vector.zero
-            task.wait(.05)
+            task.wait(.03)
             inst.Position = goalp
-            task.wait(.05)
+            task.wait(.03)
         else
             inst.Velocity = vector.zero
-            task.wait(.05)
+            task.wait(.03)
             inst.Position += vector.normalize(Direction) * speed * dt
-            task.wait(.05)
+            task.wait(.03)
         end
     end
 
