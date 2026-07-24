@@ -19,7 +19,7 @@ local GeneratorColor = Color3.fromRGB(234, 165, 16)
 
 local ExactSkipESP = {"PlacementRange", "BuildermanSentryEffectRange", "BuildermanDispenserEffectRange", "Spike", "EndPoint", "Footstep", "CollisionHitbox", "QueryHitbox", "HaxxedBlade", "HumanoidRootPart", "CollisionGuard", "TheThing", "ExpressionHolder", "NoclipDetector", "BasicSlash", "SubspaceCenter", "Firebrand", "Beam", "Tentacle", "VoidstarCrown"}
 local PartialSkipESP = {"Spray", "RespawnLocation"}
-local ExactKillerESP = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "Noli"}
+local ExactKillerESP = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "Noli", "VineModel", "GroundBulbModel"}
 local PartialKillerESP = {"JohnDoeTrail", "Shadows", "Puddle", "Shockwave"}
 local ExactSurvivorESP = {"BuildermanDispenser", "BuildermanSentry", "007n7", "Pizza", "GraffitiCL", "CrystalProjectile"}
 local PartialSurvivorESP = {"TaphTripwire", "SubspaceTripmine"}
@@ -170,14 +170,22 @@ local function ColorHandle(inst, ETable, PTable, color)
         if inst:IsA("BasePart") then
             Highlight(inst, color)
         else
-            for _, Part in ipairs(inst:GetChildren()) do
-                if Part:IsA("BasePart") then
-                    if table.find(ExactSkipESP, Part.Name) then continue end
-                    for _, val in ipairs(PartialSkipESP) do
-                        if string.find(Part.Name, val) then continue end
+            if inst.Name == "VineModel" and inst:FindFirstChild("Tentacle") then
+                Highlight(inst.Tentacle, color)
+                success = true
+            elseif inst.Name == "GroundBulbModel" and inst:FindFirstChild("RootPart") then
+                Highlight(inst.RootPart, color)
+                success = true
+            else
+                for _, Part in ipairs(inst:GetChildren()) do
+                    if Part:IsA("BasePart") then
+                        if table.find(ExactSkipESP, Part.Name) then continue end
+                        for _, val in ipairs(PartialSkipESP) do
+                            if string.find(Part.Name, val) then continue end
+                        end
+                        Highlight(Part, color)
+                        success = true
                     end
-                    Highlight(Part, color)
-                    success = true
                 end
             end
         end
