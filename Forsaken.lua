@@ -7,256 +7,338 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
-local Ingame = workspace.Map.Ingame
+local Map = workspace.Map
+local Ingame = Map.Ingame
 local Killers = workspace.Players.Killers
+local ItemCache = {}
+local bSurv = false
+local bKill = false
+local bInUI = false
 
 local KillerColor = Color3.fromRGB(196, 45, 32)
 local SurvivorColor = Color3.fromRGB(32, 196, 93)
-local BloxyColaColor = Color3.fromRGB(16, 167, 234)
 local MedkitColor = Color3.fromRGB(177, 45, 146)
-local MiscColor = Color3.fromRGB(228, 217, 211)
+local BloxyColaColor = Color3.fromRGB(16, 167, 234)
 local GeneratorColor = Color3.fromRGB(234, 165, 16)
 
-local ExactSkipESP = {"PlacementRange", "BuildermanSentryEffectRange", "BuildermanDispenserEffectRange", "Spike", "EndPoint", "Footstep", "CollisionHitbox", "QueryHitbox", "HaxxedBlade", "HumanoidRootPart", "CollisionGuard", "TheThing", "ExpressionHolder", "NoclipDetector", "BasicSlash", "SubspaceCenter", "Firebrand", "Beam", "Tentacle", "VoidstarCrown"}
-local PartialSkipESP = {"Spray", "RespawnLocation"}
-local ExactKillerESP = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "Noli", "VineModel", "GroundBulbModel"}
-local PartialKillerESP = {"JohnDoeTrail", "Shadows", "Puddle", "Shockwave"}
-local ExactSurvivorESP = {"BuildermanDispenser", "BuildermanSentry", "007n7", "Pizza", "GraffitiCL", "CrystalProjectile"}
-local PartialSurvivorESP = {"TaphTripwire", "SubspaceTripmine"}
+local Names = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "VineModel", "GroundBulbModel", "BuildermanDispenser", "BuildermanSentry", "007n7", "Pizza", "GraffitiCL", "CrystalProjectile", "Medkit", "BloxyCola", "MisterBeast", "Noli"}
 
-local Convex = {
-    Scratch = {
-        Points = {},
-        Hull = {},
-        Poly = {}
-    },
+local PNames = {"TaphTripwire", "SubspaceTripmine", "Puddle", "Shockwave"}
 
-    Static = {
-        HWMPoints = 0,
-        HWMHull = 0,
-        HWMPoly = 0
-    }
+local NameColors = {
+    shockwave = KillerColor,
+    Shockwave = KillerColor,
+    Swords = KillerColor,
+    SpikeCollision = KillerColor,
+    HumanoidRootProjectile = KillerColor,
+    Voidstar = KillerColor,
+    Bats = KillerColor,
+    Shadow = KillerColor,
+    VineModel = KillerColor,
+    GroundBulbModel = KillerColor,
+    MisterBeast = KillerColor,
+    Azure = KillerColor,
+    Noli = KillerColor,
+    ["1x1x1x1Zombie"] = KillerColor,
+    JohnDoeTrail = KillerColor,
+    Shadows = KillerColor,
+    Puddle = KillerColor,
+    Shockwave = KillerColor,
+    FakeGenerator = KillerColor,
+    TaphTripwire = SurvivorColor,
+    SubspaceTripmine = SurvivorColor,
+    BuildermanDispenser = SurvivorColor,
+    BuildermanSentry = SurvivorColor,
+    ["007n7"] = SurvivorColor,
+    Pizza = SurvivorColor,
+    GraffitiCL = SurvivorColor,
+    CrystalProjectile = SurvivorColor,
+    Medkit = MedkitColor,
+    BloxyCola = BloxyColaColor,
 }
 
-local function TruncateBuffer(Buffer, NewSize, HighWaterMark)
-    for Index = NewSize + 1, HighWaterMark do
-        Buffer[Index] = nil
-    end
-    return math.max(NewSize, HighWaterMark)
+local FullNames = {
+    BuildermanDispenser = "Builder Dispenser",
+    BuildermanSentry = "Builder Sentry",
+    ["007n7"] = "007n7 Clone",
+    Pizza = "Elliot Pizza",
+    GraffitiCL = "Vee Graffiti",
+    TaphTripwire = "Taph Tripwire",
+    SubspaceTripmine = "Taph Mine",
+    Shadow = "John Trap",
+    VineModel = "Azure Vine",
+    GroundBulbModel = "Azure Bulb",
+    MisterBeast = "Azure Golem",
+    ["1x1x1x1Zombie"] = "Zombie",
+    FakeGenerator = "Fake Generator",
+    Azure = "Azure",
+    Noli = "Fake Noli",
+    Medkit = "Medkit",
+    BloxyCola = "Cola",
+}
+
+local BodyData = {"Head", "Torso", "Right Arm", "Right Leg", "Left Arm", "Left Leg"}
+
+local h = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))()
+
+local function InstId(inst)
+    if not inst or not inst.Parent then return nil end
+    return tostring(tonumber(inst.Data))
 end
 
-local function CrossDimension(OriginX, OriginY, PointAX, PointAY, PointBX, PointBY)
-    return (PointAX - OriginX) * (PointBY - OriginY) - (PointAY - OriginY) * (PointBX - OriginX)
+local function GetGenPer(num)
+    if num == 26 then return "25%" end
+    if num == 52 then return "50%" end
+    if num == 78 then return "75%" end
+    return "0%"
 end
 
-local function CalculateConvexHull(Points, PointCount, Outer)
-    if PointCount == 0 then return 0 end
-    if PointCount == 1 then Outer[1] = Points[1]; return 1 end
-    if PointCount == 2 then Outer[1] = Points[1]; Outer[2] = Points[2]; return 2 end
-    table.sort(Points, function(PointA, PointB)
-        return PointA.X < PointB.X or (PointA.X == PointB.X and PointA.Y < PointB.Y)
-    end)
-    local Size = 0
-    for Index = 1, PointCount do
-        local Point = Points[Index]
-        while Size >= 2 and CrossDimension(Outer[Size - 1].X, Outer[Size - 1].Y, Outer[Size].X, Outer[Size].Y, Point.X, Point.Y) <= 0 do
-            Size = Size - 1
-        end
-        Size = Size + 1
-        Outer[Size] = Point
-    end
-    local LowerHullSize = Size
-    for Index = PointCount - 1, 1, -1 do
-        local Point = Points[Index]
-        while Size > LowerHullSize and CrossDimension(Outer[Size - 1].X, Outer[Size - 1].Y, Outer[Size].X, Outer[Size].Y, Point.X, Point.Y) <= 0 do
-            Size = Size - 1
-        end
-        Size = Size + 1
-        Outer[Size] = Point
-    end
-    return Size - 1
-end
+local function GetPart(inst)
+    local ClassName = inst.ClassName
 
-local function ProjectPartCorners(Part, WriteOffset)
-    local PositionX = Part.Position.X
-    local PositionY = Part.Position.Y
-    local PositionZ = Part.Position.Z
-    local HalfSizeX = Part.Size.X * 0.5
-    local HalfSizeY = Part.Size.Y * 0.5
-    local HalfSizeZ = Part.Size.Z * 0.5
-    local RightVector = Part.RightVector
-    local UpVector = Part.UpVector
-    local LookVector = Part.LookVector
-    local RightX = RightVector.X * HalfSizeX
-    local RightY = RightVector.Y * HalfSizeX
-    local RightZ = RightVector.Z * HalfSizeX
-    local UpX = UpVector.X * HalfSizeY
-    local UpY = UpVector.Y * HalfSizeY
-    local UpZ = UpVector.Z * HalfSizeY
-    local LookX = LookVector.X * HalfSizeZ
-    local LookY = LookVector.Y * HalfSizeZ
-    local LookZ = LookVector.Z * HalfSizeZ
-    local SignR = 1
-    for _ = 1, 2 do
-        local SignU = 1
-        for _ = 1, 2 do
-            local SignL = 1
-            for _ = 1, 2 do
-                local WorldPoint = Vector3.new(
-                    PositionX + SignR * RightX + SignU * UpX + SignL * LookX,
-                    PositionY + SignR * RightY + SignU * UpY + SignL * LookY,
-                    PositionZ + SignR * RightZ + SignU * UpZ + SignL * LookZ
-                )
-                local ScreenPoint, OnScreen = Camera:WorldToScreenPoint(WorldPoint)
-                if OnScreen then
-                    WriteOffset = WriteOffset + 1
-                    local Slot = Convex.Scratch.Points[WriteOffset]
-                    if Slot then
-                        Slot.X = ScreenPoint.X
-                        Slot.Y = ScreenPoint.Y
-                    else
-                        Convex.Scratch.Points[WriteOffset] = {X = ScreenPoint.X, Y = ScreenPoint.Y}
-                    end
-                end
-                SignL = -1
+    if ClassName == "Part" or ClassName == "UnionOperation" or ClassName == "MeshPart" then
+        return inst
+    end
+
+    local Children = inst:GetChildren()
+
+    if inst:FindFirstChild("Humanoid") then
+        local ReturnTable = {}
+
+        for _, part in BodyData do
+            if inst:FindFirstChild(part) then
+                table.insert(ReturnTable, inst[part])
             end
-            SignU = -1
         end
-        SignR = -1
-    end
-    return WriteOffset
-end
 
-local function DrawPolygon(Hull, Size, Color, Opacity)
-    if Size < 3 then return end
-    local Pivot = Vector2.new(Hull[1].X, Hull[1].Y)
-    for Index = 2, Size - 1 do
-        DrawingImmediate.FilledTriangle(Pivot, Vector2.new(Hull[Index].X, Hull[Index].Y), Vector2.new(Hull[Index + 1].X, Hull[Index + 1].Y), Color, Opacity)
+        if #ReturnTable ~= 0 then return ReturnTable end
     end
-end
 
-local function DrawOutline(Hull, Size, Color, Opacity, Thickness)
-    if Size < 2 then return end
-    for Index = 1, Size do
-        local Entry = Hull[Index]
-        Convex.Scratch.Poly[Index] = Vector2.new(Entry.X, Entry.Y)
-    end
-    Convex.Scratch.Poly[Size + 1] = Vector2.new(Hull[1].X, Hull[1].Y)
-    Convex.Scratch.Poly[Size + 2] = nil
-    if Size + 1 < Convex.Static.HWMPoly then
-        for Index = Size + 2, Convex.Static.HWMPoly do
-            Convex.Scratch.Poly[Index] = nil
-        end
-    end
-    Convex.Static.HWMPoly = math.max(Convex.Static.HWMPoly, Size + 1)
-    DrawingImmediate.Polyline(Convex.Scratch.Poly, Color, 0.5, 2)
+    if inst.Name == "MisterBeast" then return inst:FindFirstChildOfClass("MeshPart") end
+    if inst.Name == "VineModel" then return inst:FindFirstChild("Tentacle") end
+
+    local s, p = pcall(function()
+        return inst.PrimaryPart
+    end)
+    if s and p then return p end
+
+    return inst:FindFirstChildOfClass("Part") or inst:FindFirstChildOfClass("MeshPart") or inst:FindFirstChildOfClass("UnionOperation")
 end
 
 local function Highlight(inst, color)
-    local PointCount = 0
-    PointCount = ProjectPartCorners(inst, PointCount)
-    Convex.Static.HWMPoints = TruncateBuffer(Convex.Scratch.Points, PointCount, Convex.Static.HWMPoints)
-    local Size = CalculateConvexHull(Convex.Scratch.Points, PointCount, Convex.Scratch.Hull)
-    Convex.Static.HWMHull = TruncateBuffer(Convex.Scratch.Hull, Size, Convex.Static.HWMHull)
-    DrawPolygon(Convex.Scratch.Hull, Size, color, 0.3)
-    DrawOutline(Convex.Scratch.Hull, Size, color, 0.7, 0.7)
+    local s, p = pcall(function()
+        return inst.Position
+    end)
+    if s then
+        h.Highlight(inst, color, .25, .7, .7)
+    end
 end
 
-local function ColorHandle(inst, ETable, PTable, color)
-    local success = false
-    if table.find(ETable, inst.Name) or inst:FindFirstChild("HumanoidRootPart") then
-        if ETable == ExactKillerESP and inst.Name == "007n7" then return false end
-        if ETable == ExactKillerESP and inst.Name == "BuildermanDispenser" then return false end
-        if inst:IsA("BasePart") then
-            Highlight(inst, color)
+RunService.PreLocal:Connect(function()
+    if LocalPlayer.Character then
+        if LocalPlayer.Character.Parent then
+            if LocalPlayer.Character.Parent.Name == "Survivors" then
+                bSurv = true
+                bKill = false
+            elseif LocalPlayer.Character.Parent.Name == "Killers" then
+                bSurv = false
+                bKill = true
+            else
+                bSurv = false
+                bKill = false
+            end
+        end
+    end
+
+    if LocalPlayer:FindFirstChild("PlayerGui") then
+        if LocalPlayer.PlayerGui:FindFirstChild("PuzzleUI") then
+            bInUI = true
         else
-            if inst.Name == "VineModel" and inst:FindFirstChild("Tentacle") then
-                Highlight(inst.Tentacle, color)
-                success = true
-            elseif inst.Name == "GroundBulbModel" and inst:FindFirstChild("RootPart") then
-                Highlight(inst.RootPart, color)
-                success = true
-            else
-                for _, Part in ipairs(inst:GetChildren()) do
-                    if Part:IsA("BasePart") then
-                        if table.find(ExactSkipESP, Part.Name) then continue end
-                        for _, val in ipairs(PartialSkipESP) do
-                            if string.find(Part.Name, val) then continue end
-                        end
-                        Highlight(Part, color)
-                        success = true
-                    end
-                end
-            end
+            bInUI = false
         end
+    else
+        bInUI = false
     end
-    for _, val in ipairs(PTable) do
-        if string.find(inst.Name, val) then
-            if inst:IsA("BasePart") then
-                Highlight(inst, color)
-            else
-                for _, Part in ipairs(inst:GetChildren()) do
-                    if Part:IsA("BasePart") then
-                        if table.find(ExactSkipESP, Part.Name) then continue end
-                        for _, val in ipairs(PartialSkipESP) do
-                            if string.find(Part.Name, val) then continue end
-                        end
-                        Highlight(Part, color)
-                        success = true
-                    end
-                end
-            end
-        end
-    end
-    return success
-end
 
-local function Render()
-    for _, inst in ipairs(Ingame:GetChildren()) do
-        if table.find(ExactSkipESP, inst.Name) then continue end
-        for _, val in ipairs(PartialSkipESP) do
-            if string.find(inst.Name, val) then continue end
+    for _, inst in Ingame:GetChildren() do
+        local id = InstId(inst)
+        if not id then continue end
+        if ItemCache[id] then continue end
+
+        if table.find(Names, inst.Name) then
+            ItemCache[id] = inst
+            continue
         end
-        if ColorHandle(inst, ExactKillerESP, PartialKillerESP, KillerColor) then continue end
-        if ColorHandle(inst, ExactSurvivorESP, PartialSurvivorESP, SurvivorColor) then continue end
+
+        for _, name in PNames do
+            if string.find(inst.Name, name) then
+                ItemCache[id] = inst
+                continue
+            end
+        end
+
+        if inst:FindFirstChild("Humanoid") then
+            ItemCache[id] = inst
+            continue
+        end
     end
-    
-    for _, inst in ipairs(workspace:GetChildren()) do
+
+    for _, inst in Killers:GetChildren() do
+        if inst.Name == "Noli" and not ItemCache[InstId(inst)] then
+            if Players[inst:GetAttribute("Username")].Character ~= inst and InstId(inst) then
+                ItemCache[InstId(inst)] = inst
+                continue
+            end
+        end
+    end
+
+    if Map:FindFirstChild("Azure") then
+        local id = InstId(Map.Azure)
+        if id and not ItemCache[id] then
+            ItemCache[id] = Map.Azure
+        end
+    end
+
+    for _, inst in workspace:GetChildren() do
+        local id = InstId(inst)
+        if not id then continue end
+        if ItemCache[id] then continue end
+
         if inst.Name == "BloxyCola" then
-            Highlight(inst.ItemRoot, BloxyColaColor)
+            ItemCache[id] = inst
         elseif inst.Name == "Medkit" then
-            Highlight(inst.ItemRoot, MedkitColor)
+            ItemCache[id] = inst
         end
     end
 
-    for _, inst in ipairs(Killers:GetChildren()) do
-        if inst.Name == "Noli" and inst:GetAttribute("Username") then
-            if not Players:FindFirstChild(inst:GetAttribute("Username")) then continue end
-            if Players[inst:GetAttribute("Username")].Character ~= inst then
-                ColorHandle(inst, ExactKillerESP, PartialKillerESP, KillerColor)
+    for _, inst in Ingame:GetChildren() do
+        if string.find(inst.Name, "JohnDoeTrail") or string.find(inst.Name, "Shadows") then
+            for _, part in inst:GetChildren() do
+                local id = InstId(inst)
+                if not id then continue end
+                if ItemCache[id] then continue end
+
+                ItemCache[id] = part
             end
         end
     end
 
     if not Ingame:FindFirstChild("Map") then return end
 
-    for _, inst in ipairs(Ingame.Map:GetChildren()) do
-        if inst.Name == "Generator" then
-            if not inst:FindFirstChild("Main") then continue end
-            if LocalPlayer:FindFirstChild("PlayerGui") then
-                if LocalPlayer.PlayerGui:FindFirstChild("PuzzleUI") then continue end
+    for _, inst in Ingame.Map:GetChildren() do
+        local id = InstId(inst)
+        if not id then continue end
+        if ItemCache[id] then continue end
+
+        if inst.Name == "Generator" and inst:FindFirstChild("Progress") then
+            if inst.Progress.Value ~= 100 then
+                ItemCache[id] = inst
             end
-            if inst.Progress.Value == 100 then continue end
-            Highlight(inst.Main, GeneratorColor)
+        elseif inst.Name == "FakeGenerator" then
+            ItemCache[id] = inst
         elseif inst.Name == "BloxyCola" then
-            Highlight(inst.ItemRoot, BloxyColaColor)
+            ItemCache[id] = inst
         elseif inst.Name == "Medkit" then
-            Highlight(inst.ItemRoot, MedkitColor)
+            ItemCache[id] = inst
         end
     end
-end
+end)
 
-RunService.Render:Connect(Render)
+RunService.Render:Connect(function()
+    for id, inst in ItemCache do
+        local Parent
+        if not inst or not inst.Parent then
+            ItemCache[id] = nil
+            continue
+        elseif inst.Parent.Name == "Backpack" then
+            ItemCache[id] = nil
+            continue
+        else
+            Name = inst.Name
+        end
+
+        if type(Name) ~= "string" then
+            ItemCache[id] = nil
+            continue
+        end
+
+        if Name == "Generator" and bInUI then continue end
+
+        if Name == "Generator" then
+            if not inst:FindFirstChild("Main") or not inst:FindFirstChild("Progress") then
+                ItemCache[id] = nil
+                continue
+            end
+
+            local Main = inst.Main
+            local Progress = inst.Progress
+
+            if Progress.Value == 100 then
+                ItemCache[id] = nil
+                continue
+            end
+
+            Highlight(Main, GeneratorColor)
+            local p, v = Camera:WorldToScreenPoint(Main.Position)
+			if v then
+				local NewPos = Vector2.new(p.x, p.y - 6.5)
+				DrawingImmediate.OutlinedText(NewPos, 13, GeneratorColor, 1, GetGenPer(Progress.Value), true)
+			end
+            continue
+        end
+
+        local Parts = GetPart(inst)
+
+        local color = NameColors[Name] or KillerColor
+        local name = FullNames[Name]
+        for _, v in PNames do
+            if string.find(Name, v) then
+                color = NameColors[v] or KillerColor
+                name = FullNames[v]
+            end
+        end
+
+        if bSurv and color == SurvivorColor then continue end
+        if bKill and color == KillerColor then continue end
+        if string.find(Name, "Spray") then continue end
+
+        if type(Parts) == "table" then
+            for _, part in Parts do
+                if part.Name == "Torso" then
+                    if not name then
+                        name = "Minion"
+                    end
+
+                    local s, pos = pcall(function()
+                        return part.Position
+                    end)
+                    if s then
+                        local p, v = Camera:WorldToScreenPoint(pos)
+                        if v then
+                            local NewPos = Vector2.new(p.x, p.y - 6.5)
+                            DrawingImmediate.OutlinedText(NewPos, 13, color, 1, name, true)
+                        end
+                    end
+                end
+                Highlight(part, color)
+            end
+        elseif Parts then
+            if name then
+                local s, pos = pcall(function()
+                        return Parts.Position
+                    end)
+                if s then
+                    local p, v = Camera:WorldToScreenPoint(pos)
+                    if v then
+                        local NewPos = Vector2.new(p.x, p.y - 6.5)
+                        DrawingImmediate.OutlinedText(NewPos, 13, color, 1, name, true)
+                    end
+                end
+            end
+            Highlight(Parts, color)
+        end
+    end
+end)
 
 print("Loaded")
 
