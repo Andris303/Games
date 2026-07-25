@@ -214,7 +214,7 @@ RunService.PreLocal:Connect(function()
     for _, inst in Ingame:GetChildren() do
         if string.find(inst.Name, "JohnDoeTrail") or string.find(inst.Name, "Shadows") then
             for _, part in inst:GetChildren() do
-                local id = InstId(inst)
+                local id = InstId(part)
                 if not id then continue end
                 if ItemCache[id] then continue end
 
