@@ -298,11 +298,11 @@ RunService.Render:Connect(function()
 
         local Parts = GetPart(inst)
 
-        local color = NameColors[Name] or c.neutral
+        local color = NameColors[Name] or c.yellow
         local name = FullNames[Name]
         for _, v in PNames do
             if string.find(Name, v) then
-                color = NameColors[v] or c.neutral
+                color = NameColors[v]
                 name = FullNames[v]
             end
         end
