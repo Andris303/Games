@@ -185,7 +185,7 @@ RunService.PreLocal:Connect(function()
 
     for _, inst in Killers:GetChildren() do
         if inst.Name == "Noli" and not ItemCache[InstId(inst)] then
-            if Players[inst:GetAttribute("Username")].Character ~= inst and InstId(inst) then
+            if Players[inst:GetAttribute("Username")].Character ~= inst and InstId(inst) and #Killers:GetChildren() > 1 then
                 ItemCache[InstId(inst)] = inst
                 continue
             end
@@ -247,6 +247,7 @@ end)
 RunService.Render:Connect(function()
     for id, inst in ItemCache do
         local Parent
+        local Name
         if not inst or not inst.Parent then
             ItemCache[id] = nil
             continue
