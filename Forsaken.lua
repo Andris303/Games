@@ -18,8 +18,7 @@ local bInUI = false
 local c = {
     danger = Color3.fromRGB(224,17,95),
     slightdanger = Color3.fromRGB(220,161,161),
-    neutral = Color3.fromRGB(203,203,203),
-    darkneutral = Color3.fromRGB(151,151,151),
+    neutral = Color3.fromRGB(109,129,150),
     generator = Color3.fromRGB(234,162,33),
     cola = Color3.fromRGB(45,104,196),
     medkit = Color3.fromRGB(255,29,141),
@@ -51,7 +50,7 @@ local NameColors = {
     JohnDoeTrail = c.slightdanger,
     Shadows = c.trap,
     Puddle = c.slightdanger,
-    FakeGenerator = c.darkneutral,
+    FakeGenerator = c.neutral,
     TaphTripwire = c.trap,
     SubspaceTripmine = c.danger,
     BuildermanDispenser = c.yellow,
@@ -314,8 +313,8 @@ RunService.Render:Connect(function()
             end
         end
 
-        if bSurv and table.find(SNames, Name) then continue end
-        if bKill and table.find(KNames, Name) then continue end
+        if bSurv and (table.find(SNames, Name) or string.find(Name, "TaphTripwire") or string.find(Name, "SubspaceTripmine")) then continue end
+        if bKill and (table.find(KNames, Name) or string.find(Name, "Puddle") or string.find(Name, "Shockwave")) then continue end
         if string.find(Name, "Spray") then continue end
 
         if type(Parts) == "table" then
