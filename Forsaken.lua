@@ -15,46 +15,52 @@ local bSurv = false
 local bKill = false
 local bInUI = false
 
-local KillerColor = Color3.fromRGB(196, 45, 32)
-local SurvivorColor = Color3.fromRGB(32, 196, 93)
-local MedkitColor = Color3.fromRGB(177, 45, 146)
-local BloxyColaColor = Color3.fromRGB(16, 167, 234)
-local GeneratorColor = Color3.fromRGB(234, 165, 16)
+local c = {
+    danger = Color3.fromRGB(224,17,95),
+    slightdanger = Color3.fromRGB(220,161,161),
+    neutral = Color3.fromRGB(203,203,203),
+    generator = Color3.fromRGB(234,162,33),
+    cola = Color3.fromRGB(45,104,196),
+    medkit = Color3.fromRGB(255,29,141),
+    trap = Color3.fromRGB(179,27,27),
+    azure = Color3.fromRGB(127,0,255),
+    yellow = Color3.fromRGB(241,195,56),
+}
 
 local Names = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "VineModel", "GroundBulbModel", "BuildermanDispenser", "BuildermanSentry", "007n7", "Pizza", "GraffitiCL", "CrystalProjectile", "Medkit", "BloxyCola", "MisterBeast", "Noli"}
-
+local SNames = {"BuildermanDispenser", "BuildermanSentry", "007n7", "Pizza", "GraffitiCL", "CrystalProjectile", "TaphTripwire", "SubspaceTripmine"}
+local KNames = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "VineModel", "GroundBulbModel","Medkit", "BloxyCola", "MisterBeast", "Noli", "Puddle"}
 local PNames = {"TaphTripwire", "SubspaceTripmine", "Puddle", "Shockwave"}
 
 local NameColors = {
-    shockwave = KillerColor,
-    Shockwave = KillerColor,
-    Swords = KillerColor,
-    SpikeCollision = KillerColor,
-    HumanoidRootProjectile = KillerColor,
-    Voidstar = KillerColor,
-    Bats = KillerColor,
-    Shadow = KillerColor,
-    VineModel = KillerColor,
-    GroundBulbModel = KillerColor,
-    MisterBeast = KillerColor,
-    Azure = KillerColor,
-    Noli = KillerColor,
-    ["1x1x1x1Zombie"] = KillerColor,
-    JohnDoeTrail = KillerColor,
-    Shadows = KillerColor,
-    Puddle = KillerColor,
-    Shockwave = KillerColor,
-    FakeGenerator = KillerColor,
-    TaphTripwire = SurvivorColor,
-    SubspaceTripmine = SurvivorColor,
-    BuildermanDispenser = SurvivorColor,
-    BuildermanSentry = SurvivorColor,
-    ["007n7"] = SurvivorColor,
-    Pizza = SurvivorColor,
-    GraffitiCL = SurvivorColor,
-    CrystalProjectile = SurvivorColor,
-    Medkit = MedkitColor,
-    BloxyCola = BloxyColaColor,
+    shockwave = c.danger,
+    Shockwave = c.danger,
+    Swords = c.danger,
+    SpikeCollision = c.neutral,
+    HumanoidRootProjectile = c.danger,
+    Voidstar = c.danger,
+    Bats = c.danger,
+    Shadow = c.trap,
+    VineModel = c.trap,
+    GroundBulbModel = c.trap,
+    MisterBeast = c.azure,
+    Azure = c.azure,
+    Noli = c.neutral,
+    ["1x1x1x1Zombie"] = c.yellow,
+    JohnDoeTrail = c.slightdanger,
+    Shadows = c.trap,
+    Puddle = c.slightdanger,
+    FakeGenerator = c.neutral,
+    TaphTripwire = c.trap,
+    SubspaceTripmine = c.danger,
+    BuildermanDispenser = c.yellow,
+    BuildermanSentry = c.trap,
+    ["007n7"] = c.neutral,
+    Pizza = c.yellow,
+    GraffitiCL = c.yellow,
+    CrystalProjectile = c.danger,
+    Medkit = c.medkit,
+    BloxyCola = c.cola,
 }
 
 local FullNames = {
@@ -231,8 +237,10 @@ RunService.PreLocal:Connect(function()
         if ItemCache[id] then continue end
 
         if inst.Name == "Generator" and inst:FindFirstChild("Progress") then
-            if inst.Progress.Value ~= 100 then
-                ItemCache[id] = inst
+            if inst:FindFirstChild("Progress").Name == "Progress" then
+                if inst:FindFirstChild("Progress").Value ~= 100 then
+                    ItemCache[id] = inst
+                end
             end
         elseif inst.Name == "FakeGenerator" then
             ItemCache[id] = inst
@@ -279,28 +287,28 @@ RunService.Render:Connect(function()
                 continue
             end
 
-            Highlight(Main, GeneratorColor)
+            Highlight(Main, c.generator)
             local p, v = Camera:WorldToScreenPoint(Main.Position)
 			if v then
 				local NewPos = Vector2.new(p.x, p.y - 6.5)
-				DrawingImmediate.OutlinedText(NewPos, 13, GeneratorColor, 1, GetGenPer(Progress.Value), true)
+				DrawingImmediate.OutlinedText(NewPos, 13, c.generator, 1, GetGenPer(Progress.Value), true)
 			end
             continue
         end
 
         local Parts = GetPart(inst)
 
-        local color = NameColors[Name] or KillerColor
+        local color = NameColors[Name] or c.neutral
         local name = FullNames[Name]
         for _, v in PNames do
             if string.find(Name, v) then
-                color = NameColors[v] or KillerColor
+                color = NameColors[v] or c.neutral
                 name = FullNames[v]
             end
         end
 
-        if bSurv and color == SurvivorColor then continue end
-        if bKill and color == KillerColor then continue end
+        if bSurv and table.find(SNames, Name) then continue end
+        if bKill and table.find(KNames, Name) then continue end
         if string.find(Name, "Spray") then continue end
 
         if type(Parts) == "table" then
