@@ -19,6 +19,7 @@ local c = {
     danger = Color3.fromRGB(224,17,95),
     slightdanger = Color3.fromRGB(220,161,161),
     neutral = Color3.fromRGB(203,203,203),
+    darkneutral = Color3.fromRGB(151,151,151),
     generator = Color3.fromRGB(234,162,33),
     cola = Color3.fromRGB(45,104,196),
     medkit = Color3.fromRGB(255,29,141),
@@ -50,7 +51,7 @@ local NameColors = {
     JohnDoeTrail = c.slightdanger,
     Shadows = c.trap,
     Puddle = c.slightdanger,
-    FakeGenerator = c.neutral,
+    FakeGenerator = c.darkneutral,
     TaphTripwire = c.trap,
     SubspaceTripmine = c.danger,
     BuildermanDispenser = c.yellow,
@@ -237,10 +238,11 @@ RunService.PreLocal:Connect(function()
         if ItemCache[id] then continue end
 
         if inst.Name == "Generator" and inst:FindFirstChild("Progress") then
-            if inst:FindFirstChild("Progress").Name == "Progress" then
-                if inst:FindFirstChild("Progress").Value ~= 100 then
-                    ItemCache[id] = inst
-                end
+            local s, r = pcall(function()
+                return inst.Progress.Value
+            end)
+            if s and r ~= 100 then
+                ItemCache[id] = inst
             end
         elseif inst.Name == "FakeGenerator" then
             ItemCache[id] = inst
@@ -259,11 +261,16 @@ RunService.Render:Connect(function()
         if not inst or not inst.Parent then
             ItemCache[id] = nil
             continue
-        elseif inst.Parent.Name == "Backpack" then
-            ItemCache[id] = nil
-            continue
         else
-            Name = inst.Name
+            local s, r = pcall(function()
+                return inst.Parent.Name
+            end)
+            if s and r == "Backpack" then
+                ItemCache[id] = nil
+                continue
+            else
+                Name = inst.Name
+            end
         end
 
         if type(Name) ~= "string" then
@@ -271,7 +278,7 @@ RunService.Render:Connect(function()
             continue
         end
 
-        if Name == "Generator" and bInUI then continue end
+        if Name == "Generator" and (bInUI or bKill) then continue end
 
         if Name == "Generator" then
             if not inst:FindFirstChild("Main") or not inst:FindFirstChild("Progress") then
