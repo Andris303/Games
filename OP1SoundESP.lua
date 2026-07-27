@@ -15,27 +15,6 @@ local FocusTimer = 0
 
 local h = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))()
 
---[[
-local RobloxVersion = _G.RobloxVersion or "version-9affbe66b2624d20"
-
-local SoundOffsets
-local s, RawOffsets = pcall(function()
-    return game:HttpGet("https://offsets.imtheo.lol/" .. RobloxVersion .. "/offsets.json")
-end)
-if s and RawOffsets then
-    local s2, decoded = pcall(function()
-        return crypt.json.decode(RawOffsets)
-    end)
-    if s2 and decoded and decoded.Offsets then
-        SoundOffsets = decoded.Offsets.Sound
-    end
-end
-
-local MaxDist = SoundOffsets.RollOffMaxDistance
-local MinDist = SoundOffsets.RollOffMinDistance
-local Volume = SoundOffsets.Volume
-]]
-
 BodyParts = {"head", "torso", "shoulder1", "arm1", "shoulder2", "arm2", "hip1", "hip2", "leg1", "leg2",}
 
 local function InstId(inst)
@@ -122,15 +101,18 @@ RunService.PreLocal:Connect(function()
 
         if not inst or not model then
             PlayerCache[id] = nil
+            RenderCache[id] = nil
             continue
         end
 
         if not inst:FindFirstChild("Humanoid") then
             PlayerCache[id] = nil
+            RenderCache[id] = nil
             continue
         else
             if inst.Humanoid.Health == 0 then
                 PlayerCache[id] = nil
+                RenderCache[id] = nil
                 continue
             end
         end
