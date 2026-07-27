@@ -125,6 +125,16 @@ RunService.PreLocal:Connect(function()
             continue
         end
 
+        if not inst:FindFirstChild("Humanoid") then
+            PlayerCache[id] = nil
+            continue
+        else
+            if inst.Humanoid.Health == 0 then
+                PlayerCache[id] = nil
+                continue
+            end
+        end
+
         local legs = inst:FindFirstChild("legs")
         local gun
         for _, part in model:GetChildren() do
@@ -139,6 +149,7 @@ RunService.PreLocal:Connect(function()
                 if part:IsA("Sound") then
                     if part.Name == "Shoot" then
                         if root and part.Parent then
+                            local class = part.Parent.ClassName
                             if class == "Part" or Class == "UnionOperation" or Class == "MeshPart" then
                                 if vector.magnitude(root.Position - part.Parent.Position) > 105 then
                                     break
