@@ -11,29 +11,9 @@ local c = _G.Colors or {
     MaxVolume = Color3.fromRGB(220,0,0),
     MinVolume = Color3.fromRGB(255,255,190),
 }
+local FocusTimer = 0
 
 local h = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))()
-
---[[
-local RobloxVersion = _G.RobloxVersion or "version-9affbe66b2624d20"
-
-local SoundOffsets
-local s, RawOffsets = pcall(function()
-    return game:HttpGet("https://offsets.imtheo.lol/" .. RobloxVersion .. "/offsets.json")
-end)
-if s and RawOffsets then
-    local s2, decoded = pcall(function()
-        return crypt.json.decode(RawOffsets)
-    end)
-    if s2 and decoded and decoded.Offsets then
-        SoundOffsets = decoded.Offsets.Sound
-    end
-end
-
-local MaxDist = SoundOffsets.RollOffMaxDistance
-local MinDist = SoundOffsets.RollOffMinDistance
-local Volume = SoundOffsets.Volume
-]]
 
 BodyParts = {"head", "torso", "shoulder1", "arm1", "shoulder2", "arm2", "hip1", "hip2", "leg1", "leg2",}
 
@@ -84,6 +64,18 @@ RunService.PreLocal:Connect(function()
         root = LocalChar:FindFirstChild("HumanoidRootPart")
     end
 
+    if not LocalChar or not root then
+        PlayerCache = {}
+        RenderCache = {}
+        return
+    end
+
+    if FocusTimer ~= 0 and FocusTimer + .5 < os.clock() then
+        PlayerCache = {}
+        RenderCache = {}
+    end
+    FocusTimer = os.clock()
+
     for _, inst in Players:GetChildren() do
         local Char = inst.Character
         local id = InstId(Char)
@@ -95,8 +87,10 @@ RunService.PreLocal:Connect(function()
 
         local model = PlayerToModel(Char)
         if model then
-            if model.Name ~= "LocalViewmodel" then
-                PlayerCache[id] = {Char, 0, c.MinVolume, model}
+            if model.Name ~= "LocalViewmodel" and model:FindFirstChild("head") then
+                if not model.head:FindFirstChild("Username") then
+                    PlayerCache[id] = {Char, 0, c.MinVolume, model}
+                end
             end
         end
     end
@@ -124,18 +118,23 @@ RunService.PreLocal:Connect(function()
                 if part:IsA("Sound") then
                     if part.Name == "Shoot" then
                         if root and part.Parent then
-                            if vector.magnitude(root.Position - part.Parent.Position) > 105 then
+                            if class == "Part" or Class == "UnionOperation" or Class == "MeshPart" then
+                                if vector.magnitude(root.Position - part.Parent.Position) > 105 then
+                                    break
+                                end
+                                tempcolor = c.MaxVolume
                                 break
                             end
-                            tempcolor = c.MaxVolume
-                            break
                         end
                     else
                         if root and part.Parent then
-                            if vector.magnitude(root.Position - part.Parent.Position) > 35 then
-                                break
+                            local class = part.Parent.ClassName
+                            if class == "Part" or Class == "UnionOperation" or Class == "MeshPart" then
+                                if vector.magnitude(root.Position - part.Parent.Position) > 35 then
+                                    break
+                                end
+                                tempcolor = GetColor(.6)
                             end
-                            tempcolor = GetColor(.6)
                         end
                     end
                 end
