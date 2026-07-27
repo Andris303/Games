@@ -110,7 +110,7 @@ RunService.PreLocal:Connect(function()
             RenderCache[id] = nil
             continue
         else
-            if inst.Humanoid.Health == 0 then
+            if inst.Humanoid.Health <= 0 then
                 PlayerCache[id] = nil
                 RenderCache[id] = nil
                 continue
