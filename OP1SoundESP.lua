@@ -15,6 +15,27 @@ local FocusTimer = 0
 
 local h = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))()
 
+--[[
+local RobloxVersion = _G.RobloxVersion or "version-9affbe66b2624d20"
+
+local SoundOffsets
+local s, RawOffsets = pcall(function()
+    return game:HttpGet("https://offsets.imtheo.lol/" .. RobloxVersion .. "/offsets.json")
+end)
+if s and RawOffsets then
+    local s2, decoded = pcall(function()
+        return crypt.json.decode(RawOffsets)
+    end)
+    if s2 and decoded and decoded.Offsets then
+        SoundOffsets = decoded.Offsets.Sound
+    end
+end
+
+local MaxDist = SoundOffsets.RollOffMaxDistance
+local MinDist = SoundOffsets.RollOffMinDistance
+local Volume = SoundOffsets.Volume
+]]
+
 BodyParts = {"head", "torso", "shoulder1", "arm1", "shoulder2", "arm2", "hip1", "hip2", "leg1", "leg2",}
 
 local function InstId(inst)
@@ -70,7 +91,7 @@ RunService.PreLocal:Connect(function()
         return
     end
 
-    if FocusTimer ~= 0 and FocusTimer + .5 < os.clock() then
+    if FocusTimer ~= 0 and FocusTimer + 1 < os.clock() then
         PlayerCache = {}
         RenderCache = {}
     end
@@ -130,7 +151,7 @@ RunService.PreLocal:Connect(function()
                         if root and part.Parent then
                             local class = part.Parent.ClassName
                             if class == "Part" or Class == "UnionOperation" or Class == "MeshPart" then
-                                if vector.magnitude(root.Position - part.Parent.Position) > 35 then
+                                if vector.magnitude(root.Position - part.Parent.Position) > 30 then
                                     break
                                 end
                                 tempcolor = GetColor(.6)
@@ -157,7 +178,7 @@ RunService.PreLocal:Connect(function()
 
             if sound or os.clock() < table[2] then
                 if root then
-                    if vector.magnitude(root.Position - legs.Position) > 35 then
+                    if vector.magnitude(root.Position - legs.Position) > 30 then
                         RenderCache[id] = nil
                         continue
                     end
