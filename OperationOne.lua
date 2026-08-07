@@ -1,32 +1,110 @@
 --!optimize 2
 --!strict
 
-local BaseColor = _G.BaseColor or "8479D9"
-local AttachmentColor = _G.AttachmentColor or "B5A8EF"
-local Color3Offset = _G.Color3Offset or 0 -- Offset is 0x148 as of version-ddf02245bdbb428c
-local HighlightColor = _G.HighlightColor or Color3.fromRGB(16, 167, 234)
-local TextColor = _G.TextColor or Color3.fromRGB(16, 167, 234)
-local TeammateESP = _G.TeammateESP or false
+if game.GameId == 8307114974 then
+
+local bESP = true
+local GadgetESP = true
+local SoundESP = false
+local TeammateESP = false
+local TeamGadgetESP = false
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 local RunService = game:GetService("RunService")
 local InputService = game:GetService("UserInputService")
+local HighlightColor = Color3.fromRGB(70,130,180)
+local TextColor = Color3.fromRGB(70,130,180)
 local Timer = 0
+local FocusTimer = 0
 local ColoredPrimary
 local ColoredSecondary
 local PlayerList
+local PlayerCache = {}
+local RenderCache = {}
 local TempHealth = {}
 local Humanoids = {}
 local ModList = {"_1"}
+local BodyParts = {"head", "torso", "shoulder1", "arm1", "shoulder2", "arm2", "hip1", "hip2", "leg1", "leg2",}
 local Mods = {"lustin2800", "mmmmmonster", "RazvanWar28", "Fastesfern", "poipser", "Slender", "PandoraSkywalk2r", "AimDynamics", "Bunlawgs", "turner22", "Blazzy_Blaz",}
-local GadgetWhitelist = {"Defuser", "ImpactGrenade", "DeployableShield", "BreachCharge", "Drone", "FragGrenade", "SmokeGrenade", "StunGrenade", "ShockBattery", "EMPGrenade", "RemoteC4", "IncendiaryGrenade", "ToxicCharge", "StickyCamera", "ProximityAlarm", "HardBreachCharge", "DeployableShield", "Claymore", "BarbedWire", "BulletproofCamera", "ThermiteCharge", "SignalDisruptor", "NeedleMine"}
+local GadgetWhitelist = {"Defuser", "ImpactGrenade", "DeployableShield", "BreachCharge", "Drone", "FragGrenade", "SmokeGrenade", "StunGrenade", "ShockBattery", "EMPGrenade", "RemoteC4", "IncendiaryGrenade", "ToxicCharge", "StickyCamera", "ProximityAlarm", "HardBreachCharge", "Claymore", "BarbedWire", "BulletproofCamera", "ThermiteCharge", "SignalDisruptor", "NeedleMine"}
+local volumec = {
+    MaxVolume = Color3.fromRGB(220,0,0),
+    MinVolume = Color3.fromRGB(255,255,190),
+}
+local c = {
+	red = Color3.fromRGB(250,80,83),
+	yellow = Color3.fromRGB(255,222,33),
+	grey = Color3.fromRGB(109,129,150),
+	blue = Color3.fromRGB(48,92,222),
+	purple = Color3.fromRGB(127,0,255),
+}
+local GadgetColors = {
+	Defuser = c.red,
+	ImpactGrenade = c.yellow,
+	DeployableShield = c.grey,
+	BreachCharge = c.blue,
+	Drone = c.yellow,
+	FragGrenade = c.yellow,
+	SmokeGrenade = c.grey,
+	StunGrenade = c.yellow,
+	ShockBattery = c.purple,
+	EMPGrenade = c.grey,
+	RemoteC4 = c.yellow,
+	IncendiaryGrenade = c.red,
+	ToxicCharge = c.yellow,
+	StickyCamera = c.blue,
+	ProximityAlarm = c.purple,
+	HardBreachCharge = c.blue,
+	Claymore = c.red,
+	BarbedWire = c.grey,
+	BulletproofCamera = c.blue,
+	ThermiteCharge = c.blue,
+	SignalDisruptor = c.purple,
+	NeedleMine = c.red,
+}
 
 _G.PixelOffset = 5
 _G.Outline = true
+
 local ESP = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/ESP.lua"))()
 local HLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))()
 local Text = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Text.lua"))()
+
+local function GetColor(vol)
+    clamp = math.clamp(vol, .1, .9)
+    local alpha = (clamp - .1) / .8
+
+    return volumec.MinVolume:Lerp(volumec.MaxVolume, alpha)
+end
+
+local function PlayerToModel(inst)
+	for _, Char in workspace.Viewmodels:GetChildren() do
+		if Char:FindFirstChildOfClass("Model") and Char:FindFirstChild("torso") then
+			local ModelPos = Char.torso.Position
+			local p = inst.collision.Position
+			CharPos = Vector3.new(p.x + .02, p.y + .25, p.z + .1)
+			local Desync = math.floor(vector.magnitude(ModelPos - CharPos) * 100) / 100
+
+			if Desync < 1.3 then
+				return Char
+			end
+		end
+	end
+	return nil
+end
+
+local function Highlight(inst, color)
+    local s, p = pcall(function()
+        return inst.Position
+    end)
+    if s then
+        HLib.Highlight(inst, color, .23, .6, .7)
+        return true
+    else
+        return false
+    end
+end
 
 _G.CustomParts = {
     RigType = "R15",
@@ -91,37 +169,24 @@ local function Encoder(String)
 	return tonumber("0x00" .. b .. g .. r, 16)
 end
 
-local function ColorGun(inst)
-    task.wait(.7)
-	local instClass = inst.ClassName
-	if instClass == "UnionOperation" or instClass == "Part" then
-		memory.writei32(inst, Color3Offset, Encoder(BaseColor))
-	end
-	if instClass == "Model" then
-		for _, part in inst:GetChildren() do
-			local partClass = part.ClassName
-			if partClass == "UnionOperation" or partClass == "Part" then
-				if part.Name ~= "RedDot" and part.Name ~= "Dot" and part.Name ~= "TintGlass" then
-					memory.writei32(part, Color3Offset, Encoder(AttachmentColor))
-				end
-			end
-		end
-	end
-end
-
 local function ModelToPlayer(inst)
 	if not inst or not inst.Parent then return nil end
 	if not inst:FindFirstChild("torso") then return nil end
 	for _, Char in workspace:GetChildren() do
-		if Char:FindFirstChild("collision") and Char:FindFirstChild("Electronic") then
-			if not Char:FindFirstChild("Humanoid") then continue end
-			local p = Char.collision.Position
-			local ModelPos = inst.torso.Position
-			CharPos = Vector3.new(p.x + .02, p.y + .25, p.z + .1)
-			local Desync = math.floor(vector.magnitude(ModelPos - CharPos) * 100) / 100
-
-			if Desync < 1.3 then
-				return Players:FindFirstChild(Char.Name), Char
+		if inst.Name ~= "WarehouseMenu" then
+			if inst.ClassName == "Model" then
+				if Char:FindFirstChild("collision") then
+						if Char:FindFirstChild("Electronic") then
+						if not Char:FindFirstChild("Humanoid") then continue end
+						local p = Char.collision.Position
+						local ModelPos = inst.torso.Position
+						CharPos = Vector3.new(p.x + .02, p.y + .25, p.z + .1)
+						local Desync = math.floor(vector.magnitude(ModelPos - CharPos) * 100) / 100
+						if Desync < 1.3 then
+							return Players:FindFirstChild(Char.Name), Char
+						end
+					end
+				end
 			end
 		end
 	end
@@ -129,76 +194,153 @@ local function ModelToPlayer(inst)
 end
 
 local function PreLocal()
-	local LocalModel = workspace.Viewmodels:FindFirstChild("LocalViewmodel")
-	local Inventory = LocalPlayer:FindFirstChild("Items")
-	local Primary
-	local Secondary
+    if not SoundESP then return end
 
-	if workspace:GetAttribute("Gamemode") then
-		if not PlayerList then
-			PlayerList = {}
-			for _, inst in Players:GetChildren() do
-				table.insert(PlayerList, inst.Name)
-			end
-		else
-			for _, inst in Players:GetChildren() do
-				if not table.find(PlayerList, inst.Name) then
-					table.insert(PlayerList, inst.Name)
-					local BAdd = false
-					for _, mod in Mods do
-						if inst.Name == mod then BAdd = true end
-					end
-					if BAdd then
-						table.insert(ModList, inst.Name)
-						Text.Add(inst.Name, "Moderator \"" .. inst.Name .. "\" ingame.", Color3.fromRGB(255, 255, 255))
-						send_notification("Moderator \"" .. inst.Name .. "\" joined." , "warning")
-					end
-				end
-			end
-			for i, inst in ModList do
-				if not Players:FindFirstChild(inst) then
-					table.remove(ModList, i)
-					if inst ~= "_1" then
-						Text.Remove(inst)
-						send_notification("Moderator \"" .. inst .. "\" left." , "warning")
-					end
-				end
-			end
-		end
-	end
+    local LocalChar = LocalPlayer.Character
+    local root
+    if LocalChar then
+        root = LocalChar:FindFirstChild("HumanoidRootPart")
+    end
 
-	if LocalModel and type(LocalModel:GetChildren()) == "table" then
-		for _, inst in LocalModel:GetChildren() do
-			if inst:GetAttribute("loadout_type") == "primary" then
-				Primary = inst
-			elseif inst:GetAttribute("loadout_type") == "secondary" then
-				Secondary = inst
-			end
-		end
-	end
+    if not LocalChar or not root then
+        PlayerCache = {}
+        RenderCache = {}
+        return
+    end
 
-	if Inventory and type(Inventory:GetChildren()) == "table" then
-		for _, inst in Inventory:GetChildren() do
-			if inst:GetAttribute("loadout_type") == "primary" then
-				Primary = inst
-			elseif inst:GetAttribute("loadout_type") == "secondary" then
-				Secondary = inst
-			end
-		end
-	end
+    if FocusTimer ~= 0 and FocusTimer + 1 < os.clock() then
+        PlayerCache = {}
+        RenderCache = {}
+    end
+    FocusTimer = os.clock()
 
-	if Primary and ColoredPrimary ~= Primary then
-		ColoredPrimary = Primary
-		for _, inst in Primary:GetChildren() do
-            task.spawn(ColorGun, inst)
+    for _, inst in Players:GetChildren() do
+        local Char = inst.Character
+        local id = InstId(Char)
+        if not id then continue end
+        if PlayerCache[id] then continue end
+        
+        local legs = Char:FindFirstChild("legs")
+        if not legs then continue end
+
+        local model = PlayerToModel(Char)
+        if model then
+            if model.Name ~= "LocalViewmodel" and model:FindFirstChild("head") then
+                if not model.head:FindFirstChild("Username") then
+                    PlayerCache[id] = {Char, 0, volumec.MinVolume, model}
+                end
+            end
         end
-	end
-	if Secondary and ColoredSecondary ~= Secondary then
-		ColoredSecondary = Secondary
-		for _, inst in Secondary:GetChildren() do
-            task.spawn(ColorGun, inst)
+    end
+
+    for id, table in PlayerCache do
+        local inst = table[1]
+        local model = table[4]
+
+        if not inst or not model then
+            PlayerCache[id] = nil
+            RenderCache[id] = nil
+            continue
         end
-	end
+
+        if not inst:FindFirstChild("Humanoid") then
+            PlayerCache[id] = nil
+            RenderCache[id] = nil
+            continue
+        else
+            if inst.Humanoid.Health <= 0 then
+                PlayerCache[id] = nil
+                RenderCache[id] = nil
+                continue
+            end
+        end
+
+        local legs = inst:FindFirstChild("legs")
+        local gun
+        for _, part in model:GetChildren() do
+            if part:FindFirstChild("StateObject") then
+                gun = part
+            end
+        end
+
+        local tempcolor
+        if gun then
+            for _, part in gun:GetDescendants() do
+                if part.ClassName == "Sound" then
+                    if part.Name == "Shoot" then
+                        if root and part.Parent then
+                            local class = part.Parent.ClassName
+                            if class == "Part" or Class == "UnionOperation" or Class == "MeshPart" then
+                                if vector.magnitude(root.Position - part.Parent.Position) > 105 then
+                                    break
+                                end
+                                tempcolor = volumec.MaxVolume
+                                break
+                            end
+                        end
+                    else
+                        if root and part.Parent then
+                            local class = part.Parent.ClassName
+                            if class == "Part" or Class == "UnionOperation" or Class == "MeshPart" then
+                                if vector.magnitude(root.Position - part.Parent.Position) > 30 then
+                                    break
+                                end
+                                tempcolor = GetColor(.6)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        if tempcolor then
+            table[2] = os.clock() + .5
+            RenderCache[id] = {model, tempcolor}
+            continue
+        end
+
+        if legs then
+            local sound = legs:FindFirstChildOfClass("Sound")
+            if sound then
+                table[2] = os.clock() + .5
+                local color = GetColor(.2)
+                table[3] = color
+            end
+
+            if sound or os.clock() < table[2] then
+                if root then
+                    if vector.magnitude(root.Position - legs.Position) > 30 then
+                        RenderCache[id] = nil
+                        continue
+                    end
+                end
+                for _, name in BodyParts do
+                    if table[4]:FindFirstChild(name) then
+                        RenderCache[id] = {model, table[3]}
+                    end
+                end
+                continue
+            end
+        end
+
+        if inst:FindFirstChild("collision") then
+            for _, part in inst.collision:GetChildren() do
+                if part.Name ~= "Rustle" and part.Name ~= "Rope" and part.Name ~= "RopeDescend" and part.ClassName == "Sound" then
+                    if root then
+                        if vector.magnitude(root.Position - inst.collision.Position) > 20 then
+                            RenderCache[id] = nil
+                            continue
+                        end
+                    end
+                    table[2] = os.clock() + .5
+                    RenderCache[id] = {model, GetColor(.2)}
+                    continue
+                end
+            end
+        end
+
+        RenderCache[id] = nil
+    end
 end
 
 local function PostLocal()
@@ -213,6 +355,37 @@ local function PostLocal()
     end
     Timer = os.clock()
 
+	if not PlayerList then
+		PlayerList = {}
+		for _, inst in Players:GetChildren() do
+			table.insert(PlayerList, inst.Name)
+		end
+	else
+		for _, inst in Players:GetChildren() do
+			if not table.find(PlayerList, inst.Name) then
+				table.insert(PlayerList, inst.Name)
+				local BAdd = false
+				for _, mod in Mods do
+					if inst.Name == mod then BAdd = true end
+				end
+				if BAdd then
+					table.insert(ModList, inst.Name)
+					Text.Add(inst.Name, "Moderator \"" .. inst.Name .. "\" ingame.", Color3.fromRGB(255, 255, 255))
+					send_notification("Moderator \"" .. inst.Name .. "\" joined." , "warning")
+				end
+			end
+		end
+		for i, inst in ModList do
+			if not Players:FindFirstChild(inst) then
+				table.remove(ModList, i)
+				if inst ~= "_1" then
+					Text.Remove(inst)
+					send_notification("Moderator \"" .. inst .. "\" left." , "warning")
+				end
+			end
+		end
+	end
+
     for ID, inst in _G.ESPList do
 		if inst.Name == "LocalViewmodel" then continue end
         if not inst or not inst.Parent then
@@ -222,7 +395,7 @@ local function PostLocal()
 		if type(inst:GetChildren()) == "table" then
 			local Tool
 			for _, part in inst:GetChildren() do
-				if part:FindFirstChild("StateObject") then
+				if part:GetAttribute("loadout_type") then
 					Tool = part
 				end
 			end
@@ -245,8 +418,13 @@ local function PostLocal()
 		end
     end
 
+	if not bESP then return end
+
     for _, inst in workspace.Viewmodels:GetChildren() do
-        if not inst or not inst.Parent then continue end
+		local instid = InstId(inst)
+		if not instid then continue end
+		if _G.ESPList[instid] then continue end
+
 		if not inst:FindFirstChildOfClass("Model") then continue end
 
 		local TeamName = "Enemies"
@@ -258,7 +436,7 @@ local function PostLocal()
 
 		local ToolName = "None"
 		for _, part in inst:GetChildren() do
-			if part:FindFirstChild("StateObject") then
+			if part:GetAttribute("loadout_type") then
 				ToolName = part.Name
 			end
 		end
@@ -269,26 +447,27 @@ local function PostLocal()
 		end
 
 		local Player, Char = ModelToPlayer(inst)
-		if Player and InstId(inst) then
+		local id = InstId(Char)
+		if Player and id then
 			local Human = Char:FindFirstChild("Humanoid")
 			local Health = Human.Health
 			if Health <= 0 then continue end
 			local MaxHealth = Human.MaxHealth
-			if TempHealth[InstId(inst)] then
-				if TempHealth[InstId(inst)] > 0 then
-					Health = TempHealth[InstId(inst)]
-					TempHealth[InstId(inst)] = nil
+			if TempHealth[id] then
+				if TempHealth[id] > 0 then
+					Health = TempHealth[id]
+					TempHealth[id] = nil
 				else
-					TempHealth[InstId(inst)] = nil
-					Humanoids[InstId(inst)] = nil
-					ESP.RemovePlayer(ID)
+					TempHealth[id] = nil
+					Humanoids[id] = nil
+					ESP.RemovePlayer(id)
 					continue
 				end
 			end
 			local Username = Player.Name
 			local DisplayName = Player.DisplayName
 			local UserId = Player.UserId
-			Humanoids[InstId(inst)] = Human
+			Humanoids[id] = Human
 			ESP.AddPlayer(inst, IsLocal, Health, MaxHealth, Username, DisplayName, UserId, TeamName, ToolName, true, Human)
 			continue
 		end
@@ -296,17 +475,35 @@ local function PostLocal()
 end
 
 local function Render()
+	if SoundESP then
+		for id, table in RenderCache do
+			local model = table[1]
+			for _, name in BodyParts do
+				if model:FindFirstChild(name) then
+					Highlight(model[name], table[2])
+				end
+			end
+		end
+    end
+
+	if not GadgetESP then return end
     if type(workspace:GetChildren()) ~= "table" then return end
 
     for _, inst in workspace:GetChildren() do
 		if inst.ClassName == "Model" then
+			if not table.find(GadgetWhitelist, inst.Name) then continue end
+
 			local Map = inst:FindFirstChildOfClass("Folder")
-			if Map then
+			if Map and workspace:GetAttribute("Gamemode") then
 				if Map:FindFirstChild("DefaultCameras") then
 					if type(Map.DefaultCameras:GetChildren()) == "table" then
 						for _, part in Map.DefaultCameras:GetChildren() do
-							if part:GetAttribute("Disabled") == "false" and part:FindFirstChild("Cam") and not part:FindFirstChild("Owner") then
+							if part:GetAttribute("Disabled") == "false" and part:FindFirstChild("Cam") then
+								if part:FindFirstChild("Owner") and not TeamGadgetESP then
+									continue
+								end
 								HLib.Highlight(part.Cam, HighlightColor, .2, .8, .6)
+
 								local Position, Visible = Camera:WorldToScreenPoint(part.Cam.Position)
 								if Visible then
 									local NewPos = Vector2.new(Position.x, Position.y - 6.5)
@@ -329,7 +526,7 @@ local function Render()
 				PPart = inst.Root
 			end
 
-            if inst:FindFirstChild("Owner") then
+            if inst:FindFirstChild("Owner") and not TeamGadgetESP then
                 if inst.Owner.ClassName == "BillboardGui" then continue end
             end
 
@@ -338,31 +535,114 @@ local function Render()
 				if inst.PrimaryPart:FindFirstChild("DefuserFlag") then continue end
 			end
 
-            local Continue = false
-            for _, v in GadgetWhitelist do
-                if inst.Name == v then Continue = true end
-            end
-            if not Continue then continue end
-
             if not PPart then continue end
-			HLib.Highlight(PPart, HighlightColor, 0.2, 0.8, 1)
+			HLib.Highlight(PPart, GadgetColors[inst.Name], 0.2, 0.8, 1)
 
             if not PPart then continue end
             local Position, Visible = Camera:WorldToScreenPoint(PPart.Position)
             if Visible then
                 local NewPos = Vector2.new(Position.x, Position.y - 6.5)
-                DrawingImmediate.OutlinedText(NewPos, 13, TextColor, 1, AddSpaces(inst.Name), true)
+                DrawingImmediate.OutlinedText(NewPos, 13, GadgetColors[inst.Name], 1, AddSpaces(inst.Name), true)
             end
 		end
     end
 end
 
+local UI = loadstring(game:HttpGet("https://raw.githubusercontent.com/okdude42/ui-lib/refs/heads/main/SevereLib.lua"))()
+
+local window = UI:createwindow({
+    Title = "Operation One | Andris",
+    Version = "VX",
+    Keybind = "RightShift",
+    ConfigFolder = "AndrisOP1",
+    CustomResolution = Vector2.new(580, 360),
+    DPIScale = 1.0,
+    CompactSettings = false,
+    DefaultTab = "Main", 
+    TabAlignment = "Center",
+    DefaultColor = Color3.fromRGB(28, 27, 31),
+    DefaultAccent = Color3.fromRGB(208, 188, 255),
+    DefaultSnowfall = true,
+    DefaultScale = 1.0,
+    DefaultFont = 0,
+})
+
+local tabMain = window:createtab("Main")
+local tabSettings = window:createtab("Settings")
+
+window:createlabel(tabMain, "ESP support requires ESP to be enabled in severe", 1)
+
+window:createtoggle(tabMain, {
+    Name = "Enable ESP support",
+    Col = 1,
+    Default = true,
+    Callback = function(val)
+		bESP = val
+		if not val then
+			_G.ESPList = {}
+			clear_model_data()
+		end
+	end
+})
+
+window:createtoggle(tabMain, {
+    Name = "Show teammates",
+    Col = 1,
+    Default = false,
+    Callback = function(val)
+		TeammateESP = val
+		if not val then
+			_G.ESPList = {}
+			clear_model_data()
+		end
+	end
+})
+
+window:createseparator(tabMain, 1)
+
+window:createtoggle(tabMain, {
+    Name = "Enable Gadget ESP",
+    Col = 1,
+    Default = true,
+    Callback = function(val)
+		GadgetESP = val
+	end
+})
+
+window:createtoggle(tabMain, {
+    Name = "Show your team\'s gadgets",
+    Col = 1,
+    Default = false,
+    Callback = function(val)
+		TeamGadgetESP = val
+	end
+})
+
+window:createlabel(tabMain, "ESP that only activates on sound", 2)
+window:createlabel(tabMain, "This doesn\'t require severe\'s ESP", 2)
+
+window:createtoggle(tabMain, {
+    Name = "Enable Sound ESP",
+    Col = 2,
+    Default = false,
+    Callback = function(val)
+		SoundESP = val
+		if not val then
+			PlayerCache = {}
+			RenderCache = {}
+		end
+	end
+})
+
 clear_model_data()
 
 print("Loaded")
 
-if Color3Offset ~= 0 then
-    RunService.PreLocal:Connect(PreLocal)
-end
+RunService.PreLocal:Connect(PreLocal)
 RunService.PostLocal:Connect(PostLocal)
 RunService.Render:Connect(Render)
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Games/refs/heads/main/OP1SoundESP.lua"))()
+
+else
+	print("Wrong game")
+end
