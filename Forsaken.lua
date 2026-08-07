@@ -9,7 +9,6 @@ local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 local Map = workspace.Map
 local Ingame = Map.Ingame
-local Killers = workspace.Players.Killers
 local ItemCache = {}
 local bSurv = false
 local bKill = false
@@ -120,8 +119,9 @@ local function GetPart(inst)
         if #ReturnTable ~= 0 then return ReturnTable end
     end
 
-    if inst.Name == "MisterBeast" then return inst:FindFirstChildOfClass("MeshPart") end
-    if inst.Name == "VineModel" then return inst:FindFirstChild("Tentacle") end
+    local Name = inst.Name
+    if Name == "MisterBeast" then return inst:FindFirstChildOfClass("MeshPart") end
+    if Name == "VineModel" then return inst:FindFirstChild("Tentacle") end
 
     local s, p = pcall(function()
         return inst.PrimaryPart
@@ -136,17 +136,18 @@ local function Highlight(inst, color)
         return inst.Position
     end)
     if s then
-        h.Highlight(inst, color, .25, .7, .7)
+        h.Highlight(inst, color, .18, .7, .7)
     end
 end
 
 RunService.PreLocal:Connect(function()
     if LocalPlayer.Character then
         if LocalPlayer.Character.Parent then
-            if LocalPlayer.Character.Parent.Name == "Survivors" then
+            local Name = LocalPlayer.Character.Parent.Name
+            if Name == "Survivors" then
                 bSurv = true
                 bKill = false
-            elseif LocalPlayer.Character.Parent.Name == "Killers" then
+            elseif Name == "Killers" then
                 bSurv = false
                 bKill = true
             else
@@ -171,13 +172,14 @@ RunService.PreLocal:Connect(function()
         if not id then continue end
         if ItemCache[id] then continue end
 
-        if table.find(Names, inst.Name) then
+        local Name = inst.Name
+        if table.find(Names, Name) then
             ItemCache[id] = inst
             continue
         end
 
         for _, name in PNames do
-            if string.find(inst.Name, name) then
+            if string.find(Name, name) then
                 ItemCache[id] = inst
                 continue
             end
@@ -189,19 +191,11 @@ RunService.PreLocal:Connect(function()
         end
     end
 
-    for _, inst in Killers:GetChildren() do
-        if inst.Name == "Noli" and not ItemCache[InstId(inst)] then
-            if Players[inst:GetAttribute("Username")].Character ~= inst and InstId(inst) and #Killers:GetChildren() > 1 then
-                ItemCache[InstId(inst)] = inst
-                continue
-            end
-        end
-    end
-
     if Map:FindFirstChild("Azure") then
-        local id = InstId(Map.Azure)
+        local Azure = Map.Azure
+        local id = InstId(Azure)
         if id and not ItemCache[id] then
-            ItemCache[id] = Map.Azure
+            ItemCache[id] = Azure
         end
     end
 
@@ -210,15 +204,17 @@ RunService.PreLocal:Connect(function()
         if not id then continue end
         if ItemCache[id] then continue end
 
-        if inst.Name == "BloxyCola" then
+        local Name = inst.Name
+        if Name == "BloxyCola" then
             ItemCache[id] = inst
-        elseif inst.Name == "Medkit" then
+        elseif Name == "Medkit" then
             ItemCache[id] = inst
         end
     end
 
     for _, inst in Ingame:GetChildren() do
-        if string.find(inst.Name, "JohnDoeTrail") or string.find(inst.Name, "Shadows") then
+        local Name = inst.Name
+        if string.find(Name, "JohnDoeTrail") or string.find(Name, "Shadows") then
             for _, part in inst:GetChildren() do
                 local id = InstId(part)
                 if not id then continue end
@@ -236,18 +232,15 @@ RunService.PreLocal:Connect(function()
         if not id then continue end
         if ItemCache[id] then continue end
 
-        if inst.Name == "Generator" and inst:FindFirstChild("Progress") then
+        local Name = inst.Name
+        if Name == "Generator" and inst:FindFirstChild("Progress") then
             local s, r = pcall(function()
                 return inst.Progress.Value
             end)
             if s and r ~= 100 then
                 ItemCache[id] = inst
             end
-        elseif inst.Name == "FakeGenerator" then
-            ItemCache[id] = inst
-        elseif inst.Name == "BloxyCola" then
-            ItemCache[id] = inst
-        elseif inst.Name == "Medkit" then
+        elseif Name == "FakeGenerator" or Name == "BloxyCola" or Name == "Medkit" then
             ItemCache[id] = inst
         end
     end
@@ -255,7 +248,6 @@ end)
 
 RunService.Render:Connect(function()
     for id, inst in ItemCache do
-        local Parent
         local Name
         if not inst or not inst.Parent then
             ItemCache[id] = nil
