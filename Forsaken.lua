@@ -9,6 +9,7 @@ local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 local Map = workspace.Map
 local Ingame = Map.Ingame
+local Killers = workspace.Players.Killers
 local ItemCache = {}
 local bSurv = false
 local bKill = false
@@ -188,6 +189,15 @@ RunService.PreLocal:Connect(function()
         if inst:FindFirstChild("Humanoid") then
             ItemCache[id] = inst
             continue
+        end
+    end
+
+    for _, inst in Killers:GetChildren() do
+        if inst.Name == "Noli" and not ItemCache[InstId(inst)] then
+            if Players[inst:GetAttribute("Username")].Character ~= inst and InstId(inst) and #Killers:GetChildren() > 1 then
+                ItemCache[InstId(inst)] = inst
+                continue
+            end
         end
     end
 
