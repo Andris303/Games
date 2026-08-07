@@ -113,18 +113,15 @@ local function ModelToPlayer(inst)
 	if not inst or not inst.Parent then return nil end
 	if not inst:FindFirstChild("torso") then return nil end
 	for _, Char in workspace:GetChildren() do
-		local IsPlr = Char:GetAttribute("Team")
-		if IsPlr then
-			if Char:FindFirstChild("collision") and Char:FindFirstChild("Electronic") then
-				if not Char:FindFirstChild("Humanoid") then continue end
-				local p = Char.collision.Position
-				local ModelPos = inst.torso.Position
-				CharPos = Vector3.new(p.x + .02, p.y + .25, p.z + .1)
-				local Desync = math.floor(vector.magnitude(ModelPos - CharPos) * 100) / 100
+		if Char:FindFirstChild("collision") and Char:FindFirstChild("Electronic") then
+			if not Char:FindFirstChild("Humanoid") then continue end
+			local p = Char.collision.Position
+			local ModelPos = inst.torso.Position
+			CharPos = Vector3.new(p.x + .02, p.y + .25, p.z + .1)
+			local Desync = math.floor(vector.magnitude(ModelPos - CharPos) * 100) / 100
 
-				if Desync < 1.3 then
-					return Players:FindFirstChild(Char.Name), Char
-				end
+			if Desync < 1.3 then
+				return Players:FindFirstChild(Char.Name), Char
 			end
 		end
 	end
