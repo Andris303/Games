@@ -222,7 +222,7 @@ local function PostLocal()
 		if type(inst:GetChildren()) == "table" then
 			local Tool
 			for _, part in inst:GetChildren() do
-				if part:GetAttribute("loadout_type") then
+				if part:FindFirstChild("StateObject") then
 					Tool = part
 				end
 			end
@@ -258,7 +258,7 @@ local function PostLocal()
 
 		local ToolName = "None"
 		for _, part in inst:GetChildren() do
-			if part:GetAttribute("loadout_type") then
+			if part:FindFirstChild("StateObject") then
 				ToolName = part.Name
 			end
 		end
@@ -317,6 +317,8 @@ local function Render()
 					end
 				end
 			end
+
+			if not inst:FindFirstChild("StateObject") then continue end
 
 			local PPart = inst.PrimaryPart
 			if inst.Name ~= "Claymore" then
