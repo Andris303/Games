@@ -15,27 +15,6 @@ local FocusTimer = 0
 
 local h = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))()
 
---[[
-local RobloxVersion = _G.RobloxVersion or "version-9affbe66b2624d20"
-
-local SoundOffsets
-local s, RawOffsets = pcall(function()
-    return game:HttpGet("https://offsets.imtheo.lol/" .. RobloxVersion .. "/offsets.json")
-end)
-if s and RawOffsets then
-    local s2, decoded = pcall(function()
-        return crypt.json.decode(RawOffsets)
-    end)
-    if s2 and decoded and decoded.Offsets then
-        SoundOffsets = decoded.Offsets.Sound
-    end
-end
-
-local MaxDist = SoundOffsets.RollOffMaxDistance
-local MinDist = SoundOffsets.RollOffMinDistance
-local Volume = SoundOffsets.Volume
-]]
-
 BodyParts = {"head", "torso", "shoulder1", "arm1", "shoulder2", "arm2", "hip1", "hip2", "leg1", "leg2",}
 
 local function InstId(inst)
@@ -79,6 +58,8 @@ local function Highlight(inst, color)
 end
 
 RunService.PreLocal:Connect(function()
+    if not _G.BSoundESP then return end
+
     local LocalChar = LocalPlayer.Character
     local root
     if LocalChar then
@@ -227,9 +208,10 @@ RunService.PreLocal:Connect(function()
 end)
 
 RunService.Render:Connect(function()
-    for id, table in RenderCache do
+    if not _G.BSoundESP then return end
 
-    local model = table[1]
+    for id, table in RenderCache do
+        local model = table[1]
         for _, name in BodyParts do
             if model:FindFirstChild(name) then
                 Highlight(model[name], table[2])
