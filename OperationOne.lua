@@ -93,12 +93,14 @@ end
 
 local function ColorGun(inst)
     task.wait(.7)
-	if inst:IsA("UnionOperation") or inst:IsA("Part") then
+	local instClass = inst.ClassName
+	if instClass == "UnionOperation" or instClass == "Part" then
 		memory.writei32(inst, Color3Offset, Encoder(BaseColor))
 	end
-	if inst:IsA("Model") then
+	if instClass == "Model" then
 		for _, part in inst:GetChildren() do
-			if part:IsA("UnionOperation") or part:IsA("Part") then
+			local partClass = part.ClassName
+			if partClass == "UnionOperation" or partClass == "Part" then
 				if part.Name ~= "RedDot" and part.Name ~= "Dot" and part.Name ~= "TintGlass" then
 					memory.writei32(part, Color3Offset, Encoder(AttachmentColor))
 				end
@@ -300,7 +302,7 @@ local function Render()
     if type(workspace:GetChildren()) ~= "table" then return end
 
     for _, inst in workspace:GetChildren() do
-		if inst:IsA("Model") then
+		if inst.ClassName == "Model" then
 			local Map = inst:FindFirstChildOfClass("Folder")
 			if Map then
 				if Map:FindFirstChild("DefaultCameras") then
@@ -318,18 +320,18 @@ local function Render()
 					end
 				end
 			end
-        end
-        if inst:IsA("Model") then
+
 			local PPart = inst.PrimaryPart
 			if inst.Name ~= "Claymore" then
 				if not PPart then continue end
-				if not PPart:IsA("Part") and not PPart:IsA("UnionOperation") then continue end
+				local PPartClass = PPart.ClassName
+				if PPartClass ~= "Part" and PPartClass ~= "UnionOperation" then continue end
 			elseif inst:FindFirstChild("Root") then
 				PPart = inst.Root
 			end
 
             if inst:FindFirstChild("Owner") then
-                if inst.Owner:IsA("BillboardGui") then continue end
+                if inst.Owner.ClassName == "BillboardGui" then continue end
             end
 
 			if inst.Name == "Defuser" then
