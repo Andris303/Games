@@ -3,6 +3,8 @@
 
 if game.GameId == 6331902150 then
 
+local UI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/UI.lua"))()
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
@@ -14,6 +16,121 @@ local ItemCache = {}
 local bSurv = false
 local bKill = false
 local bInUI = false
+local bESP = true
+local bAutoBlock = false
+local bChangingBind = false
+local KillerAbTime = {}
+local KillerAb = {}
+local tempactive = false
+local active = false
+local bt = Drawing.new("Text")
+local bt2 = Drawing.new("Text")
+local viewport = Camera.ViewportSize
+local isguest = false
+local FocusTimer = 0
+local bBlockOnInv = false
+local window
+local keybindlabel
+
+local suc2, bool2 = pcall(function()
+    return LocalPlayer.Character.Name == "Guest1337"
+end)
+
+if suc2 and bool2 then
+    isguest = true
+    bt.Text = "AUTO BLOCK"
+    bt.Color = Color3.fromRGB(248,131,121)
+else
+    isguest = false
+    bt.Color = Color3.fromRGB(109,129,150)
+    bt.Text = "AUTO BLOCK (inactive)"
+end
+
+bt.Size = 30
+bt.Font = 0
+local length = bt.TextBounds.x
+local height = bt.TextBounds.y
+bt.Position = Vector2.new(viewport.x / 2 - length / 2, (viewport.y - viewport.y / 4) - height)
+bt.Outline = true
+bt.Visible = false
+
+bt2.Text = "BLOCK"
+bt2.Size = 35
+bt2.Font = 0
+local length2 = bt2.TextBounds.x
+local height2 = bt2.TextBounds.y
+bt2.Position = Vector2.new(viewport.x / 2 - length2 / 2, viewport.y / 2 - height2 / 2)
+bt2.Color = Color3.fromRGB(255, 25, 25)
+bt2.Outline = true
+bt2.Visible = false
+
+local KEYBIND = "V"
+local blockkeystr = _G.BlockKey or "Q"
+local BLOCK_KEY = 0x51
+local DELAY = 0
+local ATTACK_LINGER = 50
+local CLOSE_RADIUS = 3
+local ATTACK_LENGTH = 7.5
+local EXTRA_FORWARD = 4
+local ATTACK_WIDTH = 5
+local EXTRA_WIDTH = 3.5
+local HEIGHT = 6
+local EXTRA_HEIGHT = 1
+
+if #blockkeystr == 1 then
+    BLOCK_KEY = string.byte(string.upper(blockkeystr))
+end
+
+local KillerData = {
+    ["C00lkid"] = {
+        DELAY = 0,
+        CLOSE_RADIUS = 3,
+        ATTACK_LINGER = 35,
+        ATTACK_LENGTH = 5,
+    },
+    ["Slasher"] = {
+        DELAY = 0,
+        CLOSE_RADIUS = 3,
+        ATTACK_LINGER = 40,
+        ATTACK_LENGTH = 7.5,
+    },
+    ["JohnDoe"] = {
+        DELAY = .2,
+        CLOSE_RADIUS = 3,
+        ATTACK_LINGER = 40,
+        ATTACK_LENGTH = 7.5,
+    },
+    ["Noli"] = {
+        DELAY = .15,
+        CLOSE_RADIUS = 3,
+        ATTACK_LINGER = 40,
+        ATTACK_LENGTH = 8,
+    },
+    ["1x1x1x1"] = {
+        DELAY = .2,
+        CLOSE_RADIUS = 3,
+        ATTACK_LINGER = 40,
+        ATTACK_LENGTH = 7.5,
+    },
+    ["Guest666"] = {
+        DELAY = .1,
+        CLOSE_RADIUS = 2,
+        ATTACK_LINGER = 40,
+        ATTACK_LENGTH = 7.25,
+    },
+    ["Nosferatu"] = {
+        DELAY = .1,
+        CLOSE_RADIUS = 3,
+        ATTACK_LINGER = 45,
+        ATTACK_LENGTH = 8.5,
+    },
+    ["Azure"] = {
+        DELAY = .02,
+        CLOSE_RADIUS = 2,
+        ATTACK_LINGER = 40,
+        ATTACK_LENGTH = 8.5,
+    },
+}
 
 local c = {
     danger = Color3.fromRGB(224,17,95),
@@ -141,7 +258,231 @@ local function Highlight(inst, color)
     end
 end
 
-RunService.PreLocal:Connect(function()
+local function ShouldBlock(kp, kl, lp, prog)
+    local forward = vector.create(kl.x, 0, kl.z)
+
+    if vector.magnitude(forward) == 0 then
+        return false
+    end
+
+    forward = forward / vector.magnitude(forward)
+    local offset = lp - kp
+    local horizontalOffset = vector.create(offset.x, 0, offset.z)
+    local horizontalDistance = vector.magnitude(horizontalOffset)
+
+    if horizontalDistance <= CLOSE_RADIUS and math.abs(offset.y) <= (HEIGHT / 2 + EXTRA_HEIGHT) then
+        return true
+    end
+
+    local forwardDistance = vector.dot(offset, forward)
+
+    if forwardDistance < -1 then
+        return false
+    end
+
+    local extraForward = EXTRA_FORWARD
+
+    if prog > 0.5 then
+        extraForward = 4 - (3 * (prog - 0.5) / 0.5)
+    end
+
+    local maxForward = ATTACK_LENGTH + extraForward
+
+    if forwardDistance > maxForward then
+        return false
+    end
+
+    local right = vector.create(-forward.z, 0, forward.x)
+    local sideDistance = math.abs(vector.dot(offset, right))
+    local alpha = math.clamp(forwardDistance / maxForward, 0, 1)
+    local baseHalfWidth = ATTACK_WIDTH / 2
+    local allowedHalfWidth = baseHalfWidth + (EXTRA_WIDTH * alpha)
+
+    if math.abs(offset.y) > (HEIGHT / 2 + EXTRA_HEIGHT) then
+        return false
+    end
+
+    if sideDistance <= allowedHalfWidth then
+        return true
+    else
+        return false
+    end
+end
+
+local function BlockChecker(KRoot, LRoot, inst)
+    if DELAY > 0 then
+        task.wait(DELAY)
+    end
+    local c = 0
+    while c <= ATTACK_LINGER do
+        if not active or not isguest or not bAutoBlock then break end
+        c += 1
+        local attackProgress = c / ATTACK_LINGER
+        local s, t = pcall(function()
+            return {
+                kp = KRoot.Position,
+                kl = KRoot.LookVector,
+                lp = LRoot.Position,
+            }
+        end)
+        if s and t then
+            if ShouldBlock(t.kp, t.kl, t.lp, attackProgress) then
+                if not bBlockOnInv then
+                    if inst:GetAttribute("Invincible") or inst:GetAttribute("StunnedDisabled") then
+                        task.wait(.01)
+                        continue
+                    end
+                end
+
+                bt2.Visible = true
+                keypress(BLOCK_KEY)
+                task.wait(.2)
+                keyrelease(BLOCK_KEY)
+                task.wait(.8)
+                bt2.Visible = false
+                break
+            end
+        end
+        task.wait(.01)
+    end
+end
+
+local function PostLocal()
+    local syncautoblock = window:getvalue("Enable Auto block")
+    local syncinv = window:getvalue("Block when the killer is stun immune")
+    local syncesp = window:getvalue("Enable ESP")
+    local synckeybind = window:getvalue("AutoBlockKeybind")
+
+    if bAutoBlock ~= syncautoblock then
+        KillerAb = {}
+        KillerAbTime = {}
+        tempactive = false
+		active = false
+        bt.Visible = false
+        bt2.Visible = false
+
+        bAutoBlock = syncautoblock
+    end
+
+    if keybindlabel.Txt.Text ~= "Current keybind: " .. synckeybind then
+        KEYBIND = synckeybind
+        keybindlabel.Txt.Text = "Current keybind: " .. synckeybind
+    end
+
+    if bESP ~= syncesp then
+        bESP = syncesp
+		if not bESP then
+			ItemCache = {}
+		end
+    end
+
+    if bBlockOnInv ~= syncinv then
+        bBlockOnInv = syncinv
+    end
+
+    local tempisguest
+
+    local suc, bool = pcall(function()
+        return LocalPlayer.Character.Name == "Guest1337"
+    end)
+
+    if suc and bool then
+        tempisguest = true
+    else
+        tempisguest = false
+    end
+
+    if tempisguest ~= isguest then
+        isguest = tempisguest
+
+        if isguest then
+            bt.Color = Color3.fromRGB(248,131,121)
+            bt.Text = "AUTO BLOCK"
+            length = bt.TextBounds.x
+            height = bt.TextBounds.y
+            bt.Position = Vector2.new(viewport.x / 2 - length / 2, (viewport.y - viewport.y / 4) - height)
+        else
+            bt.Color = Color3.fromRGB(109,129,150)
+            bt.Text = "AUTO BLOCK (inactive)"
+            length = bt.TextBounds.x
+            height = bt.TextBounds.y
+            bt.Position = Vector2.new(viewport.x / 2 - length / 2, (viewport.y - viewport.y / 4) - height)
+        end
+    end
+
+    if Camera.ViewportSize ~= viewport then
+        viewport = Camera.ViewportSize
+        length = bt.TextBounds.x
+        height = bt.TextBounds.y
+        bt.Position = Vector2.new(viewport.x / 2 - length / 2, (viewport.y - viewport.y / 4) - height)
+    end
+
+    local pressed = false
+
+    for _, v in getpressedkeys() do
+        if v == KEYBIND then
+            pressed = true
+            break
+        end
+    end
+
+    if bAutoBlock and pressed and not tempactive then
+        tempactive = true
+        active = not active
+        bt.Visible = active
+
+        KillerAbTime = {}
+        KillerAb = {}
+
+        if not active then
+            bt2.Visible = false
+        end
+    elseif not pressed then
+        tempactive = false
+    end
+
+    if bt2.Visible then
+        local center = Vector2.new(viewport.x / 2 - length2 / 2, viewport.y / 2 - height2 / 2)
+        bt2.Position = Vector2.new(center.x + math.random(-5, 5), center.y + math.random(-5, 5))
+    end
+
+    for _, inst in Killers:GetChildren() do
+        local id = InstId(inst)
+        if id then
+            if KillerData[inst.Name] then
+                DELAY = KillerData[inst.Name]["DELAY"]
+                CLOSE_RADIUS = KillerData[inst.Name]["CLOSE_RADIUS"]
+                ATTACK_LINGER = KillerData[inst.Name]["ATTACK_LINGER"]
+                ATTACK_LENGTH = KillerData[inst.Name]["ATTACK_LENGTH"]
+            end
+            local AbTime = inst:GetAttribute("AbilityLastUsed")
+            local Ab = inst:GetAttribute("AbilitiesUsed")
+            if not AbTime or not Ab then continue end
+            if not KillerAbTime[id] or not KillerAb[id] then
+                KillerAbTime[id] = inst:GetAttribute("AbilityLastUsed")
+                KillerAb[id] = inst:GetAttribute("AbilitiesUsed")
+            elseif KillerAbTime[id] ~= AbTime and KillerAb[id] == Ab then
+                KillerAb[id] = Ab
+                KillerAbTime[id] = AbTime
+
+                local LRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                local KRoot = inst:FindFirstChild("HumanoidRootPart")
+                if KRoot and LRoot then
+                    if active and isguest then
+                        task.spawn(BlockChecker, KRoot, LRoot, inst)
+                    end
+                end
+            elseif KillerAbTime[id] ~= AbTime and KillerAb[id] < Ab then
+                KillerAb[id] = Ab
+                KillerAbTime[id] = AbTime
+            end
+        end
+    end
+end
+
+local function PreLocal()
+    if not bESP then return end
+
     if LocalPlayer.Character then
         if LocalPlayer.Character.Parent then
             local Name = LocalPlayer.Character.Parent.Name
@@ -254,9 +595,9 @@ RunService.PreLocal:Connect(function()
             ItemCache[id] = inst
         end
     end
-end)
+end
 
-RunService.Render:Connect(function()
+local function Render()
     for id, inst in ItemCache do
         local Name
         if not inst or not inst.Parent then
@@ -355,7 +696,110 @@ RunService.Render:Connect(function()
             Highlight(Parts, color)
         end
     end
-end)
+end
+
+window = UI:createwindow({
+    Title = "Forsaken | Andris",
+    Version = "VX",
+    Keybind = "RightShift",
+    ConfigFolder = "AndrisForsaken",
+    CustomResolution = Vector2.new(580, 360),
+    DPIScale = 1.0,
+    CompactSettings = false,
+    DefaultTab = "Main", 
+    TabAlignment = "Center",
+    DefaultColor = Color3.fromRGB(28, 27, 31),
+    DefaultAccent = Color3.fromRGB(208, 188, 255),
+    DefaultSnowfall = true,
+    DefaultScale = 1.0,
+    DefaultFont = 0,
+})
+
+window:registerkey("AutoBlockKeybind", KEYBIND)
+KEYBIND = window:getvalue("AutoBlockKeybind")
+
+local tabMain = window:createtab("Main")
+local tabSettings = window:createtab("Settings")
+
+window:createlabel(tabMain, "ESP settings (AKA Highlighter)", 1)
+
+window:createtoggle(tabMain, {
+    Name = "Enable ESP",
+    Col = 1,
+    Default = true,
+    Callback = function(val)
+		bESP = val
+		if not val then
+			ItemCache = {}
+		end
+	end
+})
+
+window:createlabel(tabMain, "After enabling, you need to press your keybind", 2)
+
+window:createtoggle(tabMain, {
+    Name = "Enable Auto block",
+    Col = 2,
+    Default = false,
+    Callback = function(val)
+        KillerAb = {}
+        KillerAbTime = {}
+        tempactive = false
+		active = false
+        bt.Visible = false
+        bt2.Visible = false
+
+        bAutoBlock = val
+	end
+})
+
+window:createtoggle(tabMain, {
+    Name = "Block when the killer is stun immune",
+    Col = 2,
+    Default = false,
+    Callback = function(val)
+		bBlockOnInv = val
+	end
+})
+
+keybindlabel = window:createlabel(tabMain, "Current keybind: " .. KEYBIND, 2)
+
+local keybindbtn
+keybindbtn = window:createbutton(tabMain, {
+    Name = "Change keybind",
+    Col = 2,
+    Callback = function()
+        if bChangingBind then return end
+        task.spawn(function()
+            keybindbtn.Txt.Text = "Press any key.."
+            bChangingBind = true
+            local loop = true
+            while loop do
+                local key = getpressedkeys()
+
+                for i, v in key do
+                    if v ~= "LeftMouse" then
+                        tempactive = true
+                        KEYBIND = key[i]
+                        window:setvalue("AutoBlockKeybind", KEYBIND)
+                        keybindlabel.Txt.Text = "Current keybind: " .. KEYBIND
+                        keybindbtn.Txt.Text = "Change keybind"
+                        bChangingBind = false
+                        send_notification("Keybind set to: " .. KEYBIND, "info")
+                        loop = false
+                        break
+                    end
+                end
+
+                task.wait(.01)
+            end
+        end)
+    end
+})
+
+RunService.PostLocal:Connect(PostLocal)
+RunService.PreLocal:Connect(PreLocal)
+RunService.Render:Connect(Render)
 
 print("Loaded")
 
