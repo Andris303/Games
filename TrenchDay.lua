@@ -18,7 +18,7 @@ local function PostLocal()
         if not inst or not inst.Parent then
             ESP.RemovePlayer(ID)
         else
-            if not inst:FindFirstChild("Health") then continue end
+            if not inst:FindFirstChild("Humanoid") then continue end
             if _G.ESPHealths[ID] ~= inst.Humanoid.Health then
                 if inst.Humanoid.Health <= 0 then
                     ESP.RemovePlayer(ID)
