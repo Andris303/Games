@@ -82,7 +82,7 @@ if #blockkeystr == 1 then
 end
 
 local KillerData = {
-    ["C00lkid"] = {
+    ["c00lkidd"] = {
         DELAY = 0,
         CLOSE_RADIUS = 3,
         ATTACK_LINGER = 35,
