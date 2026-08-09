@@ -18,9 +18,11 @@ local bKill = false
 local bInUI = false
 local bESP = true
 local bAutoBlock = false
+local bShowBlock = false
 local bChangingBind = false
 local KillerAbTime = {}
 local KillerAb = {}
+local ActiveAttacks = {}
 local tempactive = false
 local active = false
 local bt = Drawing.new("Text")
@@ -68,67 +70,85 @@ local KEYBIND = "V"
 local blockkeystr = _G.BlockKey or "Q"
 local BLOCK_KEY = 0x51
 local DELAY = 0
-local ATTACK_LINGER = 50
-local CLOSE_RADIUS = 3
-local ATTACK_LENGTH = 7.5
+local ATTACK_LINGER = 35
+local START_WIDTH = 7.5
+local MAX_WIDTH = 13
+local WIDTH_POINT = 0.75
+local END_WIDTH = 5
 local EXTRA_FORWARD = 4
-local ATTACK_WIDTH = 5
-local EXTRA_WIDTH = 3.5
 local HEIGHT = 6
+local ATTACK_LENGTH = 7.5
 local EXTRA_HEIGHT = 1
+local CLOSE_RADIUS = 5
+local MIN_WIDTH_MULTIPLIER = 0.85
 
 if #blockkeystr == 1 then
     BLOCK_KEY = string.byte(string.upper(blockkeystr))
 end
 
 local KillerData = {
+    ["Default"] = {
+        DELAY = 0,
+        CLOSE_RADIUS = 5,
+        ATTACK_LINGER = 35,
+        ATTACK_LENGTH = 7.5,
+        HEIGHT = 6,
+    },
     ["c00lkidd"] = {
         DELAY = 0,
-        CLOSE_RADIUS = 3,
-        ATTACK_LINGER = 35,
+        CLOSE_RADIUS = 4,
+        ATTACK_LINGER = 30,
         ATTACK_LENGTH = 5,
+        HEIGHT = 6,
     },
     ["Slasher"] = {
         DELAY = 0,
-        CLOSE_RADIUS = 3,
-        ATTACK_LINGER = 40,
+        CLOSE_RADIUS = 5,
+        ATTACK_LINGER = 35,
         ATTACK_LENGTH = 7.5,
+        HEIGHT = 6,
     },
     ["JohnDoe"] = {
         DELAY = .2,
-        CLOSE_RADIUS = 3,
-        ATTACK_LINGER = 40,
+        CLOSE_RADIUS = 5,
+        ATTACK_LINGER = 35,
         ATTACK_LENGTH = 7.5,
+        HEIGHT = 6,
     },
     ["Noli"] = {
         DELAY = .15,
-        CLOSE_RADIUS = 3,
-        ATTACK_LINGER = 40,
+        CLOSE_RADIUS = 5,
+        ATTACK_LINGER = 35,
         ATTACK_LENGTH = 8,
+        HEIGHT = 6,
     },
     ["1x1x1x1"] = {
         DELAY = .2,
-        CLOSE_RADIUS = 3,
-        ATTACK_LINGER = 40,
+        CLOSE_RADIUS = 5,
+        ATTACK_LINGER = 35,
         ATTACK_LENGTH = 7.5,
+        HEIGHT = 6,
     },
-    ["Guest666"] = {
+    ["Sixer"] = {
         DELAY = .1,
-        CLOSE_RADIUS = 2,
-        ATTACK_LINGER = 40,
-        ATTACK_LENGTH = 7.25,
+        CLOSE_RADIUS = 5,
+        ATTACK_LINGER = 35,
+        ATTACK_LENGTH = 9.5,
+        HEIGHT = 8,
     },
     ["Nosferatu"] = {
         DELAY = .1,
-        CLOSE_RADIUS = 3,
-        ATTACK_LINGER = 45,
+        CLOSE_RADIUS = 5,
+        ATTACK_LINGER = 40,
         ATTACK_LENGTH = 8.5,
+        HEIGHT = 6,
     },
     ["Azure"] = {
         DELAY = .02,
-        CLOSE_RADIUS = 2,
-        ATTACK_LINGER = 40,
+        CLOSE_RADIUS = 5,
+        ATTACK_LINGER = 35,
         ATTACK_LENGTH = 8.5,
+        HEIGHT = 6,
     },
 }
 
@@ -260,7 +280,6 @@ end
 
 local function ShouldBlock(kp, kl, lp, prog)
     local forward = vector.create(kl.x, 0, kl.z)
-
     if vector.magnitude(forward) == 0 then
         return false
     end
@@ -275,37 +294,134 @@ local function ShouldBlock(kp, kl, lp, prog)
     end
 
     local forwardDistance = vector.dot(offset, forward)
-
     if forwardDistance < -1 then
         return false
     end
 
     local extraForward = EXTRA_FORWARD
-
     if prog > 0.5 then
-        extraForward = 4 - (3 * (prog - 0.5) / 0.5)
+        extraForward = 4 - (2 * (prog - 0.5) / 0.5)
     end
 
     local maxForward = ATTACK_LENGTH + extraForward
-
     if forwardDistance > maxForward then
         return false
     end
 
-    local right = vector.create(-forward.z, 0, forward.x)
-    local sideDistance = math.abs(vector.dot(offset, right))
-    local alpha = math.clamp(forwardDistance / maxForward, 0, 1)
-    local baseHalfWidth = ATTACK_WIDTH / 2
-    local allowedHalfWidth = baseHalfWidth + (EXTRA_WIDTH * alpha)
+    local startHalfWidth = START_WIDTH / 2
+    local maxHalfWidth = MAX_WIDTH / 2
+    local endHalfWidth = END_WIDTH / 2
+    local midDistance = maxForward * WIDTH_POINT
+
+    local allowedHalfWidth
+    if forwardDistance <= midDistance then
+        local alpha = math.clamp(forwardDistance / midDistance, 0, 1)
+        allowedHalfWidth = startHalfWidth + (maxHalfWidth - startHalfWidth) * alpha
+    else
+        local alpha = math.clamp((forwardDistance - midDistance) / (maxForward - midDistance), 0, 1 )
+        allowedHalfWidth = maxHalfWidth + (endHalfWidth - maxHalfWidth) * alpha
+    end
+
+    if prog > 0.5 then
+        local narrowAlpha = (prog - 0.5) / 0.5
+        local widthMultiplier = 1 - ((1 - MIN_WIDTH_MULTIPLIER) * narrowAlpha)
+        allowedHalfWidth *= widthMultiplier
+    end
 
     if math.abs(offset.y) > (HEIGHT / 2 + EXTRA_HEIGHT) then
         return false
     end
 
-    if sideDistance <= allowedHalfWidth then
-        return true
-    else
-        return false
+    local right = vector.create(-forward.z, 0, forward.x)
+    local sideDistance = math.abs(vector.dot(offset, right))
+
+    return sideDistance <= allowedHalfWidth
+end
+
+local function RenderBlockShape(KRoot, LRoot, prog)
+    if not KRoot or not LRoot then return end
+
+    local kp = KRoot.Position
+    local kl = KRoot.LookVector
+    local forward = vector.create(kl.X, 0, kl.Z)
+
+    if vector.magnitude(forward) == 0 then
+        return
+    end
+
+    forward = forward / vector.magnitude(forward)
+
+    local right = vector.create(-forward.Z, 0, forward.X)
+    local extraForward = EXTRA_FORWARD
+
+    if prog > 0.5 then
+        extraForward = 4 - (2 * (prog - 0.5) / 0.5)
+    end
+
+    local maxForward = ATTACK_LENGTH + extraForward
+    local startHalfWidth = START_WIDTH / 2
+    local maxHalfWidth = MAX_WIDTH / 2
+    local endHalfWidth = END_WIDTH / 2
+    local midDistance = maxForward * WIDTH_POINT
+
+    local function GetHalfWidth(distance)
+        local thing
+        if distance <= midDistance then
+            local alpha = math.clamp(distance / midDistance, 0, 1)
+            thing = startHalfWidth + (maxHalfWidth - startHalfWidth) * alpha
+        else
+            local alpha = math.clamp((distance - midDistance) / (maxForward - midDistance), 0, 1)
+            thing = maxHalfWidth + (endHalfWidth - maxHalfWidth) * alpha
+        end
+        if prog > 0.5 then
+            local narrowAlpha = (prog - 0.5) / 0.5
+            local widthMultiplier = 1 - ((1 - MIN_WIDTH_MULTIPLIER) * narrowAlpha)
+            thing *= widthMultiplier
+        end
+        return thing
+    end
+
+    local function WorldToScreen(position)
+        local p, visible = Camera:WorldToScreenPoint(position)
+        if not visible then
+            return nil
+        end
+        return Vector2.new(p.X, p.Y)
+    end
+
+    local startLeft = kp - right * startHalfWidth
+    local startRight = kp + right * startHalfWidth
+    local midCenter = kp + forward * midDistance
+    local midLeft = midCenter - right * GetHalfWidth(midDistance)
+    local midRight = midCenter + right * GetHalfWidth(midDistance)
+    local endCenter = kp + forward * maxForward
+    local endLeft = endCenter - right * endHalfWidth
+    local endRight = endCenter + right * endHalfWidth
+
+    local points = {
+        WorldToScreen(startLeft),
+        WorldToScreen(midLeft),
+        WorldToScreen(endLeft),
+        WorldToScreen(endRight),
+        WorldToScreen(midRight),
+        WorldToScreen(startRight),
+    }
+
+    local fillOpacity = 0.2
+
+    if points[1] and points[2] and points[3] and points[4] and points[5] and points[6] then
+        DrawingImmediate.FilledTriangle(points[1], points[2], points[3], c.yellow, fillOpacity)
+        DrawingImmediate.FilledTriangle(points[1], points[3], points[4], c.yellow, fillOpacity)
+        DrawingImmediate.FilledTriangle(points[1], points[4], points[5], c.yellow, fillOpacity)
+        DrawingImmediate.FilledTriangle(points[1], points[5], points[6], c.yellow, fillOpacity)
+    end
+
+    for i = 1, #points do
+        local a = points[i]
+        local b = points[i % #points + 1]
+        if a and b then
+            DrawingImmediate.Line(a, b, c.yellow, 1, 3, 1)
+        end
     end
 end
 
@@ -318,6 +434,10 @@ local function BlockChecker(KRoot, LRoot, inst)
         if not active or not isguest or not bAutoBlock then break end
         c += 1
         local attackProgress = c / ATTACK_LINGER
+        if ActiveAttacks[KRoot] then
+            ActiveAttacks[KRoot].Progress = attackProgress
+        end
+
         local s, t = pcall(function()
             return {
                 kp = KRoot.Position,
@@ -333,8 +453,8 @@ local function BlockChecker(KRoot, LRoot, inst)
                         continue
                     end
                 end
-
                 bt2.Visible = true
+                ActiveAttacks[KRoot] = nil
                 keypress(BLOCK_KEY)
                 task.wait(.2)
                 keyrelease(BLOCK_KEY)
@@ -345,12 +465,14 @@ local function BlockChecker(KRoot, LRoot, inst)
         end
         task.wait(.01)
     end
+    ActiveAttacks[KRoot] = nil
 end
 
 local function PostLocal()
     local syncautoblock = window:getvalue("Enable Auto block")
     local syncinv = window:getvalue("Block when the killer is stun immune")
     local syncesp = window:getvalue("Enable ESP")
+    local syncshowb = window:getvalue("Show Auto block range")
     local synckeybind = window:getvalue("AutoBlockKeybind")
 
     if bAutoBlock ~= syncautoblock then
@@ -378,6 +500,10 @@ local function PostLocal()
 
     if bBlockOnInv ~= syncinv then
         bBlockOnInv = syncinv
+    end
+
+    if bShowBlock ~= syncshowb then
+        bShowBlock = syncshowb
     end
 
     local tempisguest
@@ -455,12 +581,12 @@ local function PostLocal()
                 ATTACK_LINGER = KillerData[inst.Name]["ATTACK_LINGER"]
                 ATTACK_LENGTH = KillerData[inst.Name]["ATTACK_LENGTH"]
             end
-            local AbTime = inst:GetAttribute("AbilityLastUsed")
-            local Ab = inst:GetAttribute("AbilitiesUsed")
+            local AbTime = inst:GetAttribute("AbilityLastUsed") or 0
+            local Ab = inst:GetAttribute("AbilitiesUsed") or 0
             if not AbTime or not Ab then continue end
             if not KillerAbTime[id] or not KillerAb[id] then
-                KillerAbTime[id] = inst:GetAttribute("AbilityLastUsed")
-                KillerAb[id] = inst:GetAttribute("AbilitiesUsed")
+                KillerAbTime[id] = AbTime
+                KillerAb[id] = Ab
             elseif KillerAbTime[id] ~= AbTime and KillerAb[id] == Ab then
                 KillerAb[id] = Ab
                 KillerAbTime[id] = AbTime
@@ -469,6 +595,10 @@ local function PostLocal()
                 local KRoot = inst:FindFirstChild("HumanoidRootPart")
                 if KRoot and LRoot then
                     if active and isguest then
+                        ActiveAttacks[KRoot] = {
+                            LRoot = LRoot,
+                            Progress = 0
+                        }
                         task.spawn(BlockChecker, KRoot, LRoot, inst)
                     end
                 end
@@ -598,6 +728,16 @@ local function PreLocal()
 end
 
 local function Render()
+    if bShowBlock then
+        for KRoot, data in ActiveAttacks do
+            if KRoot and KRoot.Parent and data.LRoot and data.LRoot.Parent then
+                RenderBlockShape(KRoot, data.LRoot, data.Progress)
+            else
+                ActiveAttacks[KRoot] = nil
+            end
+        end
+    end
+
     for id, inst in ItemCache do
         local Name
         if not inst or not inst.Parent then
@@ -759,6 +899,15 @@ window:createtoggle(tabMain, {
     Default = false,
     Callback = function(val)
 		bBlockOnInv = val
+	end
+})
+
+window:createtoggle(tabMain, {
+    Name = "Show Auto block range",
+    Col = 2,
+    Default = false,
+    Callback = function(val)
+		bShowBlock = val
 	end
 })
 
