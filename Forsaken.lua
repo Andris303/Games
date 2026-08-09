@@ -665,9 +665,12 @@ local function PreLocal()
 
     for _, inst in Killers:GetChildren() do
         if inst.Name == "Noli" and not ItemCache[InstId(inst)] then
-            if Players[inst:GetAttribute("Username")].Character ~= inst and InstId(inst) and #Killers:GetChildren() > 1 then
-                ItemCache[InstId(inst)] = inst
-                continue
+            local usern = inst:GetAttribute("Username")
+            if usern then
+                if Players[usern].Character ~= inst and InstId(inst) and #Killers:GetChildren() > 1 then
+                    ItemCache[InstId(inst)] = inst
+                    continue
+                end
             end
         end
     end
