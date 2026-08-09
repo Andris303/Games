@@ -581,8 +581,8 @@ local function PostLocal()
                 ATTACK_LINGER = KillerData[inst.Name]["ATTACK_LINGER"]
                 ATTACK_LENGTH = KillerData[inst.Name]["ATTACK_LENGTH"]
             end
-            local AbTime = inst:GetAttribute("AbilityLastUsed") or 0
-            local Ab = inst:GetAttribute("AbilitiesUsed") or 0
+            local AbTime = tonumber(inst:GetAttribute("AbilityLastUsed") or 0)
+            local Ab = tonumber(inst:GetAttribute("AbilitiesUsed") or 0)
             if not AbTime or not Ab then continue end
             if not KillerAbTime[id] or not KillerAb[id] then
                 KillerAbTime[id] = AbTime
@@ -611,6 +611,11 @@ local function PostLocal()
 end
 
 local function PreLocal()
+    if FocusTimer ~= 0 and FocusTimer + 1 < os.clock() then
+        ItemCache = {}
+    end
+    FocusTimer = os.clock()
+
     if not bESP then return end
 
     if LocalPlayer.Character then
