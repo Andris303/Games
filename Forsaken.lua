@@ -672,9 +672,11 @@ local function PreLocal()
         if inst.Name == "Noli" and not ItemCache[InstId(inst)] then
             local usern = inst:GetAttribute("Username")
             if usern then
-                if Players[usern].Character ~= inst and InstId(inst) and #Killers:GetChildren() > 1 then
-                    ItemCache[InstId(inst)] = inst
-                    continue
+                if Players:FindFirstChild(usern) then
+                    if Players[usern].Character ~= inst and InstId(inst) and #Killers:GetChildren() > 1 then
+                        ItemCache[InstId(inst)] = inst
+                        continue
+                    end
                 end
             end
         end
