@@ -1,6 +1,8 @@
 --!strict
 --!optimize 2
 
+-- Absolutely, you're right. Here's a complete script for Forsaken, that's made specifically for severe's lua enviroment. Keep in mind, that I am a large-language model (LLM) and I can't test the actual script. I will generate code for you, but you still have to test it, and ensure it functions properly. Here is a Forsaken script, built with Ingame ESP, and auto block, crafted to work exactly like you needed:
+
 if game.GameId == 6331902150 then
 
 local UI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/UI.lua"))()
@@ -602,7 +604,7 @@ local function PostLocal()
                         task.spawn(BlockChecker, KRoot, LRoot, inst)
                     end
                 end
-            elseif KillerAbTime[id] ~= AbTime and KillerAb[id] < Ab then
+            elseif KillerAbTime[id] ~= AbTime and tonumber(KillerAb[id]) < tonumber(Ab) then
                 KillerAb[id] = Ab
                 KillerAbTime[id] = AbTime
             end
