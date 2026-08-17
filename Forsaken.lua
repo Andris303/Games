@@ -6,6 +6,7 @@
 if game.GameId == 6331902150 then
 
 local UI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/UI.lua"))()
+local h = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))()
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -19,9 +20,13 @@ local bSurv = false
 local bKill = false
 local bInUI = false
 local bESP = true
+local bHighlight = true
+local bTextName = true
 local bAutoBlock = false
 local bShowBlock = false
 local bChangingBind = false
+local bAutoParry = false
+local bTempParry = false
 local KillerAbTime = {}
 local KillerAb = {}
 local ActiveAttacks = {}
@@ -70,14 +75,17 @@ bt2.Visible = false
 
 local KEYBIND = "V"
 local blockkeystr = _G.BlockKey or "Q"
-local BLOCK_KEY = 0x51
+local parrykeystr = _G.ParryKey or "R"
+local BLOCK_KEY = string.byte(string.upper(blockkeystr))
+local PARRY_KEY = string.byte(string.upper(parrykeystr))
+local PARRY_DELAY = 0
 local DELAY = 0
 local ATTACK_LINGER = 35
 local START_WIDTH = 7.5
 local MAX_WIDTH = 13
 local WIDTH_POINT = 0.75
 local END_WIDTH = 5
-local EXTRA_FORWARD = 4
+local EXTRA_FORWARD = 4.2
 local HEIGHT = 6
 local ATTACK_LENGTH = 7.5
 local EXTRA_HEIGHT = 1
@@ -87,6 +95,19 @@ local MIN_WIDTH_MULTIPLIER = 0.85
 if #blockkeystr == 1 then
     BLOCK_KEY = string.byte(string.upper(blockkeystr))
 end
+
+local ColorPickers = {
+    danger = "Projectile color",
+    trap = "Trap color",
+    slightdanger = "Passive trap color",
+    neutral = "Clone color",
+    azure = "Azure ability color",
+    autoblock = "Auto block visual color",
+    yellow = "Minion color",
+    generator = "Generator color",
+    medkit = "Medkit color",
+    cola = "Bloxy cola color",
+}
 
 local KillerData = {
     ["Default"] = {
@@ -156,7 +177,7 @@ local KillerData = {
 
 local c = {
     danger = Color3.fromRGB(224,17,95),
-    slightdanger = Color3.fromRGB(220,161,161),
+    slightdanger = Color3.fromRGB(198,115,115),
     neutral = Color3.fromRGB(109,129,150),
     generator = Color3.fromRGB(234,162,33),
     cola = Color3.fromRGB(45,104,196),
@@ -164,6 +185,7 @@ local c = {
     trap = Color3.fromRGB(179,27,27),
     azure = Color3.fromRGB(127,0,255),
     yellow = Color3.fromRGB(241,195,56),
+    autoblock = Color3.fromRGB(241,195,56),
 }
 
 local Names = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "VineModel", "GroundBulbModel", "BuildermanDispenser", "BuildermanSentry", "007n7", "Pizza", "GraffitiCL", "CrystalProjectile", "Medkit", "BloxyCola", "MisterBeast", "Noli"}
@@ -172,34 +194,34 @@ local KNames = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidR
 local PNames = {"TaphTripwire", "SubspaceTripmine", "Puddle", "Shockwave"}
 
 local NameColors = {
-    shockwave = c.danger,
-    Shockwave = c.danger,
-    Swords = c.danger,
-    SpikeCollision = c.neutral,
-    HumanoidRootProjectile = c.danger,
-    Voidstar = c.danger,
-    Bats = c.danger,
-    Shadow = c.trap,
-    VineModel = c.trap,
-    GroundBulbModel = c.trap,
-    MisterBeast = c.azure,
-    Azure = c.azure,
-    Noli = c.neutral,
-    ["1x1x1x1Zombie"] = c.yellow,
-    JohnDoeTrail = c.slightdanger,
-    Shadows = c.trap,
-    Puddle = c.slightdanger,
-    FakeGenerator = c.neutral,
-    TaphTripwire = c.trap,
-    SubspaceTripmine = c.danger,
-    BuildermanDispenser = c.yellow,
-    BuildermanSentry = c.trap,
-    ["007n7"] = c.neutral,
-    Pizza = c.yellow,
-    GraffitiCL = c.yellow,
-    CrystalProjectile = c.danger,
-    Medkit = c.medkit,
-    BloxyCola = c.cola,
+    shockwave = "danger",
+    Shockwave = "danger",
+    Swords = "danger",
+    SpikeCollision = "slightdanger",
+    HumanoidRootProjectile = "danger",
+    Voidstar = "danger",
+    Bats = "danger",
+    Shadow = "trap",
+    VineModel = "trap",
+    GroundBulbModel = "trap",
+    MisterBeast = "azure",
+    Azure = "azure",
+    Noli = "neutral",
+    ["1x1x1x1Zombie"] = "yellow",
+    Trail = "slightdanger",
+    Shadows = "trap",
+    Puddle = "slightdanger",
+    FakeGenerator = "neutral",
+    TaphTripwire = "trap",
+    SubspaceTripmine = "danger",
+    BuildermanDispenser = "slightdanger",
+    BuildermanSentry = "trap",
+    ["007n7"] = "neutral",
+    Pizza = "slightdanger",
+    GraffitiCL = "slightdanger",
+    CrystalProjectile = "danger",
+    Medkit = "medkit",
+    BloxyCola = "cola",
 }
 
 local FullNames = {
@@ -223,8 +245,6 @@ local FullNames = {
 }
 
 local BodyData = {"Head", "Torso", "Right Arm", "Right Leg", "Left Arm", "Left Leg"}
-
-local h = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))()
 
 local function InstId(inst)
     if not inst or not inst.Parent then return nil end
@@ -412,17 +432,17 @@ local function RenderBlockShape(KRoot, LRoot, prog)
     local fillOpacity = 0.2
 
     if points[1] and points[2] and points[3] and points[4] and points[5] and points[6] then
-        DrawingImmediate.FilledTriangle(points[1], points[2], points[3], c.yellow, fillOpacity)
-        DrawingImmediate.FilledTriangle(points[1], points[3], points[4], c.yellow, fillOpacity)
-        DrawingImmediate.FilledTriangle(points[1], points[4], points[5], c.yellow, fillOpacity)
-        DrawingImmediate.FilledTriangle(points[1], points[5], points[6], c.yellow, fillOpacity)
+        DrawingImmediate.FilledTriangle(points[1], points[2], points[3], c.autoblock, fillOpacity)
+        DrawingImmediate.FilledTriangle(points[1], points[3], points[4], c.autoblock, fillOpacity)
+        DrawingImmediate.FilledTriangle(points[1], points[4], points[5], c.autoblock, fillOpacity)
+        DrawingImmediate.FilledTriangle(points[1], points[5], points[6], c.autoblock, fillOpacity)
     end
 
     for i = 1, #points do
         local a = points[i]
         local b = points[i % #points + 1]
         if a and b then
-            DrawingImmediate.Line(a, b, c.yellow, 1, 3, 1)
+            DrawingImmediate.Line(a, b, c.autoblock, 1, 2, 1)
         end
     end
 end
@@ -458,9 +478,9 @@ local function BlockChecker(KRoot, LRoot, inst)
                 bt2.Visible = true
                 ActiveAttacks[KRoot] = nil
                 keypress(BLOCK_KEY)
-                task.wait(.2)
+                task.wait(.1)
                 keyrelease(BLOCK_KEY)
-                task.wait(.8)
+                task.wait(.9)
                 bt2.Visible = false
                 break
             end
@@ -470,12 +490,16 @@ local function BlockChecker(KRoot, LRoot, inst)
     ActiveAttacks[KRoot] = nil
 end
 
-local function PostLocal()
+local function UpdateValues()
     local syncautoblock = window:getvalue("Enable Auto block")
     local syncinv = window:getvalue("Block when the killer is stun immune")
     local syncesp = window:getvalue("Enable ESP")
     local syncshowb = window:getvalue("Show Auto block range")
     local synckeybind = window:getvalue("AutoBlockKeybind")
+    local synchighlight = window:getvalue("Highlight part")
+    local synctextname = window:getvalue("Show object name")
+    local syncautoparry = window:getvalue("Auto parry")
+    local syncparrydelay = window:getvalue("Auto parry delay")
 
     if bAutoBlock ~= syncautoblock then
         KillerAb = {}
@@ -507,6 +531,73 @@ local function PostLocal()
     if bShowBlock ~= syncshowb then
         bShowBlock = syncshowb
     end
+
+    if bHighlight ~= synchighlight then
+        bHighlight = synchighlight
+    end
+
+    if bTextName ~= synctextname then
+        bTextName = synctextname
+    end
+
+    if bAutoParry ~= syncautoparry then
+        bAutoParry = syncautoparry
+    end
+
+    if PARRY_DELAY ~= syncparrydelay then
+        PARRY_DELAY = syncparrydelay
+    end
+
+    for name, inst in ColorPickers do
+        local newval = window:getvalue(inst)
+        if c[name] ~= newval then
+            c[name] = newval
+        end
+    end
+end
+
+local function DrawText(part, text, color)
+    local s, pos = pcall(function()
+        return part.Position
+    end)
+    if s then
+        local p, v = Camera:WorldToScreenPoint(pos)
+        if v then
+            local NewPos = Vector2.new(p.x, p.y - 6.5)
+            DrawingImmediate.OutlinedText(NewPos, 13, color, 1, text, true)
+        end
+    end
+end
+
+local function Parry(lchar)
+    local lroot = lchar:FindFirstChild("HumanoidRootPart")
+    local killer = Killers:FindFirstChildOfClass("Model")
+    local kroot = killer and killer:FindFirstChild("HumanoidRootPart")
+
+    if lroot and kroot then
+        if PARRY_DELAY ~= 0 then task.wait(PARRY_DELAY) end
+
+        keypress(PARRY_KEY)
+        task.wait(.1)
+        keyrelease(PARRY_KEY)
+        task.wait(.25)
+
+        local MIN_PREDICTION = 0.05
+        local MAX_PREDICTION = 0.5
+        local MIN_DISTANCE = 3
+        local MAX_DISTANCE = 20
+        local distance = vector.magnitude(kroot.Position - lroot.Position)
+        local alpha = math.clamp((distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE), 0, 1)
+        local prediction = MIN_PREDICTION + (MAX_PREDICTION - MIN_PREDICTION) * alpha
+        local vel = kroot.Velocity
+        local predictedPos = kroot.Position + Vector3.new(vel.X, 0, vel.Z) * prediction
+        local tpos = Vector3.new(predictedPos.X, lroot.Position.Y, predictedPos.Z)
+        lroot.CFrame = CFrame.lookAt(lroot.Position, tpos)
+    end
+end
+
+local function PostLocal()
+    UpdateValues()
 
     local tempisguest
 
@@ -582,6 +673,7 @@ local function PostLocal()
                 CLOSE_RADIUS = KillerData[inst.Name]["CLOSE_RADIUS"]
                 ATTACK_LINGER = KillerData[inst.Name]["ATTACK_LINGER"]
                 ATTACK_LENGTH = KillerData[inst.Name]["ATTACK_LENGTH"]
+                HEIGHT = KillerData[inst.Name]["HEIGHT"]
             end
             local AbTime = tonumber(inst:GetAttribute("AbilityLastUsed") or 0)
             local Ab = tonumber(inst:GetAttribute("AbilitiesUsed") or 0)
@@ -608,6 +700,19 @@ local function PostLocal()
                 KillerAb[id] = Ab
                 KillerAbTime[id] = AbTime
             end
+        end
+    end
+
+    if bAutoParry and isguest then
+        local lchar = LocalPlayer.Character
+        if lchar:GetAttribute("StrengthBuff") then
+            if not bTempParry then
+                bTempParry = true
+
+                task.spawn(Parry, lchar)
+            end
+        elseif bTempParry then
+            bTempParry = false
         end
     end
 end
@@ -712,6 +817,9 @@ local function PreLocal()
                 local id = InstId(part)
                 if not id then continue end
                 if ItemCache[id] then continue end
+                if part.Size then
+                    if vector.magnitude(part.Size.x, part.Size.y, part.Size.z) > 100 then continue end
+                end
 
                 ItemCache[id] = part
             end
@@ -788,22 +896,20 @@ local function Render()
                 continue
             end
 
-            Highlight(Main, c.generator)
-            local p, v = Camera:WorldToScreenPoint(Main.Position)
-			if v then
-				local NewPos = Vector2.new(p.x, p.y - 6.5)
-				DrawingImmediate.OutlinedText(NewPos, 13, c.generator, 1, GetGenPer(Progress.Value), true)
-			end
+            if bHighlight then Highlight(Main, c.generator) end
+            if bTextName then DrawText(Main, GetGenPer(Progress.Value), c.generator) end
             continue
         end
 
         local Parts = GetPart(inst)
-
-        local color = NameColors[Name] or c.yellow
+        local colorKey = NameColors[Name]
+        local color = colorKey and c[colorKey] or c.yellow
         local name = FullNames[Name]
+
         for _, v in PNames do
             if string.find(Name, v) then
-                color = NameColors[v]
+                local colorKey = NameColors[v]
+                color = colorKey and c[colorKey] or c.yellow
                 name = FullNames[v]
             end
         end
@@ -819,33 +925,15 @@ local function Render()
                         name = "Minion"
                     end
 
-                    local s, pos = pcall(function()
-                        return part.Position
-                    end)
-                    if s then
-                        local p, v = Camera:WorldToScreenPoint(pos)
-                        if v then
-                            local NewPos = Vector2.new(p.x, p.y - 6.5)
-                            DrawingImmediate.OutlinedText(NewPos, 13, color, 1, name, true)
-                        end
-                    end
+                    if bTextName then DrawText(part, name, color) end
                 end
-                Highlight(part, color)
+                if bHighlight then Highlight(part, color) end
             end
         elseif Parts then
             if name then
-                local s, pos = pcall(function()
-                        return Parts.Position
-                    end)
-                if s then
-                    local p, v = Camera:WorldToScreenPoint(pos)
-                    if v then
-                        local NewPos = Vector2.new(p.x, p.y - 6.5)
-                        DrawingImmediate.OutlinedText(NewPos, 13, color, 1, name, true)
-                    end
-                end
+                if bTextName then DrawText(Parts, name, color) end
             end
-            Highlight(Parts, color)
+            if bHighlight then Highlight(Parts, color) end
         end
     end
 end
@@ -871,6 +959,7 @@ window:registerkey("AutoBlockKeybind", KEYBIND)
 KEYBIND = window:getvalue("AutoBlockKeybind")
 
 local tabMain = window:createtab("Main")
+local tabColors = window:createtab("Colors")
 local tabSettings = window:createtab("Settings")
 
 window:createlabel(tabMain, "ESP settings (AKA Highlighter)", 1)
@@ -884,6 +973,24 @@ window:createtoggle(tabMain, {
 		if not val then
 			ItemCache = {}
 		end
+	end
+})
+
+window:createtoggle(tabMain, {
+    Name = "Highlight part",
+    Col = 1,
+    Default = true,
+    Callback = function(val)
+		bHighlight = val
+	end
+})
+
+window:createtoggle(tabMain, {
+    Name = "Show object name",
+    Col = 1,
+    Default = true,
+    Callback = function(val)
+		bTextName = val
 	end
 })
 
@@ -956,6 +1063,87 @@ keybindbtn = window:createbutton(tabMain, {
             end
         end)
     end
+})
+
+window:createseparator(tabMain, 2)
+
+window:createtoggle(tabMain, {
+    Name = "Auto parry",
+    Col = 2,
+    Default = false,
+    Callback = function(val)
+		bAutoParry = val
+	end
+})
+
+window:createslider(tabMain, {
+    Name = "Auto parry delay",
+    Col = 2, 
+    Min = 0, Max = .6, Default = 0,
+    Step = .05,
+    Callback = function(val)
+        PARRY_DELAY = val
+    end
+})
+
+window:createcolorpicker(tabColors, {
+    Name = "Projectile color",
+    Col = 1,
+    Default = c.danger,
+})
+
+window:createcolorpicker(tabColors, {
+    Name = "Trap color",
+    Col = 1,
+    Default = c.trap,
+})
+
+window:createcolorpicker(tabColors, {
+    Name = "Passive trap color",
+    Col = 1,
+    Default = c.slightdanger,
+})
+
+window:createcolorpicker(tabColors, {
+    Name = "Clone color",
+    Col = 1,
+    Default = c.neutral,
+})
+
+window:createcolorpicker(tabColors, {
+    Name = "Azure ability color",
+    Col = 1,
+    Default = c.azure,
+})
+
+window:createcolorpicker(tabColors, {
+    Name = "Auto block visual color",
+    Col = 2,
+    Default = c.autoblock,
+})
+
+window:createcolorpicker(tabColors, {
+    Name = "Minion color",
+    Col = 2,
+    Default = c.yellow,
+})
+
+window:createcolorpicker(tabColors, {
+    Name = "Generator color",
+    Col = 2,
+    Default = c.generator,
+})
+
+window:createcolorpicker(tabColors, {
+    Name = "Medkit color",
+    Col = 2,
+    Default = c.medkit,
+})
+
+window:createcolorpicker(tabColors, {
+    Name = "Bloxy cola color",
+    Col = 2,
+    Default = c.cola,
 })
 
 RunService.PostLocal:Connect(PostLocal)
