@@ -818,7 +818,7 @@ local function PreLocal()
                 if not id then continue end
                 if ItemCache[id] then continue end
                 if part.Size then
-                    if vector.magnitude(part.Size.x, part.Size.y, part.Size.z) > 100 then continue end
+                    if vector.magnitude(Vector3.new(part.Size.x, part.Size.y, part.Size.z)) > 100 then continue end
                 end
 
                 ItemCache[id] = part
