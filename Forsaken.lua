@@ -40,6 +40,7 @@ local FocusTimer = 0
 local bBlockOnInv = false
 local window
 local keybindlabel
+local delay_minus = 0
 
 local suc2, bool2 = pcall(function()
     return LocalPlayer.Character.Name == "Guest1337"
@@ -449,9 +450,14 @@ end
 
 local function BlockChecker(KRoot, LRoot, inst)
     if DELAY > 0 then
-        task.wait(DELAY)
+        local ping = game:GetPing()
+        if ping < 150 then
+            task.wait(DELAY)
+        end
     end
+
     local c = 0
+
     while c <= ATTACK_LINGER do
         if not active or not isguest or not bAutoBlock then break end
         c += 1
@@ -475,12 +481,15 @@ local function BlockChecker(KRoot, LRoot, inst)
                         continue
                     end
                 end
+
                 bt2.Visible = true
                 ActiveAttacks[KRoot] = nil
+
                 keypress(BLOCK_KEY)
                 task.wait(.1)
                 keyrelease(BLOCK_KEY)
                 task.wait(.9)
+
                 bt2.Visible = false
                 break
             end
@@ -718,10 +727,9 @@ local function PostLocal()
 end
 
 local function PreLocal()
-    if FocusTimer ~= 0 and FocusTimer + 1 < os.clock() then
+    if not isrbxactive() then
         ItemCache = {}
     end
-    FocusTimer = os.clock()
 
     if not bESP then return end
 
