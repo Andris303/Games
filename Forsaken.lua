@@ -591,8 +591,8 @@ local function Parry(lchar)
         keyrelease(PARRY_KEY)
         task.wait(.25)
 
-        local MIN_PREDICTION = 0.05
-        local MAX_PREDICTION = 0.5
+        local MIN_PREDICTION = 0
+        local MAX_PREDICTION = 0.3
         local MIN_DISTANCE = 3
         local MAX_DISTANCE = 20
         local distance = vector.magnitude(kroot.Position - lroot.Position)
