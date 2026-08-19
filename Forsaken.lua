@@ -89,14 +89,14 @@ local DELAY = 0
 local ATTACK_LINGER = 35
 local START_WIDTH = 7.5
 local MAX_WIDTH = 13
-local WIDTH_POINT = 0.75
+local WIDTH_POINT = .75
 local END_WIDTH = 5
 local EXTRA_FORWARD = 5
 local HEIGHT = 6
 local ATTACK_LENGTH = 7.5
 local EXTRA_HEIGHT = 1
 local CLOSE_RADIUS = 5
-local MIN_WIDTH_MULTIPLIER = 0.85
+local MIN_WIDTH_MULTIPLIER = .85
 
 if #blockkeystr == 1 then
     BLOCK_KEY = string.byte(string.upper(blockkeystr))
@@ -351,8 +351,8 @@ local function ShouldBlock(kp, kl, lp, prog)
     end
 
     local extraForward = EXTRA_FORWARD
-    if prog > 0.5 then
-        extraForward = 4 - (2 * (prog - 0.5) / 0.5)
+    if prog > .5 then
+        extraForward = 4 - (2 * (prog - .5) / .5)
     end
 
     local maxForward = ATTACK_LENGTH + extraForward
@@ -374,8 +374,8 @@ local function ShouldBlock(kp, kl, lp, prog)
         allowedHalfWidth = maxHalfWidth + (endHalfWidth - maxHalfWidth) * alpha
     end
 
-    if prog > 0.5 then
-        local narrowAlpha = (prog - 0.5) / 0.5
+    if prog > .5 then
+        local narrowAlpha = (prog - .5) / .5
         local widthMultiplier = 1 - ((1 - MIN_WIDTH_MULTIPLIER) * narrowAlpha)
         allowedHalfWidth *= widthMultiplier
     end
@@ -406,8 +406,8 @@ local function RenderBlockShape(KRoot, LRoot, prog)
     local right = vector.create(-forward.Z, 0, forward.X)
     local extraForward = EXTRA_FORWARD
 
-    if prog > 0.5 then
-        extraForward = 4 - (2 * (prog - 0.5) / 0.5)
+    if prog > .5 then
+        extraForward = 4 - (2 * (prog - .5) / .5)
     end
 
     local maxForward = ATTACK_LENGTH + extraForward
@@ -425,8 +425,8 @@ local function RenderBlockShape(KRoot, LRoot, prog)
             local alpha = math.clamp((distance - midDistance) / (maxForward - midDistance), 0, 1)
             thing = maxHalfWidth + (endHalfWidth - maxHalfWidth) * alpha
         end
-        if prog > 0.5 then
-            local narrowAlpha = (prog - 0.5) / 0.5
+        if prog > .5 then
+            local narrowAlpha = (prog - .5) / .5
             local widthMultiplier = 1 - ((1 - MIN_WIDTH_MULTIPLIER) * narrowAlpha)
             thing *= widthMultiplier
         end
@@ -459,7 +459,7 @@ local function RenderBlockShape(KRoot, LRoot, prog)
         WorldToScreen(startRight),
     }
 
-    local fillOpacity = 0.2
+    local fillOpacity = .2
 
     if points[1] and points[2] and points[3] and points[4] and points[5] and points[6] then
         DrawingImmediate.FilledTriangle(points[1], points[2], points[3], c.autoblock, fillOpacity)
@@ -694,6 +694,72 @@ local function AddSpaces(string)
 	return result
 end
 
+local function GetTrackedPosition(obj)
+    if not obj or not obj.Parent then
+        return nil
+    end
+
+    local s, pos = pcall(function()
+        return obj.Position
+    end)
+
+    if s and pos then
+        return pos
+    end
+
+    local s2, primary = pcall(function()
+        return obj.PrimaryPart.Position
+    end)
+
+    if s2 and primary then
+        return primary
+    end
+
+    return nil
+end
+
+local function ShouldUseMovementPath(data, kchar, kroot)
+    local condition = data.SwitchCondition
+
+    if condition == nil then
+        return false
+    end
+
+    if type(condition) == "number" then
+        return os.clock() - data.Started >= condition
+    end
+
+    if type(condition) == "function" then
+        return condition(data, kchar, kroot)
+    end
+
+    return false
+end
+
+local function DrawWorldLine(startPos, endPos)
+    local segml = 1
+    local offset = endPos - startPos
+    local dist = vector.magnitude(offset)
+
+    if dist <= 0 then return end
+
+    local direction = offset / dist
+    local segments = math.ceil(dist / segml)
+
+    for i = 0, segments - 1 do
+        local d1 = i * segml
+        local d2 = math.min((i + 1) * segml, dist)
+        local p1 = startPos + direction * d1
+        local p2 = startPos + direction * d2
+        local a, aVisible = Camera:WorldToScreenPoint(p1)
+        local b, bVisible = Camera:WorldToScreenPoint(p2)
+
+        if aVisible and bVisible then
+            DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 10, 1)
+        end
+    end
+end
+
 local function DrawLookLine(root, dist, right, down)
     local segml = 1
     local startPos = root.Position
@@ -712,7 +778,7 @@ local function DrawLookLine(root, dist, right, down)
         local b, bVisible = Camera:WorldToScreenPoint(p2)
 
         if aVisible and bVisible then
-            DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 5, 1)
+            DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 10, 1)
         end
     end
 end
@@ -722,15 +788,58 @@ local function CheckAttack(inst, kroot)
 
     if name == "c00lkidd" then
         if inst:FindFirstChild("c00lgui") then
-            return "Walkspeed Override", 100, 0, 0
+            return "Walkspeed Override", 90, 0, 0, function(data)
+                return os.clock() - data.Started >= .4
+            end, 1.9
         else return false end
     elseif name == "1x1x1x1" then
         local f = inst:FindFirstChild("HumanoidRootPart")
         if f then
             if f:FindFirstChild("rbxassetid://135854269153231") or f:FindFirstChild("rbxassetid://105934041806374") or f:FindFirstChild("rbxassetid://130247421279831") or f:FindFirstChild("rbxassetid://107039569833867") or f:FindFirstChild("rbxassetid://100150551345482") then
-                return "Entanglement", 135, 0, 0
+                return "Entanglement", 135, 0, 0, nil, nil, function(data)
+                        for _, obj in Ingame:GetChildren() do
+                            if obj.Name == "Swords" and not data.KnownObjects[obj] then
+                                local s, p = pcall(function()
+                                    return obj.PrimaryPart.Position
+                                end)
+
+                                if s and p then
+                                    if vector.magnitude(kroot.Position - p) < 30 then
+                                        return obj
+                                    end
+                                end
+                            end
+                        end
+
+                        return nil
+                    end
             elseif f:FindFirstChild("rbxassetid://70845653728841") or f:FindFirstChild("rbxassetid://73504812754586") or f:FindFirstChild("rbxassetid://97061990471922") then
-                return "Mass Infection", 400, 0, 0
+                return "Mass Infection", 610, 0, 0, nil, nil, function(data)
+                        for _, obj in Ingame:GetChildren() do
+                            if (obj.Name == "shockwave" or obj.Name == "Shockwave") and not data.KnownObjects[obj] then
+                                local s, p = pcall(function()
+                                    return obj.PrimaryPart.Position
+                                end)
+
+                                if s and p then
+                                    if vector.magnitude(kroot.Position - p) < 30 then
+                                        return obj
+                                    end
+                                end
+                            end
+                        end
+
+                        return nil
+                    end
+            else return false end
+        else return false end
+    elseif name == "JohnDoe" then
+        local f = inst:FindFirstChild("HumanoidRootPart")
+        if f then
+            if f:FindFirstChild("rbxassetid://75210765058860") or f:FindFirstChild("rbxassetid://87883890694872") then
+                return "Corrupt Energy", 135, 0, 0, nil, 3.7
+            elseif f:FindFirstChild("rbxassetid://109525294317144") or f:FindFirstChild("rbxassetid://119285029803606") or f:FindFirstChild("rbxassetid://100163947838165") or f:FindFirstChild("rbxassetid://74901476984677") then
+                return "Corrupt Energy", 135, 0, 0, nil, 4.6
             else return false end
         else return false end
     elseif name == "Noli" then
@@ -739,7 +848,9 @@ local function CheckAttack(inst, kroot)
         else return false end
     elseif name == "Sixer" then
         if inst:GetAttribute("PursuitState") == "Charging" or inst:GetAttribute("PursuitState") == "Dashing" then
-            return "Demonic Pursuit", 180, 0, 0
+            return "Demonic Pursuit", 155, 0, 0, function(data, kchar)
+                return kchar:GetAttribute("PursuitState") == "Dashing"
+            end
         else return false end
     elseif name == "Nosferatu" then
         if inst:GetAttribute("InvisibilityDisabled") then
@@ -759,6 +870,171 @@ local function CheckAttack(inst, kroot)
             else return false end
         else return false end
     else return false end
+end
+
+local function RenderActiveLines()
+    if not bShowLine then
+        return
+    end
+
+    for kroot, data in ActiveLines do
+        local kchar = data.Character
+        if not kroot or not kroot.Parent or not kchar or kchar.Parent ~= Killers then
+            ActiveLines[kroot] = nil
+            continue
+        end
+
+        if not bShowLocalLine and kchar == LocalPlayer.Character then
+            continue
+        end
+
+        local elapsed = os.clock() - data.Started
+
+        if data.EndDelay and elapsed >= data.EndDelay then
+            ActiveLines[kroot] = nil
+            continue
+        end
+
+        if data.Finished then
+            if not CheckAttack(kchar, kroot) then
+                ActiveLines[kroot] = nil
+            end
+            continue
+        end
+
+        if data.ObjectFinder and not data.ObjectMode then
+            local obj = data.ObjectFinder(data, kchar, kroot)
+
+            if obj then
+                local pos = GetTrackedPosition(obj)
+
+                if pos then
+                    data.ObjectMode = true
+                    data.TrackedObject = obj
+                    data.ObjectSamplePos = nil
+                    data.ObjectDirection = nil
+                    data.ObjectDestination = nil
+                end
+            end
+        end
+
+        if not data.ObjectFinder then
+            if not data.EndDelay
+            and not CheckAttack(kchar, kroot) then
+                ActiveLines[kroot] = nil
+                continue
+            end
+
+        elseif not data.ObjectMode then
+            if not CheckAttack(kchar, kroot)
+            and elapsed > 2 then
+                ActiveLines[kroot] = nil
+                continue
+            end
+        end
+
+        if data.ObjectMode then
+            local currentPos = GetTrackedPosition(data.TrackedObject)
+
+            if not currentPos then
+                data.Finished = true
+                continue
+            end
+
+            if not data.ObjectSamplePos then
+                data.ObjectSamplePos = currentPos
+                continue
+            end
+
+            if not data.ObjectDirection then
+                local movement = Vector3.new(currentPos.X - data.ObjectSamplePos.X, 0, currentPos.Z - data.ObjectSamplePos.Z)
+                local moved = vector.magnitude(movement)
+
+                if moved >= .5 then
+                    local direction = movement / moved
+                    data.ObjectDirection = direction
+                    data.ObjectDestination = Vector3.new(data.ObjectSamplePos.X + direction.X * data.Length, currentPos.Y, data.ObjectSamplePos.Z + direction.Z * data.Length)
+                end
+            end
+
+            if data.ObjectDirection and data.ObjectDestination then
+                local destination = Vector3.new(data.ObjectDestination.X, currentPos.Y, data.ObjectDestination.Z)
+                local remaining = vector.magnitude(Vector3.new(destination.X - currentPos.X, 0, destination.Z - currentPos.Z))
+
+                if remaining > 0 then
+                    DrawWorldLine(currentPos, destination)
+                end
+            end
+        elseif ShouldUseMovementPath(data, kchar, kroot) then
+
+            local currentPos = kroot.Position
+            local movement = Vector3.new(currentPos.X - data.Origin.X, currentPos.Y - data.Origin.Y, currentPos.Z - data.Origin.Z)
+            local traveled = vector.magnitude(movement)
+
+            if traveled > .2 then
+                local direction = movement / traveled
+                local destination = Vector3.new(data.Origin.X + direction.X * data.Length, data.Origin.Y + direction.Y * data.Length, data.Origin.Z + direction.Z * data.Length)
+
+                if traveled < data.Length then
+                    DrawWorldLine(currentPos, destination)
+                end
+            else
+                DrawLookLine(kroot, data.Length, data.Right, data.Down)
+            end
+        else
+            DrawLookLine(kroot, data.Length, data.Right, data.Down)
+        end
+
+        DrawText(kroot, data.AttackType, c.linesec, 25)
+    end
+end
+
+local function UpdateActiveLines()
+    for _, inst in Killers:GetChildren() do
+        local kroot = inst:FindFirstChild("HumanoidRootPart")
+
+        if not kroot then
+            continue
+        end
+
+        if ActiveLines[kroot] then
+            continue
+        end
+
+        local atype, length, right, down,
+            switchCondition, endDelay, objectFinder =
+            CheckAttack(inst, kroot)
+
+        if atype and length then
+            local knownObjects = {}
+
+            if objectFinder then
+                for _, obj in Ingame:GetChildren() do
+                    knownObjects[obj] = true
+                end
+            end
+
+            ActiveLines[kroot] = {
+                Character = inst,
+                AttackType = atype,
+                Length = length,
+                Right = right or 0,
+                Down = down or 0,
+                Origin = kroot.Position,
+                Started = os.clock(),
+                SwitchCondition = switchCondition,
+                EndDelay = endDelay,
+                ObjectFinder = objectFinder,
+                KnownObjects = knownObjects,
+                ObjectMode = false,
+                TrackedObject = nil,
+                ObjectSamplePos = nil,
+                ObjectDirection = nil,
+                ObjectDestination = nil,
+                Finished = false,
+            }
+        end
+    end
 end
 
 local function PreLocal()
@@ -957,16 +1233,7 @@ local function PreData()
         ESP.AddPlayer(Char, inst == LocalPlayer, Char.Humanoid.Health, Char.Humanoid.MaxHealth, inst.Name, inst.DisplayName, inst.UserId, team, tool, nil, nil, Char.Name == "Sixer" and SixerRig)
     end
 
-    for _, inst in Killers:GetChildren() do
-        local kroot = inst:FindFirstChild("HumanoidRootPart")
-        if not kroot then continue end
-        if ActiveLines[kroot] then continue end
-        
-        local atype, length, right, down = CheckAttack(inst, kroot)
-        if atype and length then
-            ActiveLines[kroot] = {inst, atype, length, right, down}
-        end
-    end
+    UpdateActiveLines()
 
     if not bESP then return end
 
@@ -1062,9 +1329,6 @@ local function PreData()
                 local id = InstId(part)
                 if not id then continue end
                 if ItemCache[id] then continue end
-                if part.Size then
-                    if vector.magnitude(Vector3.new(part.Size.x, part.Size.y, part.Size.z)) > 100 then continue end
-                end
 
                 ItemCache[id] = part
             end
@@ -1093,28 +1357,7 @@ local function PreData()
 end
 
 local function Render()
-    if bShowLine then
-        for kroot, data in ActiveLines do
-            local kchar = data[1]
-            local atype = data[2]
-            local length = data[3]
-            local right = data[4]
-            local down = data[5]
-
-            if not bShowLocalLine and kchar == LocalPlayer.Character then continue end
-
-            if kroot and kchar and kchar.Parent == Killers then
-                if CheckAttack(kchar, kroot) then
-                    DrawLookLine(kroot, length, right, down)
-                    DrawText(kroot, atype, c.linesec, 18)
-                else
-                    ActiveLines[kroot] = nil
-                end
-            else
-                ActiveLines[kroot] = nil
-            end
-        end
-    end
+    RenderActiveLines()
 
     if bShowBlock then
         for KRoot, data in ActiveAttacks do
@@ -1167,6 +1410,12 @@ local function Render()
             if bHighlight then Highlight(Main, c.generator) end
             if bTextName then DrawText(Main, GetGenPer(Progress.Value), c.generator) end
             continue
+        end
+
+        if Name == "Trail" then
+            local sz = inst.Size
+            if sz.x > 100 or sz.y > 100 or sz.z > 100 then continue end
+        elseif Name == "JaneGhost" then continue
         end
 
         local Parts = GetPart(inst)
