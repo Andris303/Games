@@ -5,6 +5,7 @@
 
 if game.GameId == 6331902150 then
 
+local ESP = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/ESP.lua"))()
 local UI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/UI.lua"))()
 local h = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))()
 
@@ -27,9 +28,12 @@ local bShowBlock = false
 local bChangingBind = false
 local bAutoParry = false
 local bTempParry = false
+local bShowLine = false
+local bShowLocalLine = false
 local KillerAbTime = {}
 local KillerAb = {}
 local ActiveAttacks = {}
+local ActiveLines = {}
 local tempactive = false
 local active = false
 local bt = Drawing.new("Text")
@@ -41,6 +45,7 @@ local bBlockOnInv = false
 local window
 local keybindlabel
 local delay_minus = 0
+local LocalTeam = "None"
 
 local suc2, bool2 = pcall(function()
     return LocalPlayer.Character.Name == "Guest1337"
@@ -97,6 +102,26 @@ if #blockkeystr == 1 then
     BLOCK_KEY = string.byte(string.upper(blockkeystr))
 end
 
+local SixerRig = {
+    RigType = "R15",
+    HumanoidRootPart = "HumanoidRootPart",
+    Head = "Head",
+    UpperTorso = "Body",
+    LowerTorso = "Waist",
+    RightUpperArm = "Right Arm",
+    RightLowerArm = "Right lowerarm",
+    RightHand = "Right hand",
+    LeftUpperArm = "Left Arm",
+    LeftLowerArm = "Left lowerarm",
+    LeftHand = "Left Hand",
+    RightUpperLeg = "Right Leg",
+    LeftUpperLeg = "Left Leg",
+    RightLowerLeg = "Right Lowleg",
+    RightFoot = "Right Lowerleg",
+    LeftLowerLeg = "Left Lowleg",
+    LeftFoot = "Left Lowerleg",
+}
+
 local ColorPickers = {
     danger = "Projectile color",
     trap = "Trap color",
@@ -108,6 +133,8 @@ local ColorPickers = {
     generator = "Generator color",
     medkit = "Medkit color",
     cola = "Bloxy cola color",
+    lineprim = "Show projectile line color",
+    linesec = "Show projectile text color",
 }
 
 local KillerData = {
@@ -187,6 +214,8 @@ local c = {
     azure = Color3.fromRGB(127,0,255),
     yellow = Color3.fromRGB(241,195,56),
     autoblock = Color3.fromRGB(241,195,56),
+    lineprim = Color3.fromRGB(179,27,27),
+    linesec = Color3.fromRGB(241,195,56),
 }
 
 local Names = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "VineModel", "GroundBulbModel", "BuildermanDispenser", "BuildermanSentry", "007n7", "Pizza", "GraffitiCL", "CrystalProjectile", "Medkit", "BloxyCola", "MisterBeast", "Noli"}
@@ -509,6 +538,8 @@ local function UpdateValues()
     local synctextname = window:getvalue("Show object name")
     local syncautoparry = window:getvalue("Auto parry")
     local syncparrydelay = window:getvalue("Auto parry delay")
+    local syncshowline = window:getvalue("Show attack path")
+    local syncshowlocalline = window:getvalue("Show path when you're killer")
 
     if bAutoBlock ~= syncautoblock then
         KillerAb = {}
@@ -520,41 +551,39 @@ local function UpdateValues()
 
         bAutoBlock = syncautoblock
     end
-
     if keybindlabel.Txt.Text ~= "Current keybind: " .. synckeybind then
         KEYBIND = synckeybind
         keybindlabel.Txt.Text = "Current keybind: " .. synckeybind
     end
-
     if bESP ~= syncesp then
         bESP = syncesp
 		if not bESP then
 			ItemCache = {}
 		end
     end
-
     if bBlockOnInv ~= syncinv then
         bBlockOnInv = syncinv
     end
-
     if bShowBlock ~= syncshowb then
         bShowBlock = syncshowb
     end
-
     if bHighlight ~= synchighlight then
         bHighlight = synchighlight
     end
-
     if bTextName ~= synctextname then
         bTextName = synctextname
     end
-
     if bAutoParry ~= syncautoparry then
         bAutoParry = syncautoparry
     end
-
     if PARRY_DELAY ~= syncparrydelay then
         PARRY_DELAY = syncparrydelay
+    end
+    if bShowLine ~= syncshowline then
+        bShowLine = syncshowline
+    end
+    if bShowLocalLine ~= syncshowlocalline then
+        bShowLocalLine = syncshowlocalline
     end
 
     for name, inst in ColorPickers do
@@ -565,7 +594,8 @@ local function UpdateValues()
     end
 end
 
-local function DrawText(part, text, color)
+local function DrawText(part, text, color, size)
+    local nsize = size or 13
     local s, pos = pcall(function()
         return part.Position
     end)
@@ -573,7 +603,7 @@ local function DrawText(part, text, color)
         local p, v = Camera:WorldToScreenPoint(pos)
         if v then
             local NewPos = Vector2.new(p.x, p.y - 6.5)
-            DrawingImmediate.OutlinedText(NewPos, 13, color, 1, text, true)
+            DrawingImmediate.OutlinedText(NewPos, nsize, color, 1, text, true)
         end
     end
 end
@@ -592,7 +622,7 @@ local function Parry(lchar)
         task.wait(.25)
 
         local MIN_PREDICTION = 0
-        local MAX_PREDICTION = 0.3
+        local MAX_PREDICTION = .5
         local MIN_DISTANCE = 3
         local MAX_DISTANCE = 20
         local distance = vector.magnitude(kroot.Position - lroot.Position)
@@ -605,7 +635,105 @@ local function Parry(lchar)
     end
 end
 
-local function PostLocal()
+local function AddSpaces(string)
+	local result = ""
+
+	for i = 1, #string do
+		local char = string:sub(i, i)
+		local prev = string:sub(i - 1, i - 1)
+		local nextChar = string:sub(i + 1, i + 1)
+		local isUpper = char:match("%u")
+		local prevIsUpper = prev:match("%u")
+		local prevIsLower = prev:match("%l")
+		local nextIsLower = nextChar:match("%l")
+		local shouldAddSpace = false
+
+		if isUpper and i > 1 then
+			if prevIsLower then
+				shouldAddSpace = true
+			elseif prevIsUpper and nextIsLower then
+				shouldAddSpace = true
+			end
+		end
+
+		if shouldAddSpace then
+			result ..= " "
+		end
+
+		result ..= char
+	end
+
+	return result
+end
+
+local function DrawLookLine(root, dist, right, down)
+    local segml = 1
+    local startPos = root.Position
+    right = right or 0
+    down = down or 0
+    local direction = root.LookVector + root.RightVector * right - root.UpVector * down
+    direction = direction / vector.magnitude(direction)
+    local segments = math.ceil(dist / segml)
+
+    for i = 0, segments - 1 do
+        local d1 = i * segml
+        local d2 = math.min((i + 1) * segml, dist)
+        local p1 = startPos + direction * d1
+        local p2 = startPos + direction * d2
+        local a, aVisible = Camera:WorldToScreenPoint(p1)
+        local b, bVisible = Camera:WorldToScreenPoint(p2)
+
+        if aVisible and bVisible then
+            DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 5, 1)
+        end
+    end
+end
+
+local function CheckAttack(inst, kroot)
+    local name = inst.Name
+
+    if name == "c00lkidd" then
+        if inst:FindFirstChild("c00lgui") then
+            return "Walkspeed Override", 100, 0, 0
+        else return false end
+    elseif name == "1x1x1x1" then
+        local f = inst:FindFirstChild("HumanoidRootPart")
+        if f then
+            if f:FindFirstChild("rbxassetid://135854269153231") or f:FindFirstChild("rbxassetid://105934041806374") or f:FindFirstChild("rbxassetid://130247421279831") or f:FindFirstChild("rbxassetid://107039569833867") or f:FindFirstChild("rbxassetid://100150551345482") then
+                return "Entanglement", 135, 0, 0
+            elseif f:FindFirstChild("rbxassetid://70845653728841") or f:FindFirstChild("rbxassetid://73504812754586") or f:FindFirstChild("rbxassetid://97061990471922") then
+                return "Mass Infection", 400, 0, 0
+            else return false end
+        else return false end
+    elseif name == "Noli" then
+        if inst:GetAttribute("VoidRushState") == "Charging" or inst:GetAttribute("VoidRushState") == "Dashing" then
+            return "Voidrush", 75, 0, 0
+        else return false end
+    elseif name == "Sixer" then
+        if inst:GetAttribute("PursuitState") == "Charging" or inst:GetAttribute("PursuitState") == "Dashing" then
+            return "Demonic Pursuit", 180, 0, 0
+        else return false end
+    elseif name == "Nosferatu" then
+        if inst:GetAttribute("InvisibilityDisabled") then
+            return "Ascension", 100, 0, 1
+        end
+        local f = inst:FindFirstChild("SpeedMultipliers")
+        if f then
+            if f:FindFirstChild("NosBloodhookThrow") then
+                return "Bloodhook", 115, 0, 0
+            else return false end
+        else return false end
+    elseif name == "Azure" then
+        local f = inst:FindFirstChild("HumanoidRootPart")
+        if f then
+            if f:FindFirstChild("HomingSpotlightOthers") then
+                return "Enstrangle", 60, .03, 0
+            else return false end
+        else return false end
+    else return false end
+end
+
+local function PreLocal()
     UpdateValues()
 
     local tempisguest
@@ -726,9 +854,90 @@ local function PostLocal()
     end
 end
 
-local function PreLocal()
-    if not isrbxactive() then
+local function PreData()
+    if FocusTimer ~= 0 and FocusTimer + .2 < os.clock() then
         ItemCache = {}
+    end
+    FocusTimer = os.clock()
+
+    for ID, inst in _G.ESPList do
+        if not inst or not inst.Parent then
+            if not _G.ESPData[ID]["LocalPlayer"] then
+                ESP.RemovePlayer(ID)
+            else
+                clear_local_data()
+            end
+        else
+            if not inst:FindFirstChild("Humanoid") then continue end
+            if _G.ESPData[ID]["Health"] ~= inst.Humanoid.Health then
+                if inst.Humanoid.Health <= 0 then
+                    if not _G.ESPData[ID]["LocalPlayer"] then
+                        ESP.RemovePlayer(ID)
+                    else
+                        clear_local_data()
+                    end
+                    continue
+                end
+                if not _G.ESPData[ID]["LocalPlayer"] then
+                    ESP.EditHealth(ID, inst.Humanoid.Health)
+                end
+            end
+            if not _G.ESPData[ID]["LocalPlayer"] and _G.ESPData[ID]["Teamname"] ~= inst.Parent.Name then
+                ESP.RemovePlayer(ID)
+                continue
+            end
+            if is_team_check_active() and LocalTeam == _G.ESPData[ID]["Teamname"] then
+                if not _G.ESPData[ID]["LocalPlayer"] then
+                    ESP.RemovePlayer(ID)
+                    continue
+                else
+                    clear_local_data()
+                    continue
+                end
+            end
+            if inst.Name == "Azure" and tostring(_G.ESPData[ID]["Toolname"]) ~= "Oblation: " .. tostring(math.floor(tonumber(inst:GetAttribute("Oblation")))) and not _G.ESPData[ID]["LocalPlayer"] then
+                ESP.RemovePlayer(ID)
+                continue
+            end
+        end
+    end
+
+    for _, inst in Players:GetChildren() do
+        if not inst or not inst.Parent then continue end
+
+        local Char = inst.Character
+        if not Char then continue end
+        if not Char:FindFirstChild("Humanoid") then continue end
+
+        local team = "Spectator"
+        if Char.Parent then
+            team = Char.Parent.Name
+        end
+
+        local tool
+        if Char.Name == "Azure" then
+            tool = "Oblation: " .. tostring(math.floor(tonumber(Char:GetAttribute("Oblation"))))
+        end
+        
+        if is_team_check_active() and LocalTeam == team then continue end
+
+        if inst == LocalPlayer then
+            LocalTeam = team
+            continue
+        end
+
+        ESP.AddPlayer(Char, inst == LocalPlayer, Char.Humanoid.Health, Char.Humanoid.MaxHealth, inst.Name, inst.DisplayName, inst.UserId, team, tool, nil, nil, Char.Name == "Sixer" and SixerRig)
+    end
+
+    for _, inst in Killers:GetChildren() do
+        local kroot = inst:FindFirstChild("HumanoidRootPart")
+        if not kroot then continue end
+        if ActiveLines[kroot] then continue end
+        
+        local atype, length, right, down = CheckAttack(inst, kroot)
+        if atype and length then
+            ActiveLines[kroot] = {inst, atype, length, right, down}
+        end
     end
 
     if not bESP then return end
@@ -856,6 +1065,29 @@ local function PreLocal()
 end
 
 local function Render()
+    if bShowLine then
+        for kroot, data in ActiveLines do
+            local kchar = data[1]
+            local atype = data[2]
+            local length = data[3]
+            local right = data[4]
+            local down = data[5]
+
+            if not bShowLocalLine and kchar == LocalPlayer.Character then continue end
+
+            if kroot and kchar and kchar.Parent == Killers then
+                if CheckAttack(kchar, kroot) then
+                    DrawLookLine(kroot, length, right, down)
+                    DrawText(kroot, atype, c.linesec, 18)
+                else
+                    ActiveLines[kroot] = nil
+                end
+            else
+                ActiveLines[kroot] = nil
+            end
+        end
+    end
+
     if bShowBlock then
         for KRoot, data in ActiveAttacks do
             if KRoot and KRoot.Parent and data.LRoot and data.LRoot.Parent then
@@ -1002,6 +1234,26 @@ window:createtoggle(tabMain, {
 	end
 })
 
+window:createlabel(tabMain, "Shows attack abilties' path", 1)
+
+window:createtoggle(tabMain, {
+    Name = "Show attack path",
+    Col = 1,
+    Default = false,
+    Callback = function(val)
+		bShowLine = val
+	end
+})
+
+window:createtoggle(tabMain, {
+    Name = "Show path when you're killer",
+    Col = 1,
+    Default = false,
+    Callback = function(val)
+		bShowLocalLine = val
+	end
+})
+
 window:createlabel(tabMain, "After enabling, you need to press your keybind", 2)
 
 window:createtoggle(tabMain, {
@@ -1125,6 +1377,12 @@ window:createcolorpicker(tabColors, {
 })
 
 window:createcolorpicker(tabColors, {
+    Name = "Show projectile line color",
+    Col = 1,
+    Default = c.lineprim,
+})
+
+window:createcolorpicker(tabColors, {
     Name = "Auto block visual color",
     Col = 2,
     Default = c.autoblock,
@@ -1154,9 +1412,17 @@ window:createcolorpicker(tabColors, {
     Default = c.cola,
 })
 
-RunService.PostLocal:Connect(PostLocal)
+window:createcolorpicker(tabColors, {
+    Name = "Show projectile text color",
+    Col = 2,
+    Default = c.linesec,
+})
+
 RunService.PreLocal:Connect(PreLocal)
+RunService.PreData:Connect(PreData)
 RunService.Render:Connect(Render)
+
+clear_model_data()
 
 print("Loaded")
 
