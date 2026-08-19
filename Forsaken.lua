@@ -993,17 +993,10 @@ local function UpdateActiveLines()
     for _, inst in Killers:GetChildren() do
         local kroot = inst:FindFirstChild("HumanoidRootPart")
 
-        if not kroot then
-            continue
-        end
+        if not kroot then continue end
+        if ActiveLines[kroot] then continue end
 
-        if ActiveLines[kroot] then
-            continue
-        end
-
-        local atype, length, right, down,
-            switchCondition, endDelay, objectFinder =
-            CheckAttack(inst, kroot)
+        local atype, length, right, down, switchCondition, endDelay, objectFinder = CheckAttack(inst, kroot)
 
         if atype and length then
             local knownObjects = {}
@@ -1014,6 +1007,7 @@ local function UpdateActiveLines()
                 end
             end
 
+            ActiveLines = {}
             ActiveLines[kroot] = {
                 Character = inst,
                 AttackType = atype,
