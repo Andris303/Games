@@ -814,7 +814,7 @@ local function CheckAttack(inst, kroot)
                         return nil
                     end
             elseif f:FindFirstChild("rbxassetid://70845653728841") or f:FindFirstChild("rbxassetid://73504812754586") or f:FindFirstChild("rbxassetid://97061990471922") then
-                return "Mass Infection", 610, 0, 0, nil, nil, function(data)
+                return "Mass Infection", 630, 0, 0, nil, nil, function(data)
                         for _, obj in Ingame:GetChildren() do
                             if (obj.Name == "shockwave" or obj.Name == "Shockwave") and not data.KnownObjects[obj] then
                                 local s, p = pcall(function()
@@ -843,7 +843,7 @@ local function CheckAttack(inst, kroot)
             else return false end
         else return false end
     elseif name == "Noli" then
-        if inst:GetAttribute("VoidRushState") == "Charging" or inst:GetAttribute("VoidRushState") == "Dashing" then
+        if inst:GetAttribute("VoidRushState") == "Charging" or inst:GetAttribute("VoidRushState") == "Dashing" or inst:GetAttribute("VoidRushState") == "Hit" then
             return "Voidrush", 75, 0, 0
         else return false end
     elseif name == "Sixer" then
@@ -933,6 +933,8 @@ local function RenderActiveLines()
             end
         end
 
+        if data["NOMORE"] then continue end
+
         if data.ObjectMode then
             local currentPos = GetTrackedPosition(data.TrackedObject)
 
@@ -1007,7 +1009,11 @@ local function UpdateActiveLines()
                 end
             end
 
-            ActiveLines = {}
+            for tempkroot, tempdata in ActiveLines do
+                tempdata["NOMORE"] = true
+                ActiveLines[tempkroot] = tempdata
+            end
+
             ActiveLines[kroot] = {
                 Character = inst,
                 AttackType = atype,
@@ -1026,6 +1032,7 @@ local function UpdateActiveLines()
                 ObjectDirection = nil,
                 ObjectDestination = nil,
                 Finished = false,
+                NOMORE = false,
             }
         end
     end
@@ -1193,7 +1200,7 @@ local function PreData()
                     continue
                 end
             end
-            if inst.Name == "Azure" and tostring(_G.ESPData[ID]["Toolname"]) ~= "Oblation: " .. tostring(math.floor(tonumber(inst:GetAttribute("Oblation")))) and not _G.ESPData[ID]["LocalPlayer"] then
+            if inst.Name == "Azure" and tostring(_G.ESPData[ID]["Toolname"]) ~= tostring(math.floor(tonumber(inst:GetAttribute("Oblation")))) .. "OB" and tostring(_G.ESPData[ID]["Toolname"]) ~= "Golem ready" and not _G.ESPData[ID]["LocalPlayer"] then
                 ESP.RemovePlayer(ID)
                 continue
             end
@@ -1214,7 +1221,11 @@ local function PreData()
 
         local tool
         if Char.Name == "Azure" then
-            tool = "Oblation: " .. tostring(math.floor(tonumber(Char:GetAttribute("Oblation"))))
+            if tonumber(Char:GetAttribute("Oblation")) == 15 then
+                tool = "Golem ready"
+            else
+                tool = tostring(math.floor(tonumber(Char:GetAttribute("Oblation")))) .. "OB"
+            end
         end
         
         if is_team_check_active() and LocalTeam == team then continue end
@@ -1318,6 +1329,7 @@ local function PreData()
 
     for _, inst in Ingame:GetChildren() do
         local Name = inst.Name
+        if type(Name) ~= "string" then continue end
         if string.find(Name, "JohnDoeTrail") or string.find(Name, "Shadows") then
             for _, part in inst:GetChildren() do
                 local id = InstId(part)
