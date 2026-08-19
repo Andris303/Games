@@ -91,7 +91,7 @@ local START_WIDTH = 7.5
 local MAX_WIDTH = 13
 local WIDTH_POINT = 0.75
 local END_WIDTH = 5
-local EXTRA_FORWARD = 4.2
+local EXTRA_FORWARD = 5
 local HEIGHT = 6
 local ATTACK_LENGTH = 7.5
 local EXTRA_HEIGHT = 1
@@ -608,28 +608,56 @@ local function DrawText(part, text, color, size)
     end
 end
 
+local function PredictCurve(p1, t1, p2, t2, p3, t3, future)
+    local t = t3 + future
+    local d1 = (t1 - t2) * (t1 - t3)
+    local d2 = (t2 - t1) * (t2 - t3)
+    local d3 = (t3 - t1) * (t3 - t2)
+
+    if d1 == 0 or d2 == 0 or d3 == 0 then
+        return p3
+    end
+
+    local l1 = ((t - t2) * (t - t3)) / d1
+    local l2 = ((t - t1) * (t - t3)) / d2
+    local l3 = ((t - t1) * (t - t2)) / d3
+
+    return p1 * l1 + p2 * l2 + p3 * l3
+end
+
 local function Parry(lchar)
     local lroot = lchar:FindFirstChild("HumanoidRootPart")
     local killer = Killers:FindFirstChildOfClass("Model")
     local kroot = killer and killer:FindFirstChild("HumanoidRootPart")
 
     if lroot and kroot then
-        if PARRY_DELAY ~= 0 then task.wait(PARRY_DELAY) end
+        if PARRY_DELAY ~= 0 then
+            task.wait(PARRY_DELAY)
+        end
+
+        local p1 = kroot.Position
+        local t1 = os.clock()
 
         keypress(PARRY_KEY)
         task.wait(.1)
+
+        local p2 = kroot.Position
+        local t2 = os.clock()
+
         keyrelease(PARRY_KEY)
         task.wait(.25)
 
+        local p3 = kroot.Position
+        local t3 = os.clock()
         local MIN_PREDICTION = 0
         local MAX_PREDICTION = .5
         local MIN_DISTANCE = 3
         local MAX_DISTANCE = 20
-        local distance = vector.magnitude(kroot.Position - lroot.Position)
+        local distance = vector.magnitude(p3 - lroot.Position)
         local alpha = math.clamp((distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE), 0, 1)
         local prediction = MIN_PREDICTION + (MAX_PREDICTION - MIN_PREDICTION) * alpha
-        local vel = kroot.Velocity
-        local predictedPos = kroot.Position + Vector3.new(vel.X, 0, vel.Z) * prediction
+
+        local predictedPos = PredictCurve(p1, t1, p2, t2, p3, t3, prediction)
         local tpos = Vector3.new(predictedPos.X, lroot.Position.Y, predictedPos.Z)
         lroot.CFrame = CFrame.lookAt(lroot.Position, tpos)
     end
