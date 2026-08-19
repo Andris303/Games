@@ -1200,7 +1200,7 @@ local function PreData()
                     continue
                 end
             end
-            if inst.Name == "Azure" and tostring(_G.ESPData[ID]["Toolname"]) ~= tostring(math.floor(tonumber(inst:GetAttribute("Oblation")))) .. "OB" and tostring(_G.ESPData[ID]["Toolname"]) ~= "Golem ready" and not _G.ESPData[ID]["LocalPlayer"] then
+            if inst.Name == "Azure" and tostring(_G.ESPData[ID]["Toolname"]) ~= tostring(math.floor(tonumber(inst:GetAttribute("Oblation")))) .. " Oblation" and tostring(_G.ESPData[ID]["Toolname"]) ~= "Golem ready" and not _G.ESPData[ID]["LocalPlayer"] then
                 ESP.RemovePlayer(ID)
                 continue
             end
@@ -1224,7 +1224,7 @@ local function PreData()
             if tonumber(Char:GetAttribute("Oblation")) == 15 then
                 tool = "Golem ready"
             else
-                tool = tostring(math.floor(tonumber(Char:GetAttribute("Oblation")))) .. "OB"
+                tool = tostring(math.floor(tonumber(Char:GetAttribute("Oblation")))) .. " Oblation"
             end
         end
         
