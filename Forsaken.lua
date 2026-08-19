@@ -866,7 +866,7 @@ local function CheckAttack(inst, kroot)
         local f = inst:FindFirstChild("HumanoidRootPart")
         if f then
             if f:FindFirstChild("HomingSpotlightOthers") then
-                return "Enstrangle", 60, .03, 0
+                return "Enstrangle", 55, .03, 0
             else return false end
         else return false end
     else return false end
