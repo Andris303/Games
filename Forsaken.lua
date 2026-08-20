@@ -755,7 +755,7 @@ local function DrawWorldLine(startPos, endPos)
         local b, bVisible = Camera:WorldToScreenPoint(p2)
 
         if aVisible and bVisible then
-            DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 10, 1)
+            DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 5, 1)
         end
     end
 end
@@ -778,7 +778,7 @@ local function DrawLookLine(root, dist, right, down)
         local b, bVisible = Camera:WorldToScreenPoint(p2)
 
         if aVisible and bVisible then
-            DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 10, 1)
+            DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 5, 1)
         end
     end
 end
@@ -796,7 +796,7 @@ local function CheckAttack(inst, kroot)
         local f = inst:FindFirstChild("HumanoidRootPart")
         if f then
             if f:FindFirstChild("rbxassetid://135854269153231") or f:FindFirstChild("rbxassetid://105934041806374") or f:FindFirstChild("rbxassetid://130247421279831") or f:FindFirstChild("rbxassetid://107039569833867") or f:FindFirstChild("rbxassetid://100150551345482") then
-                return "Entanglement", 135, 0, 0, nil, nil, function(data)
+                return "Entanglement", 125, 0, 0, nil, nil, function(data)
                         for _, obj in Ingame:GetChildren() do
                             if obj.Name == "Swords" and not data.KnownObjects[obj] then
                                 local s, p = pcall(function()
@@ -877,164 +877,179 @@ local function RenderActiveLines()
         return
     end
 
-    for kroot, data in ActiveLines do
-        local kchar = data.Character
-        if not kroot or not kroot.Parent or not kchar or kchar.Parent ~= Killers then
-            ActiveLines[kroot] = nil
-            continue
-        end
-
-        if not bShowLocalLine and kchar == LocalPlayer.Character then
-            continue
-        end
-
-        local elapsed = os.clock() - data.Started
-
-        if data.EndDelay and elapsed >= data.EndDelay then
-            ActiveLines[kroot] = nil
-            continue
-        end
-
-        if data.Finished then
-            if not CheckAttack(kchar, kroot) then
-                ActiveLines[kroot] = nil
+    for kroot, lines in ActiveLines do
+        for i, data in lines do
+            local kchar = data.Character
+            if not kroot or not kroot.Parent or not kchar or kchar.Parent ~= Killers then
+                lines[i] = nil
+                continue
             end
-            continue
-        end
 
-        if data.ObjectFinder and not data.ObjectMode then
-            local obj = data.ObjectFinder(data, kchar, kroot)
+            if not bShowLocalLine and kchar == LocalPlayer.Character then
+                continue
+            end
 
-            if obj then
-                local pos = GetTrackedPosition(obj)
+            local elapsed = os.clock() - data.Started
+            if data.EndDelay and elapsed >= data.EndDelay then
+                lines[i] = nil
+                continue
+            end
 
-                if pos then
-                    data.ObjectMode = true
-                    data.TrackedObject = obj
-                    data.ObjectSamplePos = nil
-                    data.ObjectDirection = nil
-                    data.ObjectDestination = nil
+            if data.Finished then
+                if not CheckAttack(kchar, kroot) then
+                    lines[i] = nil
                 end
-            end
-        end
-
-        if not data.ObjectFinder then
-            if not data.EndDelay
-            and not CheckAttack(kchar, kroot) then
-                ActiveLines[kroot] = nil
                 continue
             end
 
-        elseif not data.ObjectMode then
-            if not CheckAttack(kchar, kroot)
-            and elapsed > 2 then
-                ActiveLines[kroot] = nil
-                continue
-            end
-        end
-
-        if data["NOMORE"] then continue end
-
-        if data.ObjectMode then
-            local currentPos = GetTrackedPosition(data.TrackedObject)
-
-            if not currentPos then
-                data.Finished = true
-                continue
-            end
-
-            if not data.ObjectSamplePos then
-                data.ObjectSamplePos = currentPos
-                continue
-            end
-
-            if not data.ObjectDirection then
-                local movement = Vector3.new(currentPos.X - data.ObjectSamplePos.X, 0, currentPos.Z - data.ObjectSamplePos.Z)
-                local moved = vector.magnitude(movement)
-
-                if moved >= .5 then
-                    local direction = movement / moved
-                    data.ObjectDirection = direction
-                    data.ObjectDestination = Vector3.new(data.ObjectSamplePos.X + direction.X * data.Length, currentPos.Y, data.ObjectSamplePos.Z + direction.Z * data.Length)
+            if data.ObjectFinder and not data.ObjectMode then
+                local obj = data.ObjectFinder(data, kchar, kroot)
+                if obj then
+                    local pos = GetTrackedPosition(obj)
+                    if pos then
+                        data.ObjectMode = true
+                        data.TrackedObject = obj
+                        data.ObjectSamplePos = nil
+                        data.ObjectDirection = nil
+                        data.ObjectDestination = nil
+                    end
                 end
             end
 
-            if data.ObjectDirection and data.ObjectDestination then
-                local destination = Vector3.new(data.ObjectDestination.X, currentPos.Y, data.ObjectDestination.Z)
-                local remaining = vector.magnitude(Vector3.new(destination.X - currentPos.X, 0, destination.Z - currentPos.Z))
+            if not data.ObjectFinder then
+                if not data.EndDelay
+                and not CheckAttack(kchar, kroot) then
+                    lines[i] = nil
+                    continue
+                end
 
-                if remaining > 0 then
-                    DrawWorldLine(currentPos, destination)
+            elseif not data.ObjectMode then
+                if not CheckAttack(kchar, kroot)
+                and elapsed > 2 then
+                    lines[i] = nil
+                    continue
                 end
             end
-        elseif ShouldUseMovementPath(data, kchar, kroot) then
 
-            local currentPos = kroot.Position
-            local movement = Vector3.new(currentPos.X - data.Origin.X, currentPos.Y - data.Origin.Y, currentPos.Z - data.Origin.Z)
-            local traveled = vector.magnitude(movement)
+            if data["NOMORE"] then continue end
 
-            if traveled > .2 then
-                local direction = movement / traveled
-                local destination = Vector3.new(data.Origin.X + direction.X * data.Length, data.Origin.Y + direction.Y * data.Length, data.Origin.Z + direction.Z * data.Length)
+            if data.ObjectMode then
+                local currentPos = GetTrackedPosition(data.TrackedObject)
 
-                if traveled < data.Length then
-                    DrawWorldLine(currentPos, destination)
+                if not currentPos then
+                    data.Finished = true
+                    continue
+                end
+
+                if not data.ObjectSamplePos then
+                    data.ObjectSamplePos = currentPos
+                    continue
+                end
+
+                if not data.ObjectDirection then
+                    local movement = Vector3.new(currentPos.X - data.ObjectSamplePos.X, 0, currentPos.Z - data.ObjectSamplePos.Z)
+                    local moved = vector.magnitude(movement)
+                    if moved >= .5 then
+                        local direction = movement / moved
+                        data.ObjectDirection = direction
+                        data.ObjectDestination = Vector3.new(data.ObjectSamplePos.X + direction.X * data.Length, currentPos.Y, data.ObjectSamplePos.Z + direction.Z * data.Length)
+                    end
+                end
+
+                if data.ObjectDirection and data.ObjectDestination then
+                    local destination = Vector3.new(data.ObjectDestination.X, currentPos.Y, data.ObjectDestination.Z)
+                    local remaining = vector.magnitude(Vector3.new(destination.X - currentPos.X, 0, destination.Z - currentPos.Z))
+                    if remaining > 0 then
+                        DrawWorldLine(currentPos, destination)
+                    end
+                end
+            elseif ShouldUseMovementPath(data, kchar, kroot) then
+                local currentPos = kroot.Position
+                local movement = Vector3.new(currentPos.X - data.Origin.X, currentPos.Y - data.Origin.Y, currentPos.Z - data.Origin.Z)
+                local traveled = vector.magnitude(movement)
+                if traveled > .2 then
+                    local direction = movement / traveled
+                    local destination = Vector3.new(data.Origin.X + direction.X * data.Length, data.Origin.Y + direction.Y * data.Length, data.Origin.Z + direction.Z * data.Length)
+                    if traveled < data.Length then
+                        DrawWorldLine(currentPos, destination)
+                    end
+                else
+                    DrawLookLine(kroot, data.Length, data.Right, data.Down)
                 end
             else
                 DrawLookLine(kroot, data.Length, data.Right, data.Down)
             end
-        else
-            DrawLookLine(kroot, data.Length, data.Right, data.Down)
-        end
 
-        DrawText(kroot, data.AttackType, c.linesec, 25)
+            DrawText(kroot, data.AttackType, c.linesec, 25)
+
+            if next(lines) == nil then
+                ActiveLines[kroot] = nil
+            end
+        end
     end
 end
 
 local function UpdateActiveLines()
     for _, inst in Killers:GetChildren() do
         local kroot = inst:FindFirstChild("HumanoidRootPart")
-
         if not kroot then continue end
-        if ActiveLines[kroot] then continue end
 
         local atype, length, right, down, switchCondition, endDelay, objectFinder = CheckAttack(inst, kroot)
 
-        if atype and length then
-            local knownObjects = {}
-
-            if objectFinder then
-                for _, obj in Ingame:GetChildren() do
-                    knownObjects[obj] = true
-                end
-            end
-
-            for tempkroot, tempdata in ActiveLines do
-                tempdata["NOMORE"] = true
-                ActiveLines[tempkroot] = tempdata
-            end
-
-            ActiveLines[kroot] = {
-                Character = inst,
-                AttackType = atype,
-                Length = length,
-                Right = right or 0,
-                Down = down or 0,
-                Origin = kroot.Position,
-                Started = os.clock(),
-                SwitchCondition = switchCondition,
-                EndDelay = endDelay,
-                ObjectFinder = objectFinder,
-                KnownObjects = knownObjects,
-                ObjectMode = false,
-                TrackedObject = nil,
-                ObjectSamplePos = nil,
-                ObjectDirection = nil,
-                ObjectDestination = nil,
-                Finished = false,
-                NOMORE = false,
-            }
+        if not atype or not length then
+            continue
         end
+        if not ActiveLines[kroot] then
+            ActiveLines[kroot] = {}
+        end
+
+        local lines = ActiveLines[kroot]
+        local alreadyExists = false
+
+        for _, data in lines do
+            if not data.NOMORE
+            and data.AttackType == atype then
+                alreadyExists = true
+                break
+            end
+        end
+
+        if alreadyExists then
+            continue
+        end
+
+        for _, data in lines do
+            data.NOMORE = true
+        end
+
+        local knownObjects = {}
+        if objectFinder then
+            for _, obj in Ingame:GetChildren() do
+                knownObjects[obj] = true
+            end
+        end
+
+        table.insert(lines, {
+            Character = inst,
+            Root = kroot,
+            AttackType = atype,
+            Length = length,
+            Right = right or 0,
+            Down = down or 0,
+            Origin = kroot.Position,
+            Started = os.clock(),
+            SwitchCondition = switchCondition,
+            EndDelay = endDelay,
+            ObjectFinder = objectFinder,
+            KnownObjects = knownObjects,
+            ObjectMode = false,
+            TrackedObject = nil,
+            ObjectSamplePos = nil,
+            ObjectDirection = nil,
+            ObjectDestination = nil,
+            Finished = false,
+            NOMORE = false,
+        })
     end
 end
 
