@@ -852,7 +852,7 @@ local function CheckAttack(inst, kroot, ignorer)
         local CorruptEnergy = (f:FindFirstChild("rbxassetid://75210765058860") or f:FindFirstChild("rbxassetid://87883890694872") or f:FindFirstChild("rbxassetid://109525294317144") or f:FindFirstChild("rbxassetid://119285029803606") or f:FindFirstChild("rbxassetid://100163947838165") or f:FindFirstChild("rbxassetid://74901476984677") or f:FindFirstChild("rbxassetid://100163947838165") or f:FindFirstChild("rbxassetid://99582226869588") or f:FindFirstChild("rbxassetid://96733419994623")) and not Ingame:FindFirstChild("SpikeCollision")
 
         if CorruptEnergy and not IsIgnored("Corrupt Energy") then
-            return "Corrupt Energy", 95, 0, 0, nil, 3.7
+            return "Corrupt Energy", 115, 0, 0, nil, 3.7
         else return false end
     elseif name == "Noli" then
         local VoidRush = inst:GetAttribute("VoidRushState") == "Charging" or inst:GetAttribute("VoidRushState") == "Dashing" or inst:GetAttribute("VoidRushState") == "Hit"
