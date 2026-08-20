@@ -218,9 +218,9 @@ local c = {
     linesec = Color3.fromRGB(241,195,56),
 }
 
-local Names = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "VineModel", "GroundBulbModel", "BuildermanDispenser", "BuildermanSentry", "007n7", "Pizza", "GraffitiCL", "CrystalProjectile", "Medkit", "BloxyCola", "MisterBeast", "Noli"}
+local Names = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "VineModel", "GroundBulbModel", "GroundBulb", "BuildermanDispenser", "BuildermanSentry", "007n7", "Pizza", "GraffitiCL", "CrystalProjectile", "Medkit", "BloxyCola", "MisterBeast", "Noli"}
 local SNames = {"BuildermanDispenser", "BuildermanSentry", "007n7", "Pizza", "GraffitiCL", "CrystalProjectile", "TaphTripwire", "SubspaceTripmine"}
-local KNames = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "VineModel", "GroundBulbModel","Medkit", "BloxyCola", "MisterBeast", "Noli", "Puddle"}
+local KNames = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "VineModel", "GroundBulbModel", "GroundBulb", "Medkit", "BloxyCola", "MisterBeast", "Noli", "Puddle"}
 local PNames = {"TaphTripwire", "SubspaceTripmine", "Puddle", "Shockwave"}
 
 local NameColors = {
@@ -234,6 +234,7 @@ local NameColors = {
     Shadow = "trap",
     VineModel = "trap",
     GroundBulbModel = "trap",
+    GroundBulb = "trap",
     MisterBeast = "azure",
     Azure = "azure",
     Noli = "neutral",
@@ -265,6 +266,7 @@ local FullNames = {
     Shadow = "John Trap",
     VineModel = "Azure Vine",
     GroundBulbModel = "Azure Bulb",
+    GroundBulb = "Azure Bulb",
     MisterBeast = "Azure Golem",
     ["1x1x1x1Zombie"] = "Zombie",
     FakeGenerator = "Fake Generator",
@@ -783,19 +785,29 @@ local function DrawLookLine(root, dist, right, down)
     end
 end
 
-local function CheckAttack(inst, kroot)
+local function CheckAttack(inst, kroot, ignorer)
     local name = inst.Name
 
+    local function IsIgnored(attack)
+        if not ignorer then return false end
+        if type(ignorer) == "table" then return ignorer[attack] == true end
+
+        return ignorer == attack
+    end
+
     if name == "c00lkidd" then
-        if inst:FindFirstChild("c00lgui") then
+        if inst:FindFirstChild("c00lgui") and not IsIgnored("Walkspeed Override") then
             return "Walkspeed Override", 90, 0, 0, function(data)
                 return os.clock() - data.Started >= .4
             end, 1.9
         else return false end
     elseif name == "1x1x1x1" then
         local f = inst:FindFirstChild("HumanoidRootPart")
+
+        local Entanglement = f:FindFirstChild("rbxassetid://135854269153231") or f:FindFirstChild("rbxassetid://105934041806374") or f:FindFirstChild("rbxassetid://130247421279831") or f:FindFirstChild("rbxassetid://107039569833867") or f:FindFirstChild("rbxassetid://100150551345482")
+        local MassInf = (f:FindFirstChild("rbxassetid://70845653728841") or f:FindFirstChild("rbxassetid://73504812754586") or f:FindFirstChild("rbxassetid://97061990471922")) and not f:FindFirstChild("rbxassetid://109351069746096") and not f:FindFirstChild("rbxassetid://96908026446030") and not f:FindFirstChild("rbxassetid://120877949577353") and not f:FindFirstChild("rbxassetid://108829275072240") and not f:FindFirstChild("rbxassetid://134770542596997") and not f:FindFirstChild("rbxassetid://99174224422295")
         if f then
-            if f:FindFirstChild("rbxassetid://135854269153231") or f:FindFirstChild("rbxassetid://105934041806374") or f:FindFirstChild("rbxassetid://130247421279831") or f:FindFirstChild("rbxassetid://107039569833867") or f:FindFirstChild("rbxassetid://100150551345482") then
+            if Entanglement and not IsIgnored("Entanglement") then
                 return "Entanglement", 125, 0, 0, nil, nil, function(data)
                         for _, obj in Ingame:GetChildren() do
                             if obj.Name == "Swords" and not data.KnownObjects[obj] then
@@ -813,7 +825,7 @@ local function CheckAttack(inst, kroot)
 
                         return nil
                     end
-            elseif f:FindFirstChild("rbxassetid://70845653728841") or f:FindFirstChild("rbxassetid://73504812754586") or f:FindFirstChild("rbxassetid://97061990471922") then
+            elseif MassInf and not IsIgnored("Mass Infection") then
                 return "Mass Infection", 630, 0, 0, nil, nil, function(data)
                         for _, obj in Ingame:GetChildren() do
                             if (obj.Name == "shockwave" or obj.Name == "Shockwave") and not data.KnownObjects[obj] then
@@ -835,37 +847,39 @@ local function CheckAttack(inst, kroot)
         else return false end
     elseif name == "JohnDoe" then
         local f = inst:FindFirstChild("HumanoidRootPart")
-        if f then
-            if f:FindFirstChild("rbxassetid://75210765058860") or f:FindFirstChild("rbxassetid://87883890694872") then
-                return "Corrupt Energy", 135, 0, 0, nil, 3.7
-            elseif f:FindFirstChild("rbxassetid://109525294317144") or f:FindFirstChild("rbxassetid://119285029803606") or f:FindFirstChild("rbxassetid://100163947838165") or f:FindFirstChild("rbxassetid://74901476984677") then
-                return "Corrupt Energy", 135, 0, 0, nil, 4.6
-            else return false end
+        if not f then return false end
+
+        local CorruptEnergy = (f:FindFirstChild("rbxassetid://75210765058860") or f:FindFirstChild("rbxassetid://87883890694872") or f:FindFirstChild("rbxassetid://109525294317144") or f:FindFirstChild("rbxassetid://119285029803606") or f:FindFirstChild("rbxassetid://100163947838165") or f:FindFirstChild("rbxassetid://74901476984677") or f:FindFirstChild("rbxassetid://100163947838165") or f:FindFirstChild("rbxassetid://99582226869588") or f:FindFirstChild("rbxassetid://96733419994623")) and not Ingame:FindFirstChild("SpikeCollision")
+
+        if CorruptEnergy and not IsIgnored("Corrupt Energy") then
+            return "Corrupt Energy", 95, 0, 0, nil, 3.7
         else return false end
     elseif name == "Noli" then
-        if inst:GetAttribute("VoidRushState") == "Charging" or inst:GetAttribute("VoidRushState") == "Dashing" or inst:GetAttribute("VoidRushState") == "Hit" then
+        local VoidRush = inst:GetAttribute("VoidRushState") == "Charging" or inst:GetAttribute("VoidRushState") == "Dashing" or inst:GetAttribute("VoidRushState") == "Hit"
+        if VoidRush and not IsIgnored("Voidrush") then
             return "Voidrush", 75, 0, 0
         else return false end
     elseif name == "Sixer" then
-        if inst:GetAttribute("PursuitState") == "Charging" or inst:GetAttribute("PursuitState") == "Dashing" then
+        local Pursuit = inst:GetAttribute("PursuitState") == "Charging" or inst:GetAttribute("PursuitState") == "Dashing"
+        if Pursuit and not IsIgnored("Demonic Pursuit") then
             return "Demonic Pursuit", 155, 0, 0, function(data, kchar)
                 return kchar:GetAttribute("PursuitState") == "Dashing"
             end
         else return false end
     elseif name == "Nosferatu" then
-        if inst:GetAttribute("InvisibilityDisabled") then
+        if inst:GetAttribute("InvisibilityDisabled") and not IsIgnored("Ascension") then
             return "Ascension", 100, 0, 1
         end
         local f = inst:FindFirstChild("SpeedMultipliers")
         if f then
-            if f:FindFirstChild("NosBloodhookThrow") then
+            if f:FindFirstChild("NosBloodhookThrow") and not IsIgnored("Bloodhook") then
                 return "Bloodhook", 115, 0, 0
             else return false end
         else return false end
     elseif name == "Azure" then
         local f = inst:FindFirstChild("HumanoidRootPart")
         if f then
-            if f:FindFirstChild("HomingSpotlightOthers") then
+            if f:FindFirstChild("HomingSpotlightOthers") and not IsIgnored("Enstrangle") then
                 return "Enstrangle", 55, .03, 0
             else return false end
         else return false end
@@ -878,6 +892,18 @@ local function RenderActiveLines()
     end
 
     for kroot, lines in ActiveLines do
+        local function IsThisAttackActive(data)
+            local ignoreOthers = {}
+            for _, other in lines do
+                if other ~= data and other.AttackType then
+                    ignoreOthers[other.AttackType] = true
+                end
+            end
+
+            local atype = CheckAttack(data.Character, kroot, ignoreOthers)
+            return atype == data.AttackType
+        end
+
         for i, data in lines do
             local kchar = data.Character
             if not kroot or not kroot.Parent or not kchar or kchar.Parent ~= Killers then
@@ -891,12 +917,13 @@ local function RenderActiveLines()
 
             local elapsed = os.clock() - data.Started
             if data.EndDelay and elapsed >= data.EndDelay then
+                data["NOMORE"] = true
                 lines[i] = nil
                 continue
             end
 
             if data.Finished then
-                if not CheckAttack(kchar, kroot) then
+                if not IsThisAttackActive(data) then
                     lines[i] = nil
                 end
                 continue
@@ -917,25 +944,26 @@ local function RenderActiveLines()
             end
 
             if not data.ObjectFinder then
-                if not data.EndDelay
-                and not CheckAttack(kchar, kroot) then
+                if not data.EndDelay and not IsThisAttackActive(data) then
                     lines[i] = nil
                     continue
                 end
-
             elseif not data.ObjectMode then
-                if not CheckAttack(kchar, kroot)
-                and elapsed > 2 then
+                if not IsThisAttackActive(data) and elapsed > 2 then
                     lines[i] = nil
                     continue
                 end
             end
 
-            if data["NOMORE"] then continue end
+            if data.NOMORE then
+                if not IsThisAttackActive(data) then
+                    lines[i] = nil
+                end
+                continue
+            end
 
             if data.ObjectMode then
                 local currentPos = GetTrackedPosition(data.TrackedObject)
-
                 if not currentPos then
                     data.Finished = true
                     continue
@@ -982,9 +1010,11 @@ local function RenderActiveLines()
 
             DrawText(kroot, data.AttackType, c.linesec, 25)
 
-            if next(lines) == nil then
-                ActiveLines[kroot] = nil
-            end
+            
+        end
+
+        if next(lines) == nil then
+            ActiveLines[kroot] = nil
         end
     end
 end
@@ -994,27 +1024,24 @@ local function UpdateActiveLines()
         local kroot = inst:FindFirstChild("HumanoidRootPart")
         if not kroot then continue end
 
-        local atype, length, right, down, switchCondition, endDelay, objectFinder = CheckAttack(inst, kroot)
-
-        if not atype or not length then
-            continue
-        end
-        if not ActiveLines[kroot] then
-            ActiveLines[kroot] = {}
-        end
-
         local lines = ActiveLines[kroot]
-        local alreadyExists = false
+        if not lines then
+            lines = {}
+            ActiveLines[kroot] = lines
+        end
 
+        local ignored = {}
         for _, data in lines do
-            if not data.NOMORE
-            and data.AttackType == atype then
-                alreadyExists = true
-                break
+            if data.AttackType then
+                ignored[data.AttackType] = true
             end
         end
 
-        if alreadyExists then
+        local atype, length, right, down, switchCondition, endDelay, objectFinder = CheckAttack(inst, kroot, ignored)
+        if not atype or not length then
+            if next(lines) == nil then
+                ActiveLines[kroot] = nil
+            end
             continue
         end
 
@@ -1250,7 +1277,7 @@ local function PreData()
             continue
         end
 
-        ESP.AddPlayer(Char, inst == LocalPlayer, Char.Humanoid.Health, Char.Humanoid.MaxHealth, inst.Name, inst.DisplayName, inst.UserId, team, tool, nil, nil, Char.Name == "Sixer" and SixerRig)
+        ESP.AddPlayer(Char, inst == LocalPlayer, Char.Humanoid.Health, Char.Humanoid.MaxHealth, inst.Name, inst.DisplayName, inst.UserId, team, tool, nil, nil, (Char.Name == "Sixer" and SixerRig))
     end
 
     UpdateActiveLines()
@@ -1345,7 +1372,7 @@ local function PreData()
     for _, inst in Ingame:GetChildren() do
         local Name = inst.Name
         if type(Name) ~= "string" then continue end
-        if string.find(Name, "JohnDoeTrail") or string.find(Name, "Shadows") then
+        if bSurv and (string.find(Name, "JohnDoeTrail") or string.find(Name, "Shadows")) then
             for _, part in inst:GetChildren() do
                 local id = InstId(part)
                 if not id then continue end
