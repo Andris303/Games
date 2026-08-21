@@ -30,6 +30,7 @@ local bAutoParry = false
 local bTempParry = false
 local bShowLine = false
 local bShowLocalLine = false
+local bChanceAimbot = false
 local KillerAbTime = {}
 local KillerAb = {}
 local ActiveAttacks = {}
@@ -46,6 +47,7 @@ local window
 local keybindlabel
 local delay_minus = 0
 local LocalTeam = "None"
+local tempstunning = false
 
 local suc2, bool2 = pcall(function()
     return LocalPlayer.Character.Name == "Guest1337"
@@ -538,10 +540,12 @@ local function UpdateValues()
     local synckeybind = window:getvalue("AutoBlockKeybind")
     local synchighlight = window:getvalue("Highlight part")
     local synctextname = window:getvalue("Show object name")
-    local syncautoparry = window:getvalue("Auto parry")
+    local syncautoparry = window:getvalue("Guest 1337 auto parry")
     local syncparrydelay = window:getvalue("Auto parry delay")
     local syncshowline = window:getvalue("Show attack path")
     local syncshowlocalline = window:getvalue("Show path when you're killer")
+    local syncchancestun = window:getvalue("Chance aimbot")
+    local syncshowhidden = window:getvalue("Unhide playtime of all players")
 
     if bAutoBlock ~= syncautoblock then
         KillerAb = {}
@@ -587,6 +591,12 @@ local function UpdateValues()
     if bShowLocalLine ~= syncshowlocalline then
         bShowLocalLine = syncshowlocalline
     end
+    if bChanceAimbot ~= syncchancestun then
+        bChanceAimbot = syncchancestun
+    end
+    if bShowhidden ~= syncshowhidden then
+        bShowhidden = syncshowhidden
+    end
 
     for name, inst in ColorPickers do
         local newval = window:getvalue(inst)
@@ -627,6 +637,38 @@ local function PredictCurve(p1, t1, p2, t2, p3, t3, future)
     return p1 * l1 + p2 * l2 + p3 * l3
 end
 
+local function PredictPosition(lroot, kroot, p1, t1, p2, t2)
+    local p3 = kroot.Position
+    local t3 = os.clock()
+    local MIN_PREDICTION = 0
+    local MAX_PREDICTION = .5
+    local MIN_DISTANCE = 3
+    local MAX_DISTANCE = 20
+    local distance = vector.magnitude(p3 - lroot.Position)
+    local alpha = math.clamp((distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE), 0, 1)
+    local prediction = MIN_PREDICTION + (MAX_PREDICTION - MIN_PREDICTION) * alpha
+
+    local predictedPos = PredictCurve(p1, t1, p2, t2, p3, t3, prediction)
+    local tpos = Vector3.new(predictedPos.X, lroot.Position.Y, predictedPos.Z)
+    
+    return tpos
+end
+
+local function PredictPosition2(lroot, kroot, p1, t1, p2, t2)
+    local p3 = kroot.Position
+    local t3 = os.clock()
+    local MIN_DISTANCE = 0
+    local MAX_DISTANCE = 92
+    local distance = vector.magnitude(p3 - lroot.Position)
+    local alpha = math.clamp((distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE), 0, 1)
+    local prediction = .2 * (alpha ^ .3)
+
+    local predictedPos = PredictCurve(p1, t1, p2, t2, p3, t3, prediction)
+    local tpos = Vector3.new(predictedPos.X, lroot.Position.Y, predictedPos.Z)
+
+    return tpos
+end
+
 local function Parry(lchar)
     local lroot = lchar:FindFirstChild("HumanoidRootPart")
     local killer = Killers:FindFirstChildOfClass("Model")
@@ -649,19 +691,7 @@ local function Parry(lchar)
         keyrelease(PARRY_KEY)
         task.wait(.25)
 
-        local p3 = kroot.Position
-        local t3 = os.clock()
-        local MIN_PREDICTION = 0
-        local MAX_PREDICTION = .5
-        local MIN_DISTANCE = 3
-        local MAX_DISTANCE = 20
-        local distance = vector.magnitude(p3 - lroot.Position)
-        local alpha = math.clamp((distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE), 0, 1)
-        local prediction = MIN_PREDICTION + (MAX_PREDICTION - MIN_PREDICTION) * alpha
-
-        local predictedPos = PredictCurve(p1, t1, p2, t2, p3, t3, prediction)
-        local tpos = Vector3.new(predictedPos.X, lroot.Position.Y, predictedPos.Z)
-        lroot.CFrame = CFrame.lookAt(lroot.Position, tpos)
+        lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition(lroot, kroot))
     end
 end
 
@@ -1080,19 +1110,57 @@ local function UpdateActiveLines()
     end
 end
 
+local function ChanceAim(f, lroot, kroot)
+    if f:FindFirstChild("ShootingGun") then
+        if not tempstunning then
+            tempstunning = true
+
+            task.wait(.675)
+
+            local p1 = kroot.Position
+            local t1 = os.clock()
+
+            task.wait(.07)
+
+            local p2 = kroot.Position
+            local t2 = os.clock()
+
+            task.wait(.07)
+
+            lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition2(lroot, kroot, p1, t1, p2, t2))
+        end
+    elseif tempstunning then
+        tempstunning = false
+    end
+end
+
 local function PreLocal()
     UpdateValues()
 
     local tempisguest
 
     local suc, bool = pcall(function()
-        return LocalPlayer.Character.Name == "Guest1337"
+        return LocalPlayer.Character.Name
     end)
 
-    if suc and bool then
+    if suc and bool == "Guest1337" then
         tempisguest = true
     else
         tempisguest = false
+    end
+
+    if bChanceAimbot and suc and bool then
+        if bool == "Chance" then
+            local f = LocalPlayer.Character:FindFirstChild("SpeedMultipliers")
+            local lroot = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local targetk = Killers:FindFirstChildOfClass("Model")
+            if f and lroot and targetk then
+                local kroot = targetk:FindFirstChild("HumanoidRootPart")
+                if kroot then
+                    task.spawn(ChanceAim, f, lroot, kroot)
+                end
+            end
+        end
     end
 
     if tempisguest ~= isguest then
@@ -1242,9 +1310,13 @@ local function PreData()
                     continue
                 end
             end
-            if inst.Name == "Azure" and tostring(_G.ESPData[ID]["Toolname"]) ~= tostring(math.floor(tonumber(inst:GetAttribute("Oblation")))) .. " Oblation" and tostring(_G.ESPData[ID]["Toolname"]) ~= "Golem ready" and not _G.ESPData[ID]["LocalPlayer"] then
-                ESP.RemovePlayer(ID)
-                continue
+            if inst.Name == "Azure" then 
+                if inst:GetAttribute("Oblation") then
+                    if tostring(_G.ESPData[ID]["Toolname"]) ~= tostring(math.floor(tonumber(inst:GetAttribute("Oblation")))) .. " Oblation" and tostring(_G.ESPData[ID]["Toolname"]) ~= "Golem ready" and not _G.ESPData[ID]["LocalPlayer"] then
+                        ESP.RemovePlayer(ID)
+                        continue
+                    end
+                end
             end
         end
     end
@@ -1266,7 +1338,9 @@ local function PreData()
             if tonumber(Char:GetAttribute("Oblation")) == 15 then
                 tool = "Golem ready"
             else
-                tool = tostring(math.floor(tonumber(Char:GetAttribute("Oblation")))) .. " Oblation"
+                if Char:GetAttribute("Oblation") then
+                    tool = tostring(math.floor(tonumber(Char:GetAttribute("Oblation")))) .. " Oblation"
+                end
             end
         end
         
@@ -1524,12 +1598,13 @@ window:registerkey("AutoBlockKeybind", KEYBIND)
 KEYBIND = window:getvalue("AutoBlockKeybind")
 
 local tabMain = window:createtab("Main")
+local tabVisual = window:createtab("Visual")
 local tabColors = window:createtab("Colors")
 local tabSettings = window:createtab("Settings")
 
-window:createlabel(tabMain, "ESP settings (AKA Highlighter)", 1)
+window:createlabel(tabVisual, "ESP settings (AKA Highlighter)", 1)
 
-window:createtoggle(tabMain, {
+window:createtoggle(tabVisual, {
     Name = "Enable ESP",
     Col = 1,
     Default = true,
@@ -1541,7 +1616,7 @@ window:createtoggle(tabMain, {
 	end
 })
 
-window:createtoggle(tabMain, {
+window:createtoggle(tabVisual, {
     Name = "Highlight part",
     Col = 1,
     Default = true,
@@ -1550,7 +1625,7 @@ window:createtoggle(tabMain, {
 	end
 })
 
-window:createtoggle(tabMain, {
+window:createtoggle(tabVisual, {
     Name = "Show object name",
     Col = 1,
     Default = true,
@@ -1559,31 +1634,58 @@ window:createtoggle(tabMain, {
 	end
 })
 
-window:createlabel(tabMain, "Shows attack abilties' path", 1)
+window:createlabel(tabVisual, "Shows killer attack abilty paths", 2)
 
-window:createtoggle(tabMain, {
+window:createtoggle(tabVisual, {
     Name = "Show attack path",
-    Col = 1,
+    Col = 2,
     Default = false,
     Callback = function(val)
 		bShowLine = val
 	end
 })
 
-window:createtoggle(tabMain, {
+window:createtoggle(tabVisual, {
     Name = "Show path when you're killer",
-    Col = 1,
+    Col = 2,
     Default = false,
     Callback = function(val)
 		bShowLocalLine = val
 	end
 })
 
-window:createlabel(tabMain, "After enabling, you need to press your keybind", 2)
+window:createseparator(tabVisual, 2)
+
+window:createbutton(tabVisual, {
+    Name = "Unhide playtime of all players",
+    Col = 2,
+    Callback = function(val)
+        for _, inst in Players:GetChildren() do
+            pcall(function()
+                inst.PlayerData.Settings.Privacy.HidePlaytime.Value = false
+            end)
+        end
+	end
+})
+
+window:createbutton(tabVisual, {
+    Name = "Unhide killer and survivor wins of all players",
+    Col = 2,
+    Callback = function(val)
+        for _, inst in Players:GetChildren() do
+            pcall(function()
+                inst.PlayerData.Settings.Privacy.HidekillerWins.Value = false
+                inst.PlayerData.Settings.Privacy.HideSurvivorWins.Value = false
+            end)
+        end
+	end
+})
+
+window:createlabel(tabMain, "After enabling, you need to press your keybind", 1)
 
 window:createtoggle(tabMain, {
     Name = "Enable Auto block",
-    Col = 2,
+    Col = 1,
     Default = false,
     Callback = function(val)
         KillerAb = {}
@@ -1599,7 +1701,7 @@ window:createtoggle(tabMain, {
 
 window:createtoggle(tabMain, {
     Name = "Block when the killer is stun immune",
-    Col = 2,
+    Col = 1,
     Default = false,
     Callback = function(val)
 		bBlockOnInv = val
@@ -1608,19 +1710,19 @@ window:createtoggle(tabMain, {
 
 window:createtoggle(tabMain, {
     Name = "Show Auto block range",
-    Col = 2,
+    Col = 1,
     Default = false,
     Callback = function(val)
 		bShowBlock = val
 	end
 })
 
-keybindlabel = window:createlabel(tabMain, "Current keybind: " .. KEYBIND, 2)
+keybindlabel = window:createlabel(tabMain, "Current keybind: " .. KEYBIND, 1)
 
 local keybindbtn
 keybindbtn = window:createbutton(tabMain, {
     Name = "Change keybind",
-    Col = 2,
+    Col = 1,
     Callback = function()
         if bChangingBind then return end
         task.spawn(function()
@@ -1650,10 +1752,10 @@ keybindbtn = window:createbutton(tabMain, {
     end
 })
 
-window:createseparator(tabMain, 2)
+window:createlabel(tabMain, "Auto aim for all survivor sentinel stuns", 2)
 
 window:createtoggle(tabMain, {
-    Name = "Auto parry",
+    Name = "Guest 1337 auto parry",
     Col = 2,
     Default = false,
     Callback = function(val)
@@ -1669,6 +1771,17 @@ window:createslider(tabMain, {
     Callback = function(val)
         PARRY_DELAY = val
     end
+})
+
+window:createseparator(tabMain, 2)
+
+window:createtoggle(tabMain, {
+    Name = "Chance aimbot",
+    Col = 2,
+    Default = false,
+    Callback = function(val)
+		bChanceAimbot = val
+	end
 })
 
 window:createcolorpicker(tabColors, {
