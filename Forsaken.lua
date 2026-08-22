@@ -299,14 +299,13 @@ local function GetPart(inst)
         return inst
     end
 
-    local Children = inst:GetChildren()
-
     if inst:FindFirstChild("Humanoid") then
         local ReturnTable = {}
 
         for _, part in BodyData do
-            if inst:FindFirstChild(part) then
-                table.insert(ReturnTable, inst[part])
+            local thething = inst:FindFirstChild(part)
+            if thething then
+                table.insert(ReturnTable, thething)
             end
         end
 
@@ -679,6 +678,8 @@ local function Parry(lchar)
             task.wait(PARRY_DELAY)
         end
 
+        task.wait(.15)
+
         local p1 = kroot.Position
         local t1 = os.clock()
 
@@ -689,7 +690,7 @@ local function Parry(lchar)
         local t2 = os.clock()
 
         keyrelease(PARRY_KEY)
-        task.wait(.25)
+        task.wait(.1)
 
         lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition(lroot, kroot))
     end
@@ -769,14 +770,14 @@ local function ShouldUseMovementPath(data, kchar, kroot)
 end
 
 local function DrawWorldLine(startPos, endPos)
-    local segml = 1
     local offset = endPos - startPos
     local dist = vector.magnitude(offset)
 
     if dist <= 0 then return end
 
     local direction = offset / dist
-    local segments = math.ceil(dist / segml)
+    local segments = math.min(math.ceil(dist), 80)
+    local segml = dist / segments
 
     for i = 0, segments - 1 do
         local d1 = i * segml
@@ -793,13 +794,14 @@ local function DrawWorldLine(startPos, endPos)
 end
 
 local function DrawLookLine(root, dist, right, down)
-    local segml = 1
     local startPos = root.Position
     right = right or 0
     down = down or 0
     local direction = root.LookVector + root.RightVector * right - root.UpVector * down
     direction = direction / vector.magnitude(direction)
-    local segments = math.ceil(dist / segml)
+
+    local segments = math.min(math.ceil(dist), 80)
+    local segml = dist / segments
 
     for i = 0, segments - 1 do
         local d1 = i * segml
@@ -834,8 +836,8 @@ local function CheckAttack(inst, kroot, ignorer)
     elseif name == "1x1x1x1" then
         local f = inst:FindFirstChild("HumanoidRootPart")
 
-        local Entanglement = f:FindFirstChild("rbxassetid://135854269153231") or f:FindFirstChild("rbxassetid://105934041806374") or f:FindFirstChild("rbxassetid://130247421279831") or f:FindFirstChild("rbxassetid://107039569833867") or f:FindFirstChild("rbxassetid://100150551345482")
-        local MassInf = (f:FindFirstChild("rbxassetid://70845653728841") or f:FindFirstChild("rbxassetid://73504812754586") or f:FindFirstChild("rbxassetid://97061990471922")) and not f:FindFirstChild("rbxassetid://109351069746096") and not f:FindFirstChild("rbxassetid://96908026446030") and not f:FindFirstChild("rbxassetid://120877949577353") and not f:FindFirstChild("rbxassetid://108829275072240") and not f:FindFirstChild("rbxassetid://134770542596997") and not f:FindFirstChild("rbxassetid://99174224422295")
+        local Entanglement = f:FindFirstChild("rbxassetid://135854269153231") or f:FindFirstChild("rbxassetid://105934041806374") or f:FindFirstChild("rbxassetid://130247421279831") or f:FindFirstChild("rbxassetid://107039569833867") or f:FindFirstChild("rbxassetid://100150551345482") or f:FindFirstChild("rbxassetid://91488514366191") or f:FindFirstChild("rbxassetid://101739035738613") or f:FindFirstChild("rbxassetid://75675413747752")
+        local MassInf = (f:FindFirstChild("rbxassetid://70845653728841") or f:FindFirstChild("rbxassetid://73504812754586") or f:FindFirstChild("rbxassetid://97061990471922") or f:FindFirstChild("rbxassetid://85647688284850")) and not f:FindFirstChild("rbxassetid://109351069746096") and not f:FindFirstChild("rbxassetid://96908026446030") and not f:FindFirstChild("rbxassetid://120877949577353") and not f:FindFirstChild("rbxassetid://108829275072240") and not f:FindFirstChild("rbxassetid://134770542596997") and not f:FindFirstChild("rbxassetid://99174224422295") and not f:FindFirstChild("rbxassetid://135436619867662") and not f:FindFirstChild("rbxassetid://85069492524977")
         if f then
             if Entanglement and not IsIgnored("Entanglement") then
                 return "Entanglement", 125, 0, 0, nil, nil, function(data)
@@ -1050,6 +1052,11 @@ local function RenderActiveLines()
 end
 
 local function UpdateActiveLines()
+    if not bShowLine then
+        ActiveLines = {}
+        return
+    end
+
     for _, inst in Killers:GetChildren() do
         local kroot = inst:FindFirstChild("HumanoidRootPart")
         if not kroot then continue end
@@ -1493,12 +1500,13 @@ local function Render()
 
     for id, inst in ItemCache do
         local Name
-        if not inst or not inst.Parent then
+        local iParent = inst.Parent
+        if not inst or not iParent then
             ItemCache[id] = nil
             continue
         else
             local s, r = pcall(function()
-                return inst.Parent.Name
+                return iParent.Name
             end)
             if s and r == "Backpack" then
                 ItemCache[id] = nil
@@ -1516,28 +1524,31 @@ local function Render()
         if Name == "Generator" and (bInUI or bKill) then continue end
 
         if Name == "Generator" then
-            if not inst:FindFirstChild("Main") or not inst:FindFirstChild("Progress") then
+            local Main = inst:FindFirstChild("Main")
+            local Progress = inst:FindFirstChild("Progress")
+
+            if not Main or not Progress then
                 ItemCache[id] = nil
                 continue
             end
 
-            local Main = inst.Main
-            local Progress = inst.Progress
+            local val = Progress.Value
 
-            if Progress.Value == 100 then
+            if val == 100 then
                 ItemCache[id] = nil
                 continue
             end
 
             if bHighlight then Highlight(Main, c.generator) end
-            if bTextName then DrawText(Main, GetGenPer(Progress.Value), c.generator) end
+            if bTextName then DrawText(Main, GetGenPer(val), c.generator) end
             continue
         end
 
         if Name == "Trail" then
             local sz = inst.Size
             if sz.x > 100 or sz.y > 100 or sz.z > 100 then continue end
-        elseif Name == "JaneGhost" then continue
+        elseif Name == "JaneGhost" then
+            continue
         end
 
         local Parts = GetPart(inst)
@@ -1674,7 +1685,7 @@ window:createbutton(tabVisual, {
     Callback = function(val)
         for _, inst in Players:GetChildren() do
             pcall(function()
-                inst.PlayerData.Settings.Privacy.HidekillerWins.Value = false
+                inst.PlayerData.Settings.Privacy.HideKillerWins.Value = false
                 inst.PlayerData.Settings.Privacy.HideSurvivorWins.Value = false
             end)
         end
@@ -1752,7 +1763,7 @@ keybindbtn = window:createbutton(tabMain, {
     end
 })
 
-window:createlabel(tabMain, "Auto aim for all survivor sentinel stuns", 2)
+window:createlabel(tabMain, "Auto aim for survivor sentinel stuns", 2)
 
 window:createtoggle(tabMain, {
     Name = "Guest 1337 auto parry",
