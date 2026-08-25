@@ -38,6 +38,8 @@ local KillerAbTime = {}
 local KillerAb = {}
 local ActiveAttacks = {}
 local ActiveLines = {}
+local PartCache = {}
+local GeneratorCache = {}
 local tempactive = false
 local active = false
 local bt = Drawing.new("Text")
@@ -48,6 +50,8 @@ local FocusTimer = 0
 local bBlockOnInv = false
 local window
 local keybindlabel
+local LastValueSync = 0
+local LastAttackScan = 0
 local delay_minus = 0
 local LocalTeam = "None"
 local tempstunning = false
@@ -124,12 +128,17 @@ local START_WIDTH = 7.5
 local MAX_WIDTH = 13
 local WIDTH_POINT = .75
 local END_WIDTH = 5
-local EXTRA_FORWARD = 5
+local EXTRA_FORWARD = 4
 local HEIGHT = 6
 local ATTACK_LENGTH = 7.5
 local EXTRA_HEIGHT = 1
 local CLOSE_RADIUS = 5
 local MIN_WIDTH_MULTIPLIER = .85
+
+local EntSounds = {"rbxassetid://135854269153231", "rbxassetid://105934041806374", "rbxassetid://130247421279831", "rbxassetid://107039569833867", "rbxassetid://100150551345482", "rbxassetid://91488514366191", "rbxassetid://101739035738613", "rbxassetid://75675413747752", "rbxassetid://78992685630984", "rbxassetid://130994756001980"}
+local MassInfSounds = {"rbxassetid://70845653728841", "rbxassetid://73504812754586", "rbxassetid://97061990471922", "rbxassetid://85647688284850", "rbxassetid://83349035240699"}
+local RejuvSounds = {"rbxassetid://109351069746096", "rbxassetid://96908026446030", "rbxassetid://120877949577353", "rbxassetid://108829275072240", "rbxassetid://134770542596997", "rbxassetid://99174224422295", "rbxassetid://135436619867662", "rbxassetid://85069492524977", "rbxassetid://127962518201254"}
+local CorruptSounds = {"rbxassetid://75210765058860", "rbxassetid://87883890694872", "rbxassetid://109525294317144", "rbxassetid://119285029803606", "rbxassetid://100163947838165", "rbxassetid://74901476984677", "rbxassetid://99582226869588", "rbxassetid://96733419994623", "rbxassetid://137444402376234"}
 
 local SixerRig = {
     RigType = "R15",
@@ -285,20 +294,20 @@ local NameColors = {
 }
 
 local FullNames = {
-    BuildermanDispenser = "Builder Dispenser",
-    BuildermanSentry = "Builder Sentry",
+    BuildermanDispenser = "Builderman Dispenser",
+    BuildermanSentry = "Builderman Sentry",
     ["007n7"] = "007n7 Clone",
     Pizza = "Elliot Pizza",
     GraffitiCL = "Vee Graffiti",
     TaphTripwire = "Taph Tripwire",
     SubspaceTripmine = "Taph Mine",
-    Shadow = "John Trap",
+    Shadow = "Digital Footprint",
     VineModel = "Azure Vine",
     GroundBulbModel = "Azure Bulb",
     GroundBulb = "Azure Bulb",
-    MisterBeast = "Azure Golem",
+    MisterBeast = "Golem",
     ["1x1x1x1Zombie"] = "Zombie",
-    FakeGenerator = "Fake Generator",
+    FakeGenerator = "Fake Gen",
     Azure = "Azure",
     Noli = "Fake Noli",
     Medkit = "Medkit",
@@ -351,6 +360,12 @@ local function GetPart(inst)
     return inst:FindFirstChildOfClass("Part") or inst:FindFirstChildOfClass("MeshPart") or inst:FindFirstChildOfClass("UnionOperation")
 end
 
+local function RemoveCachedItem(id)
+    ItemCache[id] = nil
+    PartCache[id] = nil
+    GeneratorCache[id] = nil
+end
+
 local function Highlight(inst, color)
     local s, p = pcall(function()
         return inst.Position
@@ -382,7 +397,7 @@ local function ShouldBlock(kp, kl, lp, prog)
 
     local extraForward = EXTRA_FORWARD
     if prog > .5 then
-        extraForward = 4 - (2 * (prog - .5) / .5)
+        extraForward = EXTRA_FORWARD - (2 * (prog - .5) / .5)
     end
 
     local maxForward = ATTACK_LENGTH + extraForward
@@ -427,12 +442,9 @@ local function RenderBlockShape(KRoot, LRoot, prog)
     local kl = KRoot.LookVector
     local forward = vector.create(kl.X, 0, kl.Z)
 
-    if vector.magnitude(forward) == 0 then
-        return
-    end
+    if vector.magnitude(forward) == 0 then return end
 
     forward = forward / vector.magnitude(forward)
-
     local right = vector.create(-forward.Z, 0, forward.X)
     local extraForward = EXTRA_FORWARD
 
@@ -507,7 +519,9 @@ local function RenderBlockShape(KRoot, LRoot, prog)
     end
 end
 
-local function BlockChecker(KRoot, LRoot, inst)
+local function BlockChecker(KRoot, LRoot, inst, attackData)
+    if ActiveAttacks[KRoot] ~= attackData then return end
+
     if DELAY > 0 then
         local ping = game:GetPing()
         if ping < 150 then
@@ -518,7 +532,7 @@ local function BlockChecker(KRoot, LRoot, inst)
     local c = 0
 
     while c <= ATTACK_LINGER do
-        if not active or not isguest or not bAutoBlock then break end
+        if not active or not bAutoBlock then break end
         c += 1
         local attackProgress = c / ATTACK_LINGER
         if ActiveAttacks[KRoot] then
@@ -541,24 +555,41 @@ local function BlockChecker(KRoot, LRoot, inst)
                     end
                 end
 
-                bt2.Visible = true
-                ActiveAttacks[KRoot] = nil
+                if ActiveAttacks[KRoot] == attackData then
+                    ActiveAttacks[KRoot] = nil
+                end
 
-                keypress(BLOCK_KEY)
-                task.wait(.1)
-                keyrelease(BLOCK_KEY)
-                task.wait(.9)
+                if isguest then
+                    bt2.Visible = true
+                    keypress(BLOCK_KEY)
+                    task.wait(.1)
+                    keyrelease(BLOCK_KEY)
+                    task.wait(.9)
+                end
 
-                bt2.Visible = false
+                if ActiveAttacks[KRoot] == attackData then
+                    bt2.Visible = false
+                end
+
                 break
             end
         end
         task.wait(.01)
     end
-    ActiveAttacks[KRoot] = nil
+    if ActiveAttacks[KRoot] == attackData then
+        ActiveAttacks[KRoot] = nil
+    end
 end
 
 local function UpdateValues()
+    local now = os.clock()
+
+    if now - LastValueSync < .1 then
+        return
+    end
+
+    LastValueSync = now
+
     local syncautoblock = window:getvalue("Enable Auto block")
     local syncinv = window:getvalue("Block when the killer is stun immune")
     local syncesp = window:getvalue("Enable ESP")
@@ -592,6 +623,8 @@ local function UpdateValues()
         bESP = syncesp
 		if not bESP then
 			ItemCache = {}
+            PartCache = {}
+            GeneratorCache = {}
 		end
     end
     if bBlockOnInv ~= syncinv then
@@ -684,7 +717,7 @@ local function PredictPosition(lroot, kroot, p1, t1, p2, t2)
     return tpos
 end
 
-local function PredictPosition2(lroot, kroot, p1, t1, p2, t2)
+local function PredictPosition2(lroot, kroot, p1, t1)
     local p3 = kroot.Position
     local t3 = os.clock()
 
@@ -733,39 +766,8 @@ local function Parry(lchar)
         keyrelease(PARRY_KEY)
         task.wait(.1)
 
-        lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition(lroot, kroot))
+        lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition(lroot, kroot, p1, t1, p2, t2))
     end
-end
-
-local function AddSpaces(string)
-	local result = ""
-
-	for i = 1, #string do
-		local char = string:sub(i, i)
-		local prev = string:sub(i - 1, i - 1)
-		local nextChar = string:sub(i + 1, i + 1)
-		local isUpper = char:match("%u")
-		local prevIsUpper = prev:match("%u")
-		local prevIsLower = prev:match("%l")
-		local nextIsLower = nextChar:match("%l")
-		local shouldAddSpace = false
-
-		if isUpper and i > 1 then
-			if prevIsLower then
-				shouldAddSpace = true
-			elseif prevIsUpper and nextIsLower then
-				shouldAddSpace = true
-			end
-		end
-
-		if shouldAddSpace then
-			result ..= " "
-		end
-
-		result ..= char
-	end
-
-	return result
 end
 
 local function GetTrackedPosition(obj)
@@ -811,13 +813,22 @@ local function ShouldUseMovementPath(data, kchar, kroot)
 end
 
 local function DrawWorldLine(startPos, endPos)
-    local offset = endPos - startPos
-    local dist = vector.magnitude(offset)
+    local offseta = endPos - startPos
+    local dist = vector.magnitude(offseta)
 
     if dist <= 0 then return end
 
-    local direction = offset / dist
-    local segments = math.min(math.ceil(dist), 80)
+    local startScreen, startVisible = Camera:WorldToScreenPoint(startPos)
+    local endScreen, endVisible = Camera:WorldToScreenPoint(endPos)
+
+    if startVisible and endVisible then
+        DrawingImmediate.Line(Vector2.new(startScreen.X, startScreen.Y), Vector2.new(endScreen.X, endScreen.Y), c.lineprim, 1, 4, 1)
+        return
+    end
+
+    local direction = offseta / dist
+    local SEGMENT_LENGTH = 5
+    local segments = math.max(1, math.ceil(dist / SEGMENT_LENGTH))
     local segml = dist / segments
 
     for i = 0, segments - 1 do
@@ -829,7 +840,7 @@ local function DrawWorldLine(startPos, endPos)
         local b, bVisible = Camera:WorldToScreenPoint(p2)
 
         if aVisible and bVisible then
-            DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 5, 1)
+            DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 4, 1)
         end
     end
 end
@@ -841,7 +852,8 @@ local function DrawLookLine(root, dist, right, down)
     local direction = root.LookVector + root.RightVector * right - root.UpVector * down
     direction = direction / vector.magnitude(direction)
 
-    local segments = math.min(math.ceil(dist), 80)
+    local SEGMENT_LENGTH = 5
+    local segments = math.max(1, math.ceil(dist / SEGMENT_LENGTH))
     local segml = dist / segments
 
     for i = 0, segments - 1 do
@@ -853,7 +865,7 @@ local function DrawLookLine(root, dist, right, down)
         local b, bVisible = Camera:WorldToScreenPoint(p2)
 
         if aVisible and bVisible then
-            DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 5, 1)
+            DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 4, 1)
         end
     end
 end
@@ -875,65 +887,94 @@ local function CheckAttack(inst, kroot, ignorer)
             end, 1.9
         else return false end
     elseif name == "1x1x1x1" then
-        local f = inst:FindFirstChild("HumanoidRootPart")
+        local Entanglement
+        local MassInf
+        local Rejuv
 
-        local Entanglement = f:FindFirstChild("rbxassetid://135854269153231") or f:FindFirstChild("rbxassetid://105934041806374") or f:FindFirstChild("rbxassetid://130247421279831") or f:FindFirstChild("rbxassetid://107039569833867") or f:FindFirstChild("rbxassetid://100150551345482") or f:FindFirstChild("rbxassetid://91488514366191") or f:FindFirstChild("rbxassetid://101739035738613") or f:FindFirstChild("rbxassetid://75675413747752") or f:FindFirstChild("rbxassetid://78992685630984") or f:FindFirstChild("rbxassetid://130994756001980")
-        local MassInf = (f:FindFirstChild("rbxassetid://70845653728841") or f:FindFirstChild("rbxassetid://73504812754586") or f:FindFirstChild("rbxassetid://97061990471922") or f:FindFirstChild("rbxassetid://85647688284850") or f:FindFirstChild("rbxassetid://83349035240699")) and not f:FindFirstChild("rbxassetid://109351069746096") and not f:FindFirstChild("rbxassetid://96908026446030") and not f:FindFirstChild("rbxassetid://120877949577353") and not f:FindFirstChild("rbxassetid://108829275072240") and not f:FindFirstChild("rbxassetid://134770542596997") and not f:FindFirstChild("rbxassetid://99174224422295") and not f:FindFirstChild("rbxassetid://135436619867662") and not f:FindFirstChild("rbxassetid://85069492524977") and not f:FindFirstChild("rbxassetid://127962518201254")
-        if f then
-            if Entanglement and not IsIgnored("Entanglement") then
-                return "Entanglement", 125, 0, 0, nil, nil, function(data)
-                        for _, obj in Ingame:GetChildren() do
-                            if obj.Name == "Swords" and not data.KnownObjects[obj] then
-                                local s, p = pcall(function()
-                                    return obj.PrimaryPart.Position
-                                end)
+        if not IsIgnored("Entanglement") then
+            for _, sound in EntSounds do
+                if kroot:FindFirstChild(sound) then
+                    Entanglement = true
+                    break
+                end
+            end
+        end
 
-                                if s and p then
-                                    if vector.magnitude(kroot.Position - p) < 30 then
-                                        return obj
-                                    end
+        if not IsIgnored("Mass Infection") then
+            for _, sound in RejuvSounds do
+                if kroot:FindFirstChild(sound) then
+                    Rejuv = true
+                    break
+                end
+            end
+
+            for _, sound in MassInfSounds do
+                if kroot:FindFirstChild(sound) then
+                    MassInf = true
+                    break
+                end
+            end
+        end
+
+        if Entanglement then
+            return "Entanglement", 125, 0, 0, nil, nil, function(data)
+                    for _, obj in Ingame:GetChildren() do
+                        if obj.Name == "Swords" and not data.KnownObjects[obj] then
+                            local s, p = pcall(function()
+                                return obj.PrimaryPart.Position
+                            end)
+                            if s and p then
+                                if vector.magnitude(kroot.Position - p) < 30 then
+                                    return obj
                                 end
                             end
                         end
-
-                        return nil
                     end
-            elseif MassInf and not IsIgnored("Mass Infection") then
-                return "Mass Infection", 630, 0, 0, nil, nil, function(data)
-                        for _, obj in Ingame:GetChildren() do
-                            if (obj.Name == "shockwave" or obj.Name == "Shockwave") and not data.KnownObjects[obj] then
-                                local s, p = pcall(function()
-                                    return obj.PrimaryPart.Position
-                                end)
-
-                                if s and p then
-                                    if vector.magnitude(kroot.Position - p) < 30 then
-                                        return obj
-                                    end
+                    return nil
+                end
+        elseif MassInf then
+            return "Mass Infection", 630, 0, 0, nil, nil, function(data)
+                    for _, obj in Ingame:GetChildren() do
+                        if (obj.Name == "shockwave" or obj.Name == "Shockwave") and not data.KnownObjects[obj] then
+                            local s, p = pcall(function()
+                                return obj.PrimaryPart.Position
+                            end)
+                            if s and p then
+                                if vector.magnitude(kroot.Position - p) < 30 then
+                                    return obj
                                 end
                             end
                         end
-
-                        return nil
                     end
-            else return false end
+                    return nil
+                end
         else return false end
     elseif name == "JohnDoe" then
-        local f = inst:FindFirstChild("HumanoidRootPart")
-        if not f then return false end
+        local CorruptEnergy
 
-        local CorruptEnergy = (f:FindFirstChild("rbxassetid://75210765058860") or f:FindFirstChild("rbxassetid://87883890694872") or f:FindFirstChild("rbxassetid://109525294317144") or f:FindFirstChild("rbxassetid://119285029803606") or f:FindFirstChild("rbxassetid://100163947838165") or f:FindFirstChild("rbxassetid://74901476984677") or f:FindFirstChild("rbxassetid://100163947838165") or f:FindFirstChild("rbxassetid://99582226869588") or f:FindFirstChild("rbxassetid://96733419994623") or f:FindFirstChild("rbxassetid://137444402376234")) and not Ingame:FindFirstChild("SpikeCollision")
+        if not IsIgnored("CorruptEnergy") then
+            if not Ingame:FindFirstChild("SpikeCollision") then
+                for _, sound in CorruptSounds do
+                    if kroot:FindFirstChild(sound) then
+                        CorruptEnergy = true
+                        break
+                    end
+                end
+            end
+        end
 
-        if CorruptEnergy and not IsIgnored("Corrupt Energy") then
+        if CorruptEnergy then
             return "Corrupt Energy", 110, 0, 0, nil, 3.7
         else return false end
     elseif name == "Noli" then
-        local VoidRush = inst:GetAttribute("VoidRushState") == "Charging" or inst:GetAttribute("VoidRushState") == "Dashing" or inst:GetAttribute("VoidRushState") == "Hit"
+        local state = inst:GetAttribute("VoidRushState")
+        local VoidRush = state == "Charging" or state == "Dashing" or state == "Hit"
         if VoidRush and not IsIgnored("Voidrush") then
             return "Voidrush", 75, 0, 0
         else return false end
     elseif name == "Sixer" then
-        local Pursuit = inst:GetAttribute("PursuitState") == "Charging" or inst:GetAttribute("PursuitState") == "Dashing"
+        local state = inst:GetAttribute("PursuitState")
+        local Pursuit = state == "Charging" or state == "Dashing"
         if Pursuit and not IsIgnored("Demonic Pursuit") then
             return "Demonic Pursuit", 155, 0, 0, function(data, kchar)
                 return kchar:GetAttribute("PursuitState") == "Dashing"
@@ -964,6 +1005,8 @@ local function RenderActiveLines()
         return
     end
 
+    local now = os.clock()
+
     for kroot, lines in ActiveLines do
         local function IsThisAttackActive(data)
             local ignoreOthers = {}
@@ -978,9 +1021,8 @@ local function RenderActiveLines()
         end
 
         for i, data in lines do
-            local attackActive = IsThisAttackActive(data)
-
             local kchar = data.Character
+
             if not kroot or not kroot.Parent or not kchar or kchar.Parent ~= Killers then
                 lines[i] = nil
                 continue
@@ -990,7 +1032,14 @@ local function RenderActiveLines()
                 continue
             end
 
-            local elapsed = os.clock() - data.Started
+            local attackActive = data.CachedActive
+            if not data.LastActiveCheck or now - data.LastActiveCheck >= .05 then
+                data.LastActiveCheck = now
+                attackActive = IsThisAttackActive(data)
+                data.CachedActive = attackActive
+            end
+
+            local elapsed = now - data.Started
             if data.EndDelay and elapsed >= data.EndDelay then
                 data["NOMORE"] = true
                 lines[i] = nil
@@ -1005,7 +1054,6 @@ local function RenderActiveLines()
             end
 
             if data.ObjectFinder and not data.ObjectMode then
-                local now = os.clock()
                 if not data.LastObjectCheck or now - data.LastObjectCheck >= .05 then
                     data.LastObjectCheck = now
                     local obj = data.ObjectFinder(data, kchar, kroot)
@@ -1153,6 +1201,8 @@ local function UpdateActiveLines()
             EndDelay = endDelay,
             ObjectFinder = objectFinder,
             KnownObjects = knownObjects,
+            LastActiveCheck = os.clock(),
+            CachedActive = true,
             LastObjectCheck = 0,
             ObjectMode = false,
             TrackedObject = nil,
@@ -1170,19 +1220,14 @@ local function ChanceAim(f, lroot, kroot)
         if not tempstunning then
             tempstunning = true
 
-            task.wait(.625)
+            task.wait(.725)
 
             local p1 = kroot.Position
             local t1 = os.clock()
 
             task.wait(.1)
 
-            local p2 = kroot.Position
-            local t2 = os.clock()
-
-            task.wait(.1)
-
-            lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition2(lroot, kroot, p1, t1, p2, t2))
+            lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition2(lroot, kroot, p1, t1))
         end
     elseif tempstunning then
         tempstunning = false
@@ -1196,20 +1241,22 @@ end
 local function PreLocal()
     UpdateValues()
 
-    local s, stam = pcall(GetStam)
+    if bStopStam then
+        local s, stam = pcall(GetStam)
 
-    if bStopStam and s and stam then
-        local stamina = stam:split("/")[1]
-        
-        if stamina == "1" then
-            keyrelease(SPRINT_KEY)
+        if s and stam then
+            local stamina = stam:split("/")[1]
+
+            if stamina == "1" then
+                keyrelease(SPRINT_KEY)
+            end
         end
     end
 
     local tempisguest
 
-    local suc, bool = pcall(function()
-        return LocalPlayer.Character.Name
+    local suc, bool, lchar = pcall(function()
+        return LocalPlayer.Character.Name, LocalPlayer.Character
     end)
 
     if suc and (bool == "Guest1337" or bool == "007n7") then
@@ -1218,10 +1265,10 @@ local function PreLocal()
         tempisguest = false
     end
 
-    if bChanceAimbot and suc and bool then
+    if bChanceAimbot and suc and bool and lchar then
         if bool == "Chance" then
-            local f = LocalPlayer.Character:FindFirstChild("SpeedMultipliers")
-            local lroot = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local f = lchar:FindFirstChild("SpeedMultipliers")
+            local lroot = lchar:FindFirstChild("HumanoidRootPart")
             local targetk = Killers:FindFirstChildOfClass("Model")
             if f and lroot and targetk then
                 local kroot = targetk:FindFirstChild("HumanoidRootPart")
@@ -1259,14 +1306,16 @@ local function PreLocal()
 
     local pressed = false
 
-    for _, v in getpressedkeys() do
-        if v == KEYBIND then
-            pressed = true
-            break
+    if bAutoBlock then
+        for _, v in getpressedkeys() do
+            if v == KEYBIND then
+                pressed = true
+                break
+            end
         end
     end
 
-    if bAutoBlock and pressed and not tempactive then
+    if pressed and not tempactive then
         tempactive = true
         active = not active
         bt.Visible = active
@@ -1305,16 +1354,18 @@ local function PreLocal()
             elseif KillerAbTime[id] ~= AbTime and KillerAb[id] == Ab then
                 KillerAb[id] = Ab
                 KillerAbTime[id] = AbTime
-
                 local LRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
                 local KRoot = inst:FindFirstChild("HumanoidRootPart")
                 if KRoot and LRoot then
-                    if active and isguest then
-                        ActiveAttacks[KRoot] = {
+                    if active then
+                        local config = KillerData[inst.Name] or KillerData.Default
+                        local attackData = {
                             LRoot = LRoot,
-                            Progress = 0
+                            Progress = 0,
+                            Config = config,
                         }
-                        task.spawn(BlockChecker, KRoot, LRoot, inst)
+                        ActiveAttacks[KRoot] = attackData
+                        task.spawn(BlockChecker, KRoot, LRoot, inst, attackData)
                     end
                 end
             elseif KillerAbTime[id] ~= AbTime and tonumber(KillerAb[id]) < tonumber(Ab) then
@@ -1341,6 +1392,8 @@ end
 local function PreData()
     if FocusTimer ~= 0 and FocusTimer + .2 < os.clock() then
         ItemCache = {}
+        PartCache = {}
+        GeneratorCache = {}
         _G.ESPList = {}
         _G.ESPHealths = {}
         _G.ESPData = {}
@@ -1357,8 +1410,9 @@ local function PreData()
             end
         else
             if not inst:FindFirstChild("Humanoid") then continue end
-            if _G.ESPData[ID]["Health"] ~= inst.Humanoid.Health then
-                if inst.Humanoid.Health <= 0 then
+            local chealth = inst.Humanoid.Health
+            if _G.ESPData[ID]["Health"] ~= chealth then
+                if chealth <= 0 then
                     if not _G.ESPData[ID]["LocalPlayer"] then
                         ESP.RemovePlayer(ID)
                     else
@@ -1367,7 +1421,7 @@ local function PreData()
                     continue
                 end
                 if not _G.ESPData[ID]["LocalPlayer"] then
-                    ESP.EditHealth(ID, inst.Humanoid.Health)
+                    ESP.EditHealth(ID, chealth)
                 end
             end
             if not _G.ESPData[ID]["LocalPlayer"] and _G.ESPData[ID]["Teamname"] ~= inst.Parent.Name then
@@ -1383,9 +1437,10 @@ local function PreData()
                     continue
                 end
             end
-            if inst.Name == "Azure" then 
-                if inst:GetAttribute("Oblation") then
-                    if tostring(_G.ESPData[ID]["Toolname"]) ~= tostring(math.floor(tonumber(inst:GetAttribute("Oblation")))) .. " Oblation" and tostring(_G.ESPData[ID]["Toolname"]) ~= "Golem ready" and not _G.ESPData[ID]["LocalPlayer"] then
+            if inst.Name == "Azure" then
+                local coblation = inst:GetAttribute("Oblation")
+                if coblation then
+                    if tostring(_G.ESPData[ID]["Toolname"]) ~= tostring(math.floor(tonumber(coblation))) .. " Oblation" and tostring(_G.ESPData[ID]["Toolname"]) ~= "Golem ready" and not _G.ESPData[ID]["LocalPlayer"] then
                         ESP.RemovePlayer(ID)
                         continue
                     end
@@ -1427,7 +1482,11 @@ local function PreData()
         ESP.AddPlayer(Char, inst == LocalPlayer, Char.Humanoid.Health, Char.Humanoid.MaxHealth, inst.Name, inst.DisplayName, inst.UserId, team, tool, nil, nil, (Char.Name == "Sixer" and SixerRig))
     end
 
-    UpdateActiveLines()
+    local now = os.clock()
+    if now - LastAttackScan >= .03 then
+        LastAttackScan = now
+        UpdateActiveLines()
+    end
 
     if not bESP then return end
 
@@ -1457,7 +1516,9 @@ local function PreData()
         bInUI = false
     end
 
-    for _, inst in Ingame:GetChildren() do
+    local IngameChildren = Ingame:GetChildren()
+
+    for _, inst in IngameChildren do
         local id = InstId(inst)
         if not id then continue end
         if ItemCache[id] then continue end
@@ -1516,7 +1577,7 @@ local function PreData()
         end
     end
 
-    for _, inst in Ingame:GetChildren() do
+    for _, inst in IngameChildren do
         local Name = inst.Name
         if type(Name) ~= "string" then continue end
         if bSurv and (string.find(Name, "JohnDoeTrail") or string.find(Name, "Shadows")) then
@@ -1568,14 +1629,14 @@ local function Render()
         local Name
         local iParent = inst.Parent
         if not inst or not iParent then
-            ItemCache[id] = nil
+            RemoveCachedItem(id)
             continue
         else
             local s, r = pcall(function()
                 return iParent.Name
             end)
             if s and r == "Backpack" then
-                ItemCache[id] = nil
+                RemoveCachedItem(id)
                 continue
             else
                 Name = inst.Name
@@ -1583,7 +1644,7 @@ local function Render()
         end
 
         if type(Name) ~= "string" then
-            ItemCache[id] = nil
+            RemoveCachedItem(id)
             continue
         end
 
@@ -1594,14 +1655,14 @@ local function Render()
             local Progress = inst:FindFirstChild("Progress")
 
             if not Main or not Progress then
-                ItemCache[id] = nil
+                RemoveCachedItem(id)
                 continue
             end
 
             local val = Progress.Value
 
             if val == 100 then
-                ItemCache[id] = nil
+                RemoveCachedItem(id)
                 continue
             end
 
@@ -1617,7 +1678,6 @@ local function Render()
             continue
         end
 
-        local Parts = GetPart(inst)
         local colorKey = NameColors[Name]
         local color = colorKey and c[colorKey] or c.yellow
         local name = FullNames[Name]
@@ -1633,6 +1693,14 @@ local function Render()
         if bSurv and (table.find(SNames, Name) or string.find(Name, "TaphTripwire") or string.find(Name, "SubspaceTripmine")) then continue end
         if bKill and (table.find(KNames, Name) or string.find(Name, "Puddle") or string.find(Name, "Shockwave")) then continue end
         if string.find(Name, "Spray") then continue end
+
+        local Parts = PartCache[id]
+        if not Parts then
+            Parts = GetPart(inst)
+            if Parts then
+                PartCache[id] = Parts
+            end
+        end
 
         if type(Parts) == "table" then
             for _, part in Parts do
@@ -1677,7 +1745,6 @@ KEYBIND = window:getvalue("AutoBlockKeybind")
 local tabMain = window:createtab("Main")
 local tabVisual = window:createtab("Visual")
 local tabColors = window:createtab("Colors")
-local tabSettings = window:createtab("Settings")
 
 window:createlabel(tabVisual, "ESP settings (AKA Highlighter)", 1)
 
@@ -1689,6 +1756,8 @@ window:createtoggle(tabVisual, {
 		bESP = val
 		if not val then
 			ItemCache = {}
+            PartCache = {}
+            GeneratorCache = {}
 		end
 	end
 })
