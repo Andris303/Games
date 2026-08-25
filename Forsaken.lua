@@ -3,6 +3,8 @@
 
 -- Absolutely, you're right. Here's a complete script for Forsaken, that's made specifically for severe's lua enviroment. Keep in mind, that I am a large-language model (LLM) and I can't test the actual script. I will generate code for you, but you still have to test it, and ensure it functions properly. Here is a Forsaken script, built with Ingame ESP, and auto block, crafted to work exactly like you needed:
 
+local offset = _G.LabelTextOffset or 0xdf8
+
 if game.GameId == 6331902150 then
 
 local ESP = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/ESP.lua"))()
@@ -31,6 +33,7 @@ local bTempParry = false
 local bShowLine = false
 local bShowLocalLine = false
 local bChanceAimbot = false
+local bStopStam = false
 local KillerAbTime = {}
 local KillerAb = {}
 local ActiveAttacks = {}
@@ -81,11 +84,39 @@ bt2.Color = Color3.fromRGB(255, 25, 25)
 bt2.Outline = true
 bt2.Visible = false
 
+local codetable = {
+    LeftShift = 0xa0,
+    RightShift = 0xa1,
+    LeftCtrl = 0xa2,
+    RightCtrl = 0xa3,
+    LeftAlt = 0xa4,
+    RightAlt = 0xa5,
+}
+
+local function GetBinds()
+    local ab1 = LocalPlayer.PlayerData.Settings.Keybinds.AltAbility1.Value
+    local ab3 = LocalPlayer.PlayerData.Settings.Keybinds.AltAbility3.Value
+    local sprint = LocalPlayer.PlayerData.Settings.Keybinds.Sprinting.Value
+    
+    return ab1, ab3, sprint
+end
+
+local function GetKeycode(str)
+    if #str == 1 then
+        return string.byte(string.upper(str))
+    elseif codetable[str] then
+        return codetable[str]
+    end
+end
+
 local KEYBIND = "V"
-local blockkeystr = _G.BlockKey or "Q"
-local parrykeystr = _G.ParryKey or "R"
-local BLOCK_KEY = string.byte(string.upper(blockkeystr))
-local PARRY_KEY = string.byte(string.upper(parrykeystr))
+local s, blockkeystr, parrykeystr, sprintkeystr = pcall(GetBinds)
+local BLOCK_KEY, PARRY_KEY, SPRINT_KEY
+if s then
+    BLOCK_KEY = GetKeycode(blockkeystr)
+    PARRY_KEY = GetKeycode(parrykeystr)
+    SPRINT_KEY = GetKeycode(sprintkeystr)
+end
 local PARRY_DELAY = 0
 local DELAY = 0
 local ATTACK_LINGER = 35
@@ -99,10 +130,6 @@ local ATTACK_LENGTH = 7.5
 local EXTRA_HEIGHT = 1
 local CLOSE_RADIUS = 5
 local MIN_WIDTH_MULTIPLIER = .85
-
-if #blockkeystr == 1 then
-    BLOCK_KEY = string.byte(string.upper(blockkeystr))
-end
 
 local SixerRig = {
     RigType = "R15",
@@ -545,6 +572,7 @@ local function UpdateValues()
     local syncshowlocalline = window:getvalue("Show path when you're killer")
     local syncchancestun = window:getvalue("Chance aimbot")
     local syncshowhidden = window:getvalue("Unhide playtime of all players")
+    local syncstopstam = window:getvalue("Safe sprint")
 
     if bAutoBlock ~= syncautoblock then
         KillerAb = {}
@@ -595,6 +623,9 @@ local function UpdateValues()
     end
     if bShowhidden ~= syncshowhidden then
         bShowhidden = syncshowhidden
+    end
+    if bStopStam ~= syncstopstam then
+        bStopStam = syncstopstam
     end
 
     for name, inst in ColorPickers do
@@ -656,16 +687,26 @@ end
 local function PredictPosition2(lroot, kroot, p1, t1, p2, t2)
     local p3 = kroot.Position
     local t3 = os.clock()
+
     local MIN_DISTANCE = 0
     local MAX_DISTANCE = 92
+
     local distance = vector.magnitude(p3 - lroot.Position)
-    local alpha = math.clamp((distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE), 0, 1)
+    local alpha = math.clamp((distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE), 0,  1)
+
     local prediction = .2 * (alpha ^ .3)
+    local dt = t3 - t1
+    if dt <= 0 then
+        return Vector3.new(
+            p3.X,
+            lroot.Position.Y,
+            p3.Z
+        )
+    end
+    local velocity = (p3 - p1) / dt
+    local predictedPos = p3 + velocity * prediction
 
-    local predictedPos = PredictCurve(p1, t1, p2, t2, p3, t3, prediction)
-    local tpos = Vector3.new(predictedPos.X, lroot.Position.Y, predictedPos.Z)
-
-    return tpos
+    return Vector3.new(predictedPos.X, lroot.Position.Y, predictedPos.Z)
 end
 
 local function Parry(lchar)
@@ -881,10 +922,10 @@ local function CheckAttack(inst, kroot, ignorer)
         local f = inst:FindFirstChild("HumanoidRootPart")
         if not f then return false end
 
-        local CorruptEnergy = (f:FindFirstChild("rbxassetid://75210765058860") or f:FindFirstChild("rbxassetid://87883890694872") or f:FindFirstChild("rbxassetid://109525294317144") or f:FindFirstChild("rbxassetid://119285029803606") or f:FindFirstChild("rbxassetid://100163947838165") or f:FindFirstChild("rbxassetid://74901476984677") or f:FindFirstChild("rbxassetid://100163947838165") or f:FindFirstChild("rbxassetid://99582226869588") or f:FindFirstChild("rbxassetid://96733419994623")) and not Ingame:FindFirstChild("SpikeCollision")
+        local CorruptEnergy = (f:FindFirstChild("rbxassetid://75210765058860") or f:FindFirstChild("rbxassetid://87883890694872") or f:FindFirstChild("rbxassetid://109525294317144") or f:FindFirstChild("rbxassetid://119285029803606") or f:FindFirstChild("rbxassetid://100163947838165") or f:FindFirstChild("rbxassetid://74901476984677") or f:FindFirstChild("rbxassetid://100163947838165") or f:FindFirstChild("rbxassetid://99582226869588") or f:FindFirstChild("rbxassetid://96733419994623") or f:FindFirstChild("rbxassetid://137444402376234")) and not Ingame:FindFirstChild("SpikeCollision")
 
         if CorruptEnergy and not IsIgnored("Corrupt Energy") then
-            return "Corrupt Energy", 115, 0, 0, nil, 3.7
+            return "Corrupt Energy", 110, 0, 0, nil, 3.7
         else return false end
     elseif name == "Noli" then
         local VoidRush = inst:GetAttribute("VoidRushState") == "Charging" or inst:GetAttribute("VoidRushState") == "Dashing" or inst:GetAttribute("VoidRushState") == "Hit"
@@ -937,6 +978,8 @@ local function RenderActiveLines()
         end
 
         for i, data in lines do
+            local attackActive = IsThisAttackActive(data)
+
             local kchar = data.Character
             if not kroot or not kroot.Parent or not kchar or kchar.Parent ~= Killers then
                 lines[i] = nil
@@ -955,40 +998,44 @@ local function RenderActiveLines()
             end
 
             if data.Finished then
-                if not IsThisAttackActive(data) then
+                if not attackActive then
                     lines[i] = nil
                 end
                 continue
             end
 
             if data.ObjectFinder and not data.ObjectMode then
-                local obj = data.ObjectFinder(data, kchar, kroot)
-                if obj then
-                    local pos = GetTrackedPosition(obj)
-                    if pos then
-                        data.ObjectMode = true
-                        data.TrackedObject = obj
-                        data.ObjectSamplePos = nil
-                        data.ObjectDirection = nil
-                        data.ObjectDestination = nil
+                local now = os.clock()
+                if not data.LastObjectCheck or now - data.LastObjectCheck >= .05 then
+                    data.LastObjectCheck = now
+                    local obj = data.ObjectFinder(data, kchar, kroot)
+                    if obj then
+                        local pos = GetTrackedPosition(obj)
+                        if pos then
+                            data.ObjectMode = true
+                            data.TrackedObject = obj
+                            data.ObjectSamplePos = nil
+                            data.ObjectDirection = nil
+                            data.ObjectDestination = nil
+                        end
                     end
                 end
             end
 
             if not data.ObjectFinder then
-                if not data.EndDelay and not IsThisAttackActive(data) then
+                if not data.EndDelay and not attackActive then
                     lines[i] = nil
                     continue
                 end
             elseif not data.ObjectMode then
-                if not IsThisAttackActive(data) and elapsed > 2 then
+                if not attackActive and elapsed > 2 then
                     lines[i] = nil
                     continue
                 end
             end
 
             if data.NOMORE then
-                if not IsThisAttackActive(data) then
+                if not attackActive then
                     lines[i] = nil
                 end
                 continue
@@ -1106,6 +1153,7 @@ local function UpdateActiveLines()
             EndDelay = endDelay,
             ObjectFinder = objectFinder,
             KnownObjects = knownObjects,
+            LastObjectCheck = 0,
             ObjectMode = false,
             TrackedObject = nil,
             ObjectSamplePos = nil,
@@ -1122,17 +1170,17 @@ local function ChanceAim(f, lroot, kroot)
         if not tempstunning then
             tempstunning = true
 
-            task.wait(.675)
+            task.wait(.625)
 
             local p1 = kroot.Position
             local t1 = os.clock()
 
-            task.wait(.07)
+            task.wait(.1)
 
             local p2 = kroot.Position
             local t2 = os.clock()
 
-            task.wait(.07)
+            task.wait(.1)
 
             lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition2(lroot, kroot, p1, t1, p2, t2))
         end
@@ -1141,8 +1189,22 @@ local function ChanceAim(f, lroot, kroot)
     end
 end
 
+local function GetStam()
+    return memory.readstring(LocalPlayer.PlayerGui.TemporaryUI.PlayerInfo.Bars.Stamina.Amount, offset)
+end
+
 local function PreLocal()
     UpdateValues()
+
+    local s, stam = pcall(GetStam)
+
+    if bStopStam and s and stam then
+        local stamina = stam:split("/")[1]
+        
+        if stamina == "1" then
+            keyrelease(SPRINT_KEY)
+        end
+    end
 
     local tempisguest
 
@@ -1150,7 +1212,7 @@ local function PreLocal()
         return LocalPlayer.Character.Name
     end)
 
-    if suc and bool == "Guest1337" then
+    if suc and (bool == "Guest1337" or bool == "007n7") then
         tempisguest = true
     else
         tempisguest = false
@@ -1279,6 +1341,10 @@ end
 local function PreData()
     if FocusTimer ~= 0 and FocusTimer + .2 < os.clock() then
         ItemCache = {}
+        _G.ESPList = {}
+        _G.ESPHealths = {}
+        _G.ESPData = {}
+        clear_model_data()
     end
     FocusTimer = os.clock()
 
@@ -1792,6 +1858,17 @@ window:createtoggle(tabMain, {
     Default = false,
     Callback = function(val)
 		bChanceAimbot = val
+	end
+})
+
+window:createlabel(tabMain, "Stops sprinting right before hitting 0 stamina", 2)
+
+window:createtoggle(tabMain, {
+    Name = "Safe sprint",
+    Col = 2,
+    Default = false,
+    Callback = function(val)
+		bStopStam = val
 	end
 })
 
