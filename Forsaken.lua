@@ -911,7 +911,7 @@ local function CheckAttack(inst, kroot, ignorer)
                     end
                     return nil
                 end
-        elseif MassInf then
+        elseif MassInf and not Rejuv then
             return "Mass Infection", 630, 0, 0, nil, nil, function(data)
                     for _, obj in Ingame:GetChildren() do
                         if (obj.Name == "shockwave" or obj.Name == "Shockwave") and not data.KnownObjects[obj] then
@@ -931,7 +931,7 @@ local function CheckAttack(inst, kroot, ignorer)
     elseif name == "JohnDoe" then
         local CorruptEnergy
 
-        if not IsIgnored("CorruptEnergy") then
+        if not IsIgnored("Corrupt Energy") then
             if not Ingame:FindFirstChild("SpikeCollision") then
                 for _, sound in CorruptSounds do
                     if kroot:FindFirstChild(sound) then
