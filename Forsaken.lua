@@ -34,6 +34,7 @@ local bShowLine = false
 local bShowLocalLine = false
 local bChanceAimbot = false
 local bStopStam = false
+local bShowTimer = false
 local KillerAbTime = {}
 local KillerAb = {}
 local ActiveAttacks = {}
@@ -44,6 +45,7 @@ local tempactive = false
 local active = false
 local bt = Drawing.new("Text")
 local bt2 = Drawing.new("Text")
+local bt3 = Drawing.new("Text")
 local viewport = Camera.ViewportSize
 local isguest = false
 local FocusTimer = 0
@@ -84,9 +86,19 @@ bt2.Font = 0
 local length2 = bt2.TextBounds.x
 local height2 = bt2.TextBounds.y
 bt2.Position = Vector2.new(viewport.x / 2 - length2 / 2, viewport.y / 2 - height2 / 2)
-bt2.Color = Color3.fromRGB(255, 25, 25)
+bt2.Color = Color3.fromRGB(255,25,25)
 bt2.Outline = true
 bt2.Visible = false
+
+bt3.Text = "Real timer: 0:00"
+bt3.Size = 30
+bt3.Font = 0
+local length3 = bt3.TextBounds.x
+local height3 = bt3.TextBounds.y
+bt3.Position = Vector2.new(viewport.x / 2 - length3 / 2, viewport.y / 10 - height3 / 2)
+bt3.Color = Color3.fromRGB(214,181,136)
+bt3.Outline = true
+bt3.Visible = false
 
 local codetable = {
     LeftShift = 0xa0,
@@ -257,8 +269,8 @@ local c = {
 }
 
 local Names = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "VineModel", "GroundBulbModel", "GroundBulb", "BuildermanDispenser", "BuildermanSentry", "007n7", "Pizza", "GraffitiCL", "CrystalProjectile", "Medkit", "BloxyCola", "MisterBeast", "Noli"}
-local SNames = {"BuildermanDispenser", "BuildermanSentry", "007n7", "Pizza", "GraffitiCL", "CrystalProjectile", "TaphTripwire", "SubspaceTripmine"}
-local KNames = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "VineModel", "GroundBulbModel", "GroundBulb", "Medkit", "BloxyCola", "MisterBeast", "Noli", "Puddle"}
+local SNames = {"BuildermanDispenser", "BuildermanSentry", "Pizza", "GraffitiCL", "CrystalProjectile", "TaphTripwire", "SubspaceTripmine"}
+local KNames = {"SpikeCollision", "Shadow", "VineModel", "GroundBulbModel", "GroundBulb", "Medkit", "BloxyCola", "MisterBeast", "Noli", "Puddle"}
 local PNames = {"TaphTripwire", "SubspaceTripmine", "Puddle", "Shockwave"}
 
 local NameColors = {
@@ -583,27 +595,27 @@ end
 
 local function UpdateValues()
     local now = os.clock()
-
     if now - LastValueSync < .1 then
         return
     end
-
     LastValueSync = now
 
     local syncautoblock = window:getvalue("Enable Auto block")
-    local syncinv = window:getvalue("Block when the killer is stun immune")
     local syncesp = window:getvalue("Enable ESP")
-    local syncshowb = window:getvalue("Show Auto block range")
     local synckeybind = window:getvalue("AutoBlockKeybind")
-    local synchighlight = window:getvalue("Highlight part")
-    local synctextname = window:getvalue("Show object name")
-    local syncautoparry = window:getvalue("Guest 1337 auto parry")
-    local syncparrydelay = window:getvalue("Auto parry delay")
-    local syncshowline = window:getvalue("Show attack path")
-    local syncshowlocalline = window:getvalue("Show path when you're killer")
-    local syncchancestun = window:getvalue("Chance aimbot")
-    local syncshowhidden = window:getvalue("Unhide playtime of all players")
-    local syncstopstam = window:getvalue("Safe sprint")
+    local syncshowtimer = window:getvalue("Show round timer when hallucinating")
+
+    bBlockOnInv = window:getvalue("Block when the killer is stun immune")
+    bShowBlock = window:getvalue("Show Auto block range")
+    bHighlight = window:getvalue("Highlight part")
+    bTextName = window:getvalue("Show object name")
+    bAutoParry = window:getvalue("Guest 1337 auto parry")
+    PARRY_DELAY = window:getvalue("Auto parry delay")
+    bShowLine = window:getvalue("Show attack path")
+    bShowLocalLine = window:getvalue("Show path when you're killer")
+    bChanceAimbot = window:getvalue("Chance aimbot")
+    bShowhidden = window:getvalue("Unhide playtime of all players")
+    bStopStam = window:getvalue("Safe sprint")
 
     if bAutoBlock ~= syncautoblock then
         KillerAb = {}
@@ -627,38 +639,9 @@ local function UpdateValues()
             GeneratorCache = {}
 		end
     end
-    if bBlockOnInv ~= syncinv then
-        bBlockOnInv = syncinv
-    end
-    if bShowBlock ~= syncshowb then
-        bShowBlock = syncshowb
-    end
-    if bHighlight ~= synchighlight then
-        bHighlight = synchighlight
-    end
-    if bTextName ~= synctextname then
-        bTextName = synctextname
-    end
-    if bAutoParry ~= syncautoparry then
-        bAutoParry = syncautoparry
-    end
-    if PARRY_DELAY ~= syncparrydelay then
-        PARRY_DELAY = syncparrydelay
-    end
-    if bShowLine ~= syncshowline then
-        bShowLine = syncshowline
-    end
-    if bShowLocalLine ~= syncshowlocalline then
-        bShowLocalLine = syncshowlocalline
-    end
-    if bChanceAimbot ~= syncchancestun then
-        bChanceAimbot = syncchancestun
-    end
-    if bShowhidden ~= syncshowhidden then
-        bShowhidden = syncshowhidden
-    end
-    if bStopStam ~= syncstopstam then
-        bStopStam = syncstopstam
+    if bShowTimer ~= syncshowtimer then
+        bt3.Visible = syncshowtimer
+        bShowTimer = syncshowtimer
     end
 
     for name, inst in ColorPickers do
@@ -730,11 +713,7 @@ local function PredictPosition2(lroot, kroot, p1, t1)
     local prediction = .2 * (alpha ^ .3)
     local dt = t3 - t1
     if dt <= 0 then
-        return Vector3.new(
-            p3.X,
-            lroot.Position.Y,
-            p3.Z
-        )
+        return Vector3.new(p3.X, lroot.Position.Y, p3.Z)
     end
     local velocity = (p3 - p1) / dt
     local predictedPos = p3 + velocity * prediction
@@ -1238,8 +1217,30 @@ local function GetStam()
     return memory.readstring(LocalPlayer.PlayerGui.TemporaryUI.PlayerInfo.Bars.Stamina.Amount, offset)
 end
 
+local function SecondsToMinute(num)
+    if not num then return end
+    local min = tostring(math.floor(num / 60))
+    local sec = tostring(math.floor(num % 60))
+    
+    if tonumber(sec) < 10 then
+        sec = "0" .. sec
+    end
+
+    return min .. ":" .. sec
+end
+
 local function PreLocal()
     UpdateValues()
+
+    if not BLOCK_KEY or not PARRY_KEY or not SPRINT_KEY then
+        local s, e1, e2, e3 = pcall(GetBinds)
+
+        if s then
+            BLOCK_KEY = GetKeycode(e1)
+            PARRY_KEY = GetKeycode(e2)
+            SPRINT_KEY = GetKeycode(e3)
+        end
+    end
 
     if bStopStam then
         local s, stam = pcall(GetStam)
@@ -1297,11 +1298,27 @@ local function PreLocal()
         end
     end
 
+    if bShowTimer then
+        local ctimer = game.ReplicatedStorage.RoundTimer:GetAttribute("TimeLeft")
+        if ctimer then
+            bt3.Text = "Real timer: " .. SecondsToMinute(ctimer)
+        end
+    end
+
     if Camera.ViewportSize ~= viewport then
         viewport = Camera.ViewportSize
+
         length = bt.TextBounds.x
         height = bt.TextBounds.y
         bt.Position = Vector2.new(viewport.x / 2 - length / 2, (viewport.y - viewport.y / 4) - height)
+
+        length2 = bt2.TextBounds.x
+        height2 = bt2.TextBounds.y
+        bt2.Position = Vector2.new(viewport.x / 2 - length2 / 2, (viewport.y - viewport.y / 4) - height2)
+
+        length3 = bt3.TextBounds.x
+        height3 = bt3.TextBounds.y
+        bt3.Position = Vector2.new(viewport.x / 2 - length3 / 2, (viewport.y - viewport.y / 4) - height3)
     end
 
     local pressed = false
@@ -1777,6 +1794,18 @@ window:createtoggle(tabVisual, {
     Default = true,
     Callback = function(val)
 		bTextName = val
+	end
+})
+
+window:createseparator(tabVisual, 1)
+
+window:createtoggle(tabVisual, {
+    Name = "Show round timer when hallucinating",
+    Col = 1,
+    Default = false,
+    Callback = function(val)
+		bShowTimer = val
+        bt3.Visible = val
 	end
 })
 
