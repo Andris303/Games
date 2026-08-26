@@ -40,6 +40,7 @@ local KillerAb = {}
 local ActiveAttacks = {}
 local ActiveLines = {}
 local PartCache = {}
+local PartCacheRefresh = {}
 local GeneratorCache = {}
 local tempactive = false
 local active = false
@@ -375,6 +376,7 @@ end
 local function RemoveCachedItem(id)
     ItemCache[id] = nil
     PartCache[id] = nil
+    PartCacheRefresh[id] = nil
     GeneratorCache[id] = nil
 end
 
@@ -1712,10 +1714,31 @@ local function Render()
         if string.find(Name, "Spray") then continue end
 
         local Parts = PartCache[id]
-        if not Parts then
+
+        if type(Parts) == "table" then
+            local refresh = false
+            if not PartCacheRefresh[id] or os.clock() - PartCacheRefresh[id] >= .25 then
+                refresh = true
+            else
+                for _, part in Parts do
+                    if not part or not part.Parent then
+                        refresh = true
+                        break
+                    end
+                end
+            end
+            if refresh then
+                Parts = GetPart(inst)
+                PartCache[id] = Parts
+                PartCacheRefresh[id] = os.clock()
+            end
+        elseif not Parts or not Parts.Parent then
             Parts = GetPart(inst)
             if Parts then
                 PartCache[id] = Parts
+                if type(Parts) == "table" then
+                    PartCacheRefresh[id] = os.clock()
+                end
             end
         end
 
