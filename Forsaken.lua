@@ -1409,14 +1409,11 @@ local function PreLocal()
 end
 
 local function PreData()
-    if FocusTimer ~= 0 and FocusTimer + .2 < os.clock() then
+    if FocusTimer ~= 0 and FocusTimer + .5 < os.clock() then
         ItemCache = {}
         PartCache = {}
         GeneratorCache = {}
-        _G.ESPList = {}
-        _G.ESPHealths = {}
-        _G.ESPData = {}
-        clear_model_data()
+
     end
     FocusTimer = os.clock()
 
@@ -1430,7 +1427,11 @@ local function PreData()
         else
             if not inst:FindFirstChild("Humanoid") then continue end
             local chealth = inst.Humanoid.Health
-            if _G.ESPData[ID]["Health"] ~= chealth then
+            local healthyavocado = math.floor(chealth)
+            if healthyavocado == 0 then
+                healthyavocado = 1
+            end
+            if _G.ESPData[ID]["Health"] ~= healthyavocado then
                 if chealth <= 0 then
                     if not _G.ESPData[ID]["LocalPlayer"] then
                         ESP.RemovePlayer(ID)
@@ -1440,7 +1441,8 @@ local function PreData()
                     continue
                 end
                 if not _G.ESPData[ID]["LocalPlayer"] then
-                    ESP.EditHealth(ID, chealth)
+                    print(inst.Name .. ": " .. _G.ESPData[ID]["Health"] .. " -> " .. healthyavocado)
+                    ESP.EditHealth(ID, healthyavocado)
                 end
             end
             if not _G.ESPData[ID]["LocalPlayer"] and _G.ESPData[ID]["Teamname"] ~= inst.Parent.Name then
@@ -1498,7 +1500,15 @@ local function PreData()
             continue
         end
 
-        ESP.AddPlayer(Char, inst == LocalPlayer, Char.Humanoid.Health, Char.Humanoid.MaxHealth, inst.Name, inst.DisplayName, inst.UserId, team, tool, nil, nil, (Char.Name == "Sixer" and SixerRig))
+        local h = Char.Humanoid.Health
+        if h > 0 then
+            local healthyavocado = math.floor(h)
+            if healthyavocado == 0 then
+                healthyavocado = 1
+            end
+
+            ESP.AddPlayer(Char, inst == LocalPlayer, healthyavocado, Char.Humanoid.MaxHealth, inst.Name, inst.DisplayName, inst.UserId, team, tool, nil, nil, (Char.Name == "Sixer" and SixerRig))
+        end
     end
 
     local now = os.clock()
@@ -1743,21 +1753,28 @@ local function Render()
         end
 
         if type(Parts) == "table" then
+            if bHighlight then
+                h.HighlightGroup(Parts, color, .18, .7, .7, 1.25)
+            end
             for _, part in Parts do
                 if part.Name == "Torso" then
                     if not name then
                         name = "Minion"
                     end
-
-                    if bTextName then DrawText(part, name, color) end
+                    if bTextName then
+                        DrawText(part, name, color)
+                    end
                 end
-                if bHighlight then Highlight(part, color) end
             end
         elseif Parts then
             if name then
-                if bTextName then DrawText(Parts, name, color) end
+                if bTextName then
+                    DrawText(Parts, name, color)
+                end
             end
-            if bHighlight then Highlight(Parts, color) end
+            if bHighlight then
+                Highlight(Parts, color)
+            end
         end
     end
 end
