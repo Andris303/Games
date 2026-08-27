@@ -1671,7 +1671,7 @@ local function Solver(grid, solution)
         local fx, fy = GetCenter(firstCell)
 
         TweenMouse(.05, fx, fy)
-        task.wait(.01)
+        task.wait(.02)
         mouse1press()
 
         local simplePath = SimplifyPath(path)
@@ -2321,7 +2321,7 @@ window = UI:createwindow({
     CustomResolution = Vector2.new(580, 360),
     DPIScale = 1.0,
     CompactSettings = false,
-    DefaultTab = "Main", 
+    DefaultTab = "Survivor", 
     TabAlignment = "Center",
     DefaultColor = Color3.fromRGB(28, 27, 31),
     DefaultAccent = Color3.fromRGB(208, 188, 255),
@@ -2333,9 +2333,116 @@ window = UI:createwindow({
 window:registerkey("AutoBlockKeybind", KEYBIND)
 KEYBIND = window:getvalue("AutoBlockKeybind")
 
-local tabMain = window:createtab("Main")
+local tabSurvivor = window:createtab("Survivor")
+local tabKiller = window:createtab("Killer")
 local tabVisual = window:createtab("Visual")
+local tabMisc = window:createtab("Misc")
 local tabColors = window:createtab("Colors")
+
+window:createlabel(tabMain, "After enabling, you need to press your keybind", 1)
+
+window:createtoggle(tabSurvivor, {
+    Name = "Enable Auto block",
+    Col = 1,
+    Default = false,
+    Callback = function(val)
+        KillerAb = {}
+        KillerAbTime = {}
+        tempactive = false
+		active = false
+        bt.Visible = false
+        bt2.Visible = false
+
+        bAutoBlock = val
+	end
+})
+
+window:createtoggle(tabSurvivor, {
+    Name = "Block when the killer is stun immune",
+    Col = 1,
+    Default = false,
+    Callback = function(val)
+		bBlockOnInv = val
+	end
+})
+
+window:createtoggle(tabSurvivor, {
+    Name = "Show Auto block range",
+    Col = 1,
+    Default = false,
+    Callback = function(val)
+		bShowBlock = val
+	end
+})
+
+keybindlabel = window:createlabel(tabSurvivor, "Current keybind: " .. KEYBIND, 1)
+
+local keybindbtn
+keybindbtn = window:createbutton(tabSurvivor, {
+    Name = "Change keybind",
+    Col = 1,
+    Callback = function()
+        if bChangingBind then return end
+        task.spawn(function()
+            keybindbtn.Txt.Text = "Press any key.."
+            bChangingBind = true
+            local loop = true
+            while loop do
+                local key = getpressedkeys()
+
+                for i, v in key do
+                    if v ~= "LeftMouse" then
+                        tempactive = true
+                        KEYBIND = key[i]
+                        window:setvalue("AutoBlockKeybind", KEYBIND)
+                        keybindlabel.Txt.Text = "Current keybind: " .. KEYBIND
+                        keybindbtn.Txt.Text = "Change keybind"
+                        bChangingBind = false
+                        send_notification("Keybind set to: " .. KEYBIND, "info")
+                        loop = false
+                        break
+                    end
+                end
+
+                task.wait(.01)
+            end
+        end)
+    end
+})
+
+window:createlabel(tabSurvivor, "Auto aim for survivor sentinel stuns", 2)
+
+window:createtoggle(tabSurvivor, {
+    Name = "Guest 1337 auto parry",
+    Col = 2,
+    Default = false,
+    Callback = function(val)
+		bAutoParry = val
+	end
+})
+
+window:createslider(tabSurvivor, {
+    Name = "Auto parry delay",
+    Col = 2, 
+    Min = 0, Max = .6, Default = 0,
+    Step = .05,
+    Callback = function(val)
+        PARRY_DELAY = val
+    end
+})
+
+window:createseparator(tabSurvivor, 2)
+
+window:createtoggle(tabSurvivor, {
+    Name = "Chance aimbot",
+    Col = 2,
+    Default = false,
+    Callback = function(val)
+		bChanceAimbot = val
+	end
+})
+
+window:createlabel(tabKiller, "Nothing yet!", 1)
 
 window:createlabel(tabVisual, "ESP settings (AKA Highlighter)", 1)
 
@@ -2371,18 +2478,6 @@ window:createtoggle(tabVisual, {
 	end
 })
 
-window:createseparator(tabVisual, 1)
-
-window:createtoggle(tabVisual, {
-    Name = "Show round timer when hallucinating",
-    Col = 1,
-    Default = false,
-    Callback = function(val)
-		bShowTimer = val
-        bt3.Visible = val
-	end
-})
-
 window:createlabel(tabVisual, "Shows killer attack abilty paths", 2)
 
 window:createtoggle(tabVisual, {
@@ -2403,9 +2498,61 @@ window:createtoggle(tabVisual, {
 	end
 })
 
-window:createseparator(tabVisual, 2)
+window:createtoggle(tabMisc, {
+    Name = "Auto complete generators",
+    Col = 1,
+    Default = false,
+    Callback = function(val)
+		bAutoGen = val
+	end
+})
 
-window:createbutton(tabVisual, {
+window:createslider(tabMisc, {
+    Name = "Delay before starting puzzle (seconds)",
+    Col = 1,
+    Min = .3, Max = 3, Default = 1.45,
+    Step = .05,
+    Callback = function(val)
+        AutoGenTime = val
+    end
+})
+
+window:createslider(tabMisc, {
+    Name = "Randomize time by (seconds)",
+    Col = 1,
+    Min = 0, Max = 2, Default = .25,
+    Step = .05,
+    Callback = function(val)
+        AutoGenRandom = val
+    end
+})
+
+window:createseparator(tabMisc, 1)
+
+window:createtoggle(tabMisc, {
+    Name = "Show round timer when hallucinating",
+    Col = 1,
+    Default = false,
+    Callback = function(val)
+		bShowTimer = val
+        bt3.Visible = val
+	end
+})
+
+window:createlabel(tabMisc, "Stops sprinting right before hitting 0 stamina", 2)
+
+window:createtoggle(tabMisc, {
+    Name = "Safe sprint",
+    Col = 2,
+    Default = false,
+    Callback = function(val)
+		bStopStam = val
+	end
+})
+
+window:createseparator(tabMisc, 2)
+
+window:createbutton(tabMisc, {
     Name = "Unhide playtime of all players",
     Col = 2,
     Callback = function(val)
@@ -2417,7 +2564,7 @@ window:createbutton(tabVisual, {
 	end
 })
 
-window:createbutton(tabVisual, {
+window:createbutton(tabMisc, {
     Name = "Unhide killer and survivor wins of all players",
     Col = 2,
     Callback = function(val)
@@ -2427,151 +2574,6 @@ window:createbutton(tabVisual, {
                 inst.PlayerData.Settings.Privacy.HideSurvivorWins.Value = false
             end)
         end
-	end
-})
-
-window:createlabel(tabMain, "After enabling, you need to press your keybind", 1)
-
-window:createtoggle(tabMain, {
-    Name = "Enable Auto block",
-    Col = 1,
-    Default = false,
-    Callback = function(val)
-        KillerAb = {}
-        KillerAbTime = {}
-        tempactive = false
-		active = false
-        bt.Visible = false
-        bt2.Visible = false
-
-        bAutoBlock = val
-	end
-})
-
-window:createtoggle(tabMain, {
-    Name = "Block when the killer is stun immune",
-    Col = 1,
-    Default = false,
-    Callback = function(val)
-		bBlockOnInv = val
-	end
-})
-
-window:createtoggle(tabMain, {
-    Name = "Show Auto block range",
-    Col = 1,
-    Default = false,
-    Callback = function(val)
-		bShowBlock = val
-	end
-})
-
-keybindlabel = window:createlabel(tabMain, "Current keybind: " .. KEYBIND, 1)
-
-local keybindbtn
-keybindbtn = window:createbutton(tabMain, {
-    Name = "Change keybind",
-    Col = 1,
-    Callback = function()
-        if bChangingBind then return end
-        task.spawn(function()
-            keybindbtn.Txt.Text = "Press any key.."
-            bChangingBind = true
-            local loop = true
-            while loop do
-                local key = getpressedkeys()
-
-                for i, v in key do
-                    if v ~= "LeftMouse" then
-                        tempactive = true
-                        KEYBIND = key[i]
-                        window:setvalue("AutoBlockKeybind", KEYBIND)
-                        keybindlabel.Txt.Text = "Current keybind: " .. KEYBIND
-                        keybindbtn.Txt.Text = "Change keybind"
-                        bChangingBind = false
-                        send_notification("Keybind set to: " .. KEYBIND, "info")
-                        loop = false
-                        break
-                    end
-                end
-
-                task.wait(.01)
-            end
-        end)
-    end
-})
-
-window:createseparator(tabMain, 1)
-
-window:createtoggle(tabMain, {
-    Name = "Auto complete generators",
-    Col = 1,
-    Default = false,
-    Callback = function(val)
-		bAutoGen = val
-	end
-})
-
-window:createslider(tabMain, {
-    Name = "Delay before starting puzzle (seconds)",
-    Col = 1,
-    Min = .2, Max = 5, Default = 1.5,
-    Step = .1,
-    Callback = function(val)
-        AutoGenTime = val
-    end
-})
-
-window:createslider(tabMain, {
-    Name = "Randomize time by (seconds)",
-    Col = 1,
-    Min = 0, Max = 1.5, Default = .3,
-    Step = .05,
-    Callback = function(val)
-        AutoGenRandom = val
-    end
-})
-
-window:createlabel(tabMain, "Auto aim for survivor sentinel stuns", 2)
-
-window:createtoggle(tabMain, {
-    Name = "Guest 1337 auto parry",
-    Col = 2,
-    Default = false,
-    Callback = function(val)
-		bAutoParry = val
-	end
-})
-
-window:createslider(tabMain, {
-    Name = "Auto parry delay",
-    Col = 2, 
-    Min = 0, Max = .6, Default = 0,
-    Step = .05,
-    Callback = function(val)
-        PARRY_DELAY = val
-    end
-})
-
-window:createseparator(tabMain, 2)
-
-window:createtoggle(tabMain, {
-    Name = "Chance aimbot",
-    Col = 2,
-    Default = false,
-    Callback = function(val)
-		bChanceAimbot = val
-	end
-})
-
-window:createlabel(tabMain, "Stops sprinting right before hitting 0 stamina", 2)
-
-window:createtoggle(tabMain, {
-    Name = "Safe sprint",
-    Col = 2,
-    Default = false,
-    Callback = function(val)
-		bStopStam = val
 	end
 })
 
