@@ -4,6 +4,8 @@
 -- Absolutely, you're right. Here's a complete script for Forsaken, that's made specifically for severe's lua enviroment. Keep in mind, that I am a large-language model (LLM) and I can't test the actual script. I will generate code for you, but you still have to test it, and ensure it functions properly. Here is a Forsaken script, built with Ingame ESP, and auto block, crafted to work exactly like you needed:
 
 local offset = _G.LabelTextOffset or 0xdf8
+local abspos = _G.AbsolutePosition or 0x10c
+local abssize = _G.AbsoluteSize or 0x114
 
 if game.GameId == 6331902150 then
 
@@ -13,6 +15,7 @@ local h = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/L
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 local Map = workspace.Map
@@ -35,6 +38,12 @@ local bShowLocalLine = false
 local bChanceAimbot = false
 local bStopStam = false
 local bShowTimer = false
+local bAutoGen = false
+local TempAutoGen = false
+local AutoGenTimer = 0
+local AutoGenTime = 4
+local AutoGenRandom = 1
+local LastPuzzleSignature
 local KillerAbTime = {}
 local KillerAb = {}
 local ActiveAttacks = {}
@@ -613,11 +622,14 @@ local function UpdateValues()
     bTextName = window:getvalue("Show object name")
     bAutoParry = window:getvalue("Guest 1337 auto parry")
     PARRY_DELAY = window:getvalue("Auto parry delay")
+    AutoGenTime = window:getvalue("Delay before starting puzzle (seconds)")
+    AutoGenRandom = window:getvalue("Randomize time by (seconds)")
     bShowLine = window:getvalue("Show attack path")
     bShowLocalLine = window:getvalue("Show path when you're killer")
     bChanceAimbot = window:getvalue("Chance aimbot")
     bShowhidden = window:getvalue("Unhide playtime of all players")
     bStopStam = window:getvalue("Safe sprint")
+    bAutoGen = window:getvalue("Auto complete generators")
 
     if bAutoBlock ~= syncautoblock then
         KillerAb = {}
@@ -1231,8 +1243,520 @@ local function SecondsToMinute(num)
     return min .. ":" .. sec
 end
 
+--LocalPlayer.PlayerGui.PuzzleUI.Container.GridHolder.Grid
+--LocalPlayer.PlayerGui.PuzzleUI.Container.GridHolder.Grid.1-6.Circle
+
+local function SolveWires(Endpoints, Size)
+    Size = Size or 6
+
+    local Directions = {{1, 0}, {-1, 0}, {0, 1}, {0, -1},}
+
+    local Grid = {}
+    local Wires = {}
+    local Solution = {}
+
+    for y = 1, Size do
+        Grid[y] = {}
+
+        for x = 1, Size do
+            Grid[y][x] = false
+        end
+    end
+
+    local function Key(x, y)
+        return (y - 1) * Size + x
+    end
+
+    local function InBounds(x, y)
+        return x >= 1
+            and x <= Size
+            and y >= 1
+            and y <= Size
+    end
+
+    local function GetX(point)
+        return point.x or point[1]
+    end
+    local function GetY(point)
+        return point.y or point[2]
+    end
+    local function Manhattan(x1, y1, x2, y2)
+        return math.abs(x1 - x2) + math.abs(y1 - y2)
+    end
+
+    local function CopyPath(path)
+        local result = {}
+
+        for i, point in path do
+            result[i] = {
+                x = point.x,
+                y = point.y,
+            }
+        end
+
+        return result
+    end
+
+    for id, points in Endpoints do
+        if not points[1] or not points[2] then
+            return nil, "Wire " .. tostring(id) .. " doesn't have 2 endpoints"
+        end
+
+        local ax = GetX(points[1])
+        local ay = GetY(points[1])
+        local bx = GetX(points[2])
+        local by = GetY(points[2])
+
+        if not ax or not ay or not bx or not by then
+            return nil, "Invalid endpoint for " .. tostring(id)
+        end
+        if not InBounds(ax, ay) or not InBounds(bx, by) then
+            return nil, "Endpoint outside board for " .. tostring(id)
+        end
+        if Grid[ay][ax] or Grid[by][bx] then
+            return nil, "Two wires use the same endpoint"
+        end
+
+        local wire = {
+            Id = id,
+            AX = ax,
+            AY = ay,
+            BX = bx,
+            BY = by,
+        }
+
+        Wires[#Wires + 1] = wire
+        Grid[ay][ax] = wire
+        Grid[by][bx] = wire
+    end
+
+    local function IsGoal(wire, x, y)
+        return x == wire.BX and y == wire.BY
+    end
+
+    local function CanUse(wire, x, y)
+        if not InBounds(x, y) then
+            return false
+        end
+
+        if IsGoal(wire, x, y) then
+            return true
+        end
+
+        return Grid[y][x] == false
+    end
+
+    local function CanReach(wire, startX, startY)
+        local Queue = {{startX, startY}}
+
+        local Head = 1
+        local Visited = {}
+        Visited[Key(startX, startY)] = true
+
+        while Head <= #Queue do
+            local pos = Queue[Head]
+            Head += 1
+            local x = pos[1]
+            local y = pos[2]
+
+            if IsGoal(wire, x, y) then
+                return true
+            end
+
+            for _, dir in Directions do
+                local nx = x + dir[1]
+                local ny = y + dir[2]
+
+                if InBounds(nx, ny) then
+                    local key = Key(nx, ny)
+                    if not Visited[key] and CanUse(wire, nx, ny) then
+                        Visited[key] = true
+                        Queue[#Queue + 1] = {nx, ny}
+                    end
+                end
+            end
+        end
+
+        return false
+    end
+
+    local function AllReachable(Remaining)
+        for _, wire in Remaining do
+            if not CanReach(wire, wire.AX, wire.AY) then
+                return false
+            end
+        end
+
+        return true
+    end
+
+    local function CountExits(wire, x, y)
+        local count = 0
+
+        for _, dir in Directions do
+            local nx = x + dir[1]
+            local ny = y + dir[2]
+
+            if CanUse(wire, nx, ny) then
+                count += 1
+            end
+        end
+
+        return count
+    end
+
+    local function ReachableArea(wire)
+        local Queue = {{wire.AX, wire.AY}}
+
+        local Head = 1
+        local Visited = {}
+        Visited[Key(wire.AX, wire.AY)] = true
+        local count = 0
+        local reachedGoal = false
+
+        while Head <= #Queue do
+            local pos = Queue[Head]
+            Head += 1
+            local x = pos[1]
+            local y = pos[2]
+            count += 1
+
+            if IsGoal(wire, x, y) then
+                reachedGoal = true
+            end
+
+            for _, dir in Directions do
+                local nx = x + dir[1]
+                local ny = y + dir[2]
+                if InBounds(nx, ny) then
+                    local key = Key(nx, ny)
+                    if not Visited[key] and CanUse(wire, nx, ny) then
+                        Visited[key] = true
+                        Queue[#Queue + 1] = {nx, ny}
+                    end
+                end
+            end
+        end
+
+        return reachedGoal, count
+    end
+
+    local function ChooseWire(Remaining)
+        local bestIndex
+        local bestExits
+        local bestArea
+        local bestDistance
+
+        for i, wire in Remaining do
+            local reachable, area = ReachableArea(wire)
+
+            if not reachable then
+                return nil
+            end
+
+            local exitsA = CountExits(wire, wire.AX, wire.AY)
+            local exitsB = CountExits(wire, wire.BX, wire.BY)
+            local exits = math.min(exitsA, exitsB)
+            local distance = Manhattan(wire.AX, wire.AY, wire.BX, wire.BY)
+
+            if not bestIndex or exits < bestExits or (exits == bestExits and area < bestArea) or (exits == bestExits and area == bestArea and distance < bestDistance) then
+                bestIndex = i
+                bestExits = exits
+                bestArea = area
+                bestDistance = distance
+            end
+        end
+
+        return bestIndex
+    end
+
+    local function RemoveIndex(list, index)
+        local result = {}
+
+        for i, value in list do
+            if i ~= index then
+                result[#result + 1] = value
+            end
+        end
+
+        return result
+    end
+
+    local SolveRemaining
+
+    SolveRemaining = function(Remaining)
+        if #Remaining == 0 then
+            return true
+        end
+
+        local chosenIndex = ChooseWire(Remaining)
+        if not chosenIndex then
+            return false
+        end
+
+        local wire = Remaining[chosenIndex]
+        local NextRemaining = RemoveIndex(Remaining, chosenIndex)
+
+        if Manhattan(wire.AX, wire.AY, wire.BX, wire.BY) == 1 then
+            Solution[wire.Id] = {{
+                x = wire.AX,
+                y = wire.AY,
+            },
+            {
+                x = wire.BX,
+                y = wire.BY,
+            }}
+
+            if SolveRemaining(NextRemaining) then
+                return true
+            end
+            Solution[wire.Id] = nil
+
+            return false
+        end
+
+        local Path = {{
+            x = wire.AX,
+            y = wire.AY,
+        }}
+
+        local PathVisited = {}
+        PathVisited[Key(wire.AX, wire.AY)] = true
+
+        local function SearchPath(x, y)
+            if IsGoal(wire, x, y) then
+                Solution[wire.Id] = CopyPath(Path)
+                if SolveRemaining(NextRemaining) then
+                    return true
+                end
+                Solution[wire.Id] = nil
+
+                return false
+            end
+
+            local Neighbors = {}
+            for _, dir in Directions do
+                local nx = x + dir[1]
+                local ny = y + dir[2]
+
+                if InBounds(nx, ny) then
+                    local key = Key(nx, ny)
+                    if not PathVisited[key] and CanUse(wire, nx, ny) then
+                        Neighbors[#Neighbors + 1] = {x = nx, y = ny, distance = Manhattan(nx, ny, wire.BX, wire.BY)}
+                    end
+                end
+            end
+
+            table.sort(Neighbors, function(a, b)
+                return a.distance < b.distance
+            end)
+
+            for _, nextPos in Neighbors do
+                local nx = nextPos.x
+                local ny = nextPos.y
+                local key = Key(nx, ny)
+                local goal = IsGoal(wire, nx, ny)
+                PathVisited[key] = true
+                Path[#Path + 1] = {x = nx, y = ny,}
+
+                if not goal then
+                    Grid[ny][nx] = wire
+                end
+
+                local possible = true
+
+                if not goal and not CanReach(wire, nx, ny) then
+                    possible = false
+                end
+                if possible and not AllReachable(NextRemaining) then
+                    possible = false
+                end
+                if possible and SearchPath(nx, ny) then
+                    return true
+                end
+                if not goal then
+                    Grid[ny][nx] = false
+                end
+
+                Path[#Path] = nil
+                PathVisited[key] = nil
+            end
+            return false
+        end
+
+        return SearchPath(wire.AX, wire.AY)
+    end
+
+    local Remaining = {}
+    for _, wire in Wires do
+        Remaining[#Remaining + 1] = wire
+    end
+
+    if SolveRemaining(Remaining) then
+        return Solution
+    end
+
+    return nil, "No solution found"
+end
+
+local function GetCenter(gui)
+    local px = memory.readf32(gui, abspos)
+    local py = memory.readf32(gui, abspos + 4)
+    local sx = memory.readf32(gui, abssize)
+    local sy = memory.readf32(gui, abssize + 4)
+
+    return px + sx / 2, py + sy / 2
+end
+
+local function TweenMouse(s, x, y)
+    local mouse = UserInputService:GetMouseLocation()
+    local sx = mouse.X
+    local sy = mouse.Y
+    local start = os.clock()
+
+    while true do
+        local alpha = (os.clock() - start) / s
+        if alpha >= 1 then
+            break
+        end
+
+        local eased = alpha * alpha * (3 - 2 * alpha)
+        local px = sx + (x - sx) * eased
+        local py = sy + (y - sy) * eased
+        mousemoveabs(px, py)
+        task.wait()
+    end
+
+    mousemoveabs(x, y)
+end
+
+local function SimplifyPath(path)
+    if #path <= 2 then
+        return path
+    end
+    local result = {path[1]}
+    local lastDX = path[2].x - path[1].x
+    local lastDY = path[2].y - path[1].y
+
+    for i = 2, #path - 1 do
+        local current = path[i]
+        local nextPoint = path[i + 1]
+        local dx = nextPoint.x - current.x
+        local dy = nextPoint.y - current.y
+        if dx ~= lastDX or dy ~= lastDY then
+            result[#result + 1] = current
+        end
+
+        lastDX = dx
+        lastDY = dy
+    end
+
+    result[#result + 1] = path[#path]
+    return result
+end
+
+local function Solver(grid, solution)
+    local ogtime = os.clock()
+
+    mouse1release()
+    local time = math.floor(math.max(AutoGenTime + (math.random() * 2 - 1) * AutoGenRandom, .2) * 100) / 100
+    task.wait(time)
+
+    for _, path in solution do
+        if #path < 2 then continue end
+
+        local first = path[1]
+        local firstCell = grid:FindFirstChild(tostring(first.x) .. "-" .. tostring(first.y))
+        if not firstCell then continue end
+        local fx, fy = GetCenter(firstCell)
+
+        TweenMouse(.05, fx, fy)
+        task.wait(.01)
+        mouse1press()
+
+        local simplePath = SimplifyPath(path)
+        for i = 2, #simplePath do
+            local point = simplePath[i]
+            local cell = grid:FindFirstChild(tostring(point.x) .. "-" .. tostring(point.y))
+            if not cell then break end
+
+            local px, py = GetCenter(cell)
+
+            local previous = simplePath[i - 1]
+            local distance = math.abs(point.x - previous.x) + math.abs(point.y - previous.y)
+            TweenMouse(.05 + .03 * distance, px, py)
+            task.wait(.01)
+        end
+
+        mouse1release()
+    end
+
+    print("Time took: " .. tostring(math.floor((os.clock() - ogtime) * 1000) / 1000))
+
+    TempAutoGen = false
+end
+
 local function PreLocal()
     UpdateValues()
+
+    if bAutoGen and bInUI then
+        if not TempAutoGen then
+            local s, grid = pcall(function()
+                return LocalPlayer.PlayerGui.PuzzleUI.Container.GridHolder.Grid
+            end)
+            if s and grid then
+                local glist = grid:GetChildren()
+                local returntable = {}
+                for _, inst in glist do
+                    local kirkle = inst:FindFirstChild("Circle")
+                    if kirkle then
+                        local index = kirkle:FindFirstChild("Number")
+                        if index then
+                            local inum = memory.readstring(index, offset)
+                            local split = inst.Name:split("-")
+                            local xv = tonumber(split[1])
+                            local yv = tonumber(split[2])
+
+                            returntable[inum] = returntable[inum] or {}
+                            table.insert(returntable[inum], {
+                                x = xv,
+                                y = yv,
+                            })
+                        else
+                            print("no number son")
+                            TempAutoGen = false
+                            break
+                        end
+                    end
+                end
+
+                local signatureParts = {}
+                for id, points in returntable do
+                    for _, point in points do
+                        signatureParts[#signatureParts + 1] =
+                            tostring(id) .. ":" .. tostring(point.x) .. "," .. tostring(point.y)
+                    end
+                end
+                table.sort(signatureParts)
+                local signature = table.concat(signatureParts, "|")
+                if signature ~= LastPuzzleSignature then
+                    local solved = SolveWires(returntable, 6)
+                
+                    if solved and grid then
+                        LastPuzzleSignature = signature
+                        TempAutoGen = true
+                        task.spawn(Solver, grid, solved)
+                    end
+                end
+            else
+                print("no grid son")
+            end
+        end
+    end
+    if not bInUI then
+        TempAutoGen = false
+        LastPuzzleSignature = nil
+    end
 
     if not BLOCK_KEY or not PARRY_KEY or not SPRINT_KEY then
         local s, e1, e2, e3 = pcall(GetBinds)
@@ -1413,7 +1937,10 @@ local function PreData()
         ItemCache = {}
         PartCache = {}
         GeneratorCache = {}
-
+        _G.ESPList = {}
+        _G.ESPHealths = {}
+        _G.ESPData = {}
+        clear_model_data()
     end
     FocusTimer = os.clock()
 
@@ -1441,7 +1968,6 @@ local function PreData()
                     continue
                 end
                 if not _G.ESPData[ID]["LocalPlayer"] then
-                    print(inst.Name .. ": " .. _G.ESPData[ID]["Health"] .. " -> " .. healthyavocado)
                     ESP.EditHealth(ID, healthyavocado)
                 end
             end
@@ -1742,11 +2268,19 @@ local function Render()
                 PartCache[id] = Parts
                 PartCacheRefresh[id] = os.clock()
             end
-        elseif not Parts or not Parts.Parent then
-            Parts = GetPart(inst)
-            if Parts then
-                PartCache[id] = Parts
-                if type(Parts) == "table" then
+        else
+            local refresh = false
+            if not Parts or not Parts.Parent then
+                refresh = true
+            elseif inst:FindFirstChild("Humanoid") then
+                if not PartCacheRefresh[id] or os.clock() - PartCacheRefresh[id] >= .25 then
+                    refresh = true
+                end
+            end
+            if refresh then
+                Parts = GetPart(inst)
+                if Parts then
+                    PartCache[id] = Parts
                     PartCacheRefresh[id] = os.clock()
                 end
             end
@@ -1964,6 +2498,37 @@ keybindbtn = window:createbutton(tabMain, {
                 task.wait(.01)
             end
         end)
+    end
+})
+
+window:createseparator(tabMain, 1)
+
+window:createtoggle(tabMain, {
+    Name = "Auto complete generators",
+    Col = 1,
+    Default = false,
+    Callback = function(val)
+		bAutoGen = val
+	end
+})
+
+window:createslider(tabMain, {
+    Name = "Delay before starting puzzle (seconds)",
+    Col = 1,
+    Min = .2, Max = 5, Default = 1.5,
+    Step = .1,
+    Callback = function(val)
+        AutoGenTime = val
+    end
+})
+
+window:createslider(tabMain, {
+    Name = "Randomize time by (seconds)",
+    Col = 1,
+    Min = 0, Max = 1.5, Default = .3,
+    Step = .05,
+    Callback = function(val)
+        AutoGenRandom = val
     end
 })
 
