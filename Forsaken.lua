@@ -61,6 +61,7 @@ local viewport = Camera.ViewportSize
 local isguest = false
 local FocusTimer = 0
 local bBlockOnInv = false
+local noliname
 local window
 local keybindlabel
 local LastValueSync = 0
@@ -698,23 +699,6 @@ local function PredictCurve(p1, t1, p2, t2, p3, t3, future)
     return p1 * l1 + p2 * l2 + p3 * l3
 end
 
-local function PredictPosition(lroot, kroot, p1, t1, p2, t2)
-    local p3 = kroot.Position
-    local t3 = os.clock()
-    local MIN_PREDICTION = 0
-    local MAX_PREDICTION = .5
-    local MIN_DISTANCE = 3
-    local MAX_DISTANCE = 20
-    local distance = vector.magnitude(p3 - lroot.Position)
-    local alpha = math.clamp((distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE), 0, 1)
-    local prediction = MIN_PREDICTION + (MAX_PREDICTION - MIN_PREDICTION) * alpha
-
-    local predictedPos = PredictCurve(p1, t1, p2, t2, p3, t3, prediction)
-    local tpos = Vector3.new(predictedPos.X, lroot.Position.Y, predictedPos.Z)
-    
-    return tpos
-end
-
 local function PredictPosition2(lroot, kroot, p1, t1)
     local p3 = kroot.Position
     local t3 = os.clock()
@@ -754,13 +738,9 @@ local function Parry(lchar)
         keypress(PARRY_KEY)
         task.wait(.1)
 
-        local p2 = kroot.Position
-        local t2 = os.clock()
+        lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition2(lroot, kroot, p1, t1))
 
         keyrelease(PARRY_KEY)
-        task.wait(.1)
-
-        lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition(lroot, kroot, p1, t1, p2, t2))
     end
 end
 
@@ -2260,9 +2240,12 @@ local function PreData()
     for _, inst in Killers:GetChildren() do
         if inst.Name == "Noli" and not ItemCache[InstId(inst)] then
             local usern = inst:GetAttribute("Username")
-            if usern then
-                if Players:FindFirstChild(usern) then
-                    if Players[usern].Character ~= inst and InstId(inst) and #Killers:GetChildren() > 1 then
+            if usern or noliname then
+                if usern then
+                    noliname = usern
+                end
+                if Players:FindFirstChild(noliname) then
+                    if Players[noliname].Character ~= inst and InstId(inst) and #Killers:GetChildren() > 1 then
                         ItemCache[InstId(inst)] = inst
                         continue
                     end
