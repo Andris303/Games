@@ -1151,11 +1151,12 @@ local SurvivorAbilities = {
             Name = "Slash",
             Length = 6,
             Check = function(char, root)
-                if char == LocalPlayer.Character then return end
-
                 local state = char:FindFirstChild("ResistanceMultipliers")
                 if state then
-                    return state:FindFirstChild("ResistanceStatus")
+                    local resist = state:FindFirstChild("ResistanceStatus")
+                    if resist then
+                        return resist.Value == 40
+                    end
                 end
             end,
             Draw = function(data, char, root)
