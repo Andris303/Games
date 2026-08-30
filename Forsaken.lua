@@ -21,6 +21,7 @@ local LocalPlayer = Players.LocalPlayer
 local Map = workspace.Map
 local Ingame = Map.Ingame
 local Killers = workspace.Players.Killers
+local Survivors = workspace.Players.Survivors
 local ItemCache = {}
 local bSurv = false
 local bKill = false
@@ -157,10 +158,10 @@ local EXTRA_HEIGHT = 1
 local CLOSE_RADIUS = 5
 local MIN_WIDTH_MULTIPLIER = .85
 
-local EntSounds = {"rbxassetid://135854269153231", "rbxassetid://105934041806374", "rbxassetid://130247421279831", "rbxassetid://107039569833867", "rbxassetid://100150551345482", "rbxassetid://91488514366191", "rbxassetid://101739035738613", "rbxassetid://75675413747752", "rbxassetid://78992685630984", "rbxassetid://130994756001980"}
+local EntSounds = {"rbxassetid://135854269153231", "rbxassetid://105934041806374", "rbxassetid://130247421279831", "rbxassetid://107039569833867", "rbxassetid://100150551345482", "rbxassetid://91488514366191", "rbxassetid://101739035738613", "rbxassetid://75675413747752", "rbxassetid://78992685630984", "rbxassetid://130994756001980", "rbxassetid://102799653891975"}
 local MassInfSounds = {"rbxassetid://70845653728841", "rbxassetid://73504812754586", "rbxassetid://97061990471922", "rbxassetid://85647688284850", "rbxassetid://83349035240699"}
-local RejuvSounds = {"rbxassetid://109351069746096", "rbxassetid://96908026446030", "rbxassetid://120877949577353", "rbxassetid://108829275072240", "rbxassetid://134770542596997", "rbxassetid://99174224422295", "rbxassetid://135436619867662", "rbxassetid://85069492524977", "rbxassetid://127962518201254"}
-local CorruptSounds = {"rbxassetid://75210765058860", "rbxassetid://87883890694872", "rbxassetid://109525294317144", "rbxassetid://119285029803606", "rbxassetid://100163947838165", "rbxassetid://74901476984677", "rbxassetid://99582226869588", "rbxassetid://96733419994623", "rbxassetid://137444402376234"}
+local RejuvSounds = {"rbxassetid://109351069746096", "rbxassetid://96908026446030", "rbxassetid://120877949577353", "rbxassetid://108829275072240", "rbxassetid://134770542596997", "rbxassetid://99174224422295", "rbxassetid://135436619867662", "rbxassetid://85069492524977", "rbxassetid://127962518201254", "rbxassetid://90613634629510"}
+local CorruptSounds = {"rbxassetid://75210765058860", "rbxassetid://87883890694872", "rbxassetid://109525294317144", "rbxassetid://119285029803606", "rbxassetid://100163947838165", "rbxassetid://74901476984677", "rbxassetid://99582226869588", "rbxassetid://96733419994623", "rbxassetid://137444402376234", "rbxassetid://108685516047210"}
 
 local SixerRig = {
     RigType = "R15",
@@ -344,9 +345,10 @@ local function InstId(inst)
 end
 
 local function GetGenPer(num)
-    if num == 26 then return "25%" end
-    if num == 52 then return "50%" end
-    if num == 78 then return "75%" end
+    if num == 21 then return "20%" end
+    if num == 42 then return "40%" end
+    if num == 63 then return "60%" end
+    if num == 84 then return "80%" end
     return "0%"
 end
 
@@ -654,7 +656,6 @@ local function UpdateValues()
 		end
     end
     if bShowTimer ~= syncshowtimer then
-        bt3.Visible = syncshowtimer
         bShowTimer = syncshowtimer
     end
 
@@ -763,48 +764,6 @@ local function Parry(lchar)
     end
 end
 
-local function GetTrackedPosition(obj)
-    if not obj or not obj.Parent then
-        return nil
-    end
-
-    local s, pos = pcall(function()
-        return obj.Position
-    end)
-
-    if s and pos then
-        return pos
-    end
-
-    local s2, primary = pcall(function()
-        return obj.PrimaryPart.Position
-    end)
-
-    if s2 and primary then
-        return primary
-    end
-
-    return nil
-end
-
-local function ShouldUseMovementPath(data, kchar, kroot)
-    local condition = data.SwitchCondition
-
-    if condition == nil then
-        return false
-    end
-
-    if type(condition) == "number" then
-        return os.clock() - data.Started >= condition
-    end
-
-    if type(condition) == "function" then
-        return condition(data, kchar, kroot)
-    end
-
-    return false
-end
-
 local function DrawWorldLine(startPos, endPos)
     local offseta = endPos - startPos
     local dist = vector.magnitude(offseta)
@@ -863,134 +822,473 @@ local function DrawLookLine(root, dist, right, down)
     end
 end
 
-local function CheckAttack(inst, kroot, ignorer)
-    local name = inst.Name
+local function DrawAbilityName(data, root)
+    DrawText(root, data.Name or data.Ability.Name, c.linesec, 25)
+end
 
-    local function IsIgnored(attack)
-        if not ignorer then return false end
-        if type(ignorer) == "table" then return ignorer[attack] == true end
-
-        return ignorer == attack
+local function GetTrackedPosition(obj)
+    if not obj or not obj.Parent then
+        return nil
     end
 
-    if name == "c00lkidd" then
-        if inst:FindFirstChild("c00lgui") and not IsIgnored("Walkspeed Override") then
-            return "Walkspeed Override", 90, 0, 0, function(data)
-                return os.clock() - data.Started >= .4
-            end, 1.9
-        else return false end
-    elseif name == "1x1x1x1" then
-        local Entanglement
-        local MassInf
-        local Rejuv
+    local s, pos = pcall(function()
+        return obj.Position
+    end)
 
-        if not IsIgnored("Entanglement") then
-            for _, sound in EntSounds do
-                if kroot:FindFirstChild(sound) then
-                    Entanglement = true
+    if s and pos then
+        return pos
+    end
+
+    local s2, primary = pcall(function()
+        return obj.PrimaryPart.Position
+    end)
+
+    if s2 and primary then
+        return primary
+    end
+
+    return nil
+end
+
+local function HasSound(root, sounds)
+    for _, sound in sounds do
+        if root:FindFirstChild(sound) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function SnapshotObjects()
+    local result = {}
+
+    for _, obj in Ingame:GetChildren() do
+        result[obj] = true
+    end
+
+    return result
+end
+
+local function FindNewObject(data, root, names)
+    for _, obj in Ingame:GetChildren() do
+        if not data.KnownObjects[obj] and names[obj.Name] then
+            local pos = GetTrackedPosition(obj)
+
+            if pos and vector.magnitude(root.Position - pos) < 30 then
+                return obj
+            end
+        end
+    end
+end
+
+local function DrawMovementFromOrigin(data, root)
+    local currentPos = root.Position
+    local movement = Vector3.new(currentPos.X - data.Origin.X, currentPos.Y - data.Origin.Y, currentPos.Z - data.Origin.Z)
+    local traveled = vector.magnitude(movement)
+
+    if traveled <= .2 then
+        DrawLookLine(root, data.Length)
+        return
+    end
+
+    local direction = movement / traveled
+    local destination = Vector3.new(data.Origin.X + direction.X * data.Length, data.Origin.Y + direction.Y * data.Length, data.Origin.Z + direction.Z * data.Length)
+
+    if traveled < data.Length then
+        DrawWorldLine(currentPos, destination)
+    end
+end
+
+local function DrawTrackedObject(data)
+    local obj = data.TrackedObject
+
+    if not obj or not obj.Parent then
+        data.Finished = true
+        return
+    end
+
+    local currentPos = GetTrackedPosition(obj)
+    if not currentPos then
+        data.Finished = true
+        return
+    end
+
+    if not data.ObjectSamplePos then
+        data.ObjectSamplePos = currentPos
+        return
+    end
+
+    if not data.ObjectDirection then
+        local movement = Vector3.new(currentPos.X - data.ObjectSamplePos.X, 0, currentPos.Z - data.ObjectSamplePos.Z)
+
+        local moved = vector.magnitude(movement)
+        if moved >= .5 then
+            data.ObjectDirection = movement / moved
+            data.ObjectDestination = data.ObjectSamplePos + data.ObjectDirection * data.Length
+        end
+    end
+
+    if data.ObjectDestination then
+        DrawWorldLine(currentPos, Vector3.new(data.ObjectDestination.X, currentPos.Y, data.ObjectDestination.Z))
+    end
+end
+
+local KillerAbilities = {
+    c00lkidd = {
+        {
+            Name = "Walkspeed Override",
+            Length = 90,
+            Duration = 1.9,
+            Check = function(char, root)
+                return char:FindFirstChild("c00lgui") ~= nil
+            end,
+            Draw = function(data, char, root)
+                if os.clock() - data.Started < .4 then
+                    DrawLookLine(root, data.Length)
+                else
+                    DrawMovementFromOrigin(data, root)
+                end
+            end,
+        },
+    },
+
+
+    ["1x1x1x1"] = {
+        {
+            Name = "Entanglement",
+            Length = 125,
+            Check = function(char, root, data)
+                if data then
+                    if data.Finished then
+                        return HasSound(root, EntSounds)
+                    end
+                    if data.TrackedObject then
+                        return true
+                    end
+                    if os.clock() - data.Started <= 2 then
+                        return true
+                    end
+                end
+                return HasSound(root, EntSounds)
+            end,
+            Start = function(data)
+                data.KnownObjects = SnapshotObjects()
+            end,
+            Draw = function(data, char, root)
+                if data.Finished then
+                    return
+                end
+                if not data.TrackedObject then
+                    data.TrackedObject = FindNewObject(data, root,
+                        {
+                            Swords = true,
+                        }
+                    )
+                    if not data.TrackedObject then
+                        DrawLookLine(root, data.Length)
+                        return
+                    end
+                end
+                DrawTrackedObject(data)
+            end,
+        },
+
+        {
+            Name = "Mass Infection",
+            Length = 630,
+            Check = function(char, root, data)
+                local active = HasSound(root, MassInfSounds) and not HasSound(root, RejuvSounds)
+                if data then
+                    if data.Finished then
+                        return active
+                    end
+                    if data.TrackedObject then
+                        return true
+                    end
+                    if os.clock() - data.Started <= 2 then
+                        return true
+                    end
+                end
+                return active
+            end,
+            Start = function(data)
+                data.KnownObjects = SnapshotObjects()
+            end,
+            Draw = function(data, char, root)
+                if data.Finished then return end
+                if not data.TrackedObject then
+                    data.TrackedObject = FindNewObject(data, root,
+                        {
+                            shockwave = true,
+                            Shockwave = true,
+                        }
+                    )
+                    if not data.TrackedObject then
+                        DrawLookLine(root, data.Length)
+                        return
+                    end
+                end
+                DrawTrackedObject(data)
+            end,
+        },
+    },
+
+    JohnDoe = {
+        {
+            Name = "Corrupt Energy",
+            Length = 125,
+            Duration = 3.5,
+            TriggerOnce = true,
+            Check = function(char, root)
+                if HasSound(root, CorruptSounds) then
+                    return true
+                end
+            end,
+            Draw = function(data, char, root)
+                local WINDUP = 2
+                local elapsed = os.clock() - data.Started
+
+                if elapsed < WINDUP then
+                    DrawLookLine(root, data.Length)
+                    return
+                end
+
+                local direction = root.LookVector
+                local magnitude = vector.magnitude(direction)
+
+                if magnitude == 0 then return end
+
+                direction /= magnitude
+                local endPos = root.Position + direction * data.Length
+                local alpha = math.clamp((elapsed - WINDUP) / (data.Duration - WINDUP), 0, 2)
+                local startPos = root.Position + direction * data.Length * alpha
+                DrawWorldLine(startPos, endPos)
+            end,
+        },
+    },
+
+    Noli = {
+        {
+            Name = "Voidrush",
+            Length = 20,
+            Check = function(char, root)
+                local state = char:FindFirstChild("SpeedMultipliers")
+                if state then
+                    return state:FindFirstChild("VoidRushCharging") or state:FindFirstChild("VoidRushDash") or state:FindFirstChild("VoidRushEndlag")
+                end
+            end,
+            Draw = function(data, char, root)
+                DrawLookLine(root, data.Length)
+            end,
+        },
+    },
+
+    Sixer = {
+        {
+            Name = "Demonic Pursuit",
+            Length = 155,
+            Check = function(char, root)
+                local state = char:FindFirstChild("SpeedMultipliers")
+                if state then
+                    return state:FindFirstChild("666PursuitStart") or state:FindFirstChild("666Pursuit")
+                end
+            end,
+            Draw = function(data, char, root)
+                local state = char:FindFirstChild("SpeedMultipliers")
+                if state then
+                    if state:FindFirstChild("666Pursuit") then
+                        DrawMovementFromOrigin(data, root)
+                    else
+                        DrawLookLine(root, data.Length)
+                    end
+                end
+            end,
+        },
+    },
+
+    Nosferatu = {
+        {
+            Name = "Ascension",
+            Length = 120,
+
+            Check = function(char, root, data)
+                local state = char:FindFirstChild("SpeedMultipliers")
+                local present
+                if state then
+                    present = state:FindFirstChild("NosFlying")
+                end
+
+                if present then
+                    if data then
+                        data.LastPresent = os.clock()
+                    end
+
+                    return true
+                end
+
+                if data and data.LastPresent then
+                    return os.clock() - data.LastPresent <= 1.1
+                end
+
+                return false
+            end,
+
+            Draw = function(data, char, root)
+                DrawLookLine(root, data.Length, 0, 1)
+            end,
+        },
+        {
+            Name = "Bloodhook",
+            Length = 115,
+            Check = function(char, root)
+                local folder = char:FindFirstChild("SpeedMultipliers")
+                return folder and folder:FindFirstChild("NosBloodhookThrow") ~= nil
+            end,
+            Draw = function(data, char, root)
+                DrawLookLine(root, data.Length)
+            end,
+        },
+    },
+
+    Azure = {
+        {
+            Name = "Enstrangle",
+            Length = 55,
+            Check = function(char, root)
+                return root:FindFirstChild("HomingSpotlightOthers") ~= nil
+            end,
+            Draw = function(data, char, root)
+                DrawLookLine(root, data.Length, .03, 0)
+            end,
+        },
+    },
+}
+
+local SurvivorAbilities = {
+    Shedletsky = {
+        {
+            Name = "Slash",
+            Length = 6,
+            Check = function(char, root)
+                if char == LocalPlayer.Character then return end
+
+                local state = char:FindFirstChild("ResistanceMultipliers")
+                if state then
+                    return state:FindFirstChild("ResistanceStatus")
+                end
+            end,
+            Draw = function(data, char, root)
+                DrawLookLine(root, data.Length, 0, 0)
+            end,
+        },
+    },
+
+    Chance = {
+        {
+            Name = "One Shot",
+            Length = 92,
+            Duration = .925,
+            TriggerOnce = true,
+            Check = function(char, root)
+                local state = char:FindFirstChild("Flintlock")
+                if state then
+                    return state.Transparency == 0
+                end
+            end,
+            Draw = function(data, char, root)
+                DrawLookLine(root, data.Length, 0, 0)
+            end,
+        },
+    },
+
+    Guest1337 = {
+        {
+            Name = "Block",
+            Duration = .9,
+            TriggerOnce = true,
+            Check = function(char, root)
+                if char == LocalPlayer.Character then return end
+
+                local state = char:FindFirstChild("SpeedMultipliers")
+                if state then
+                    if state:FindFirstChild("GuestBlocking") then
+                        return true
+                    end
+                end
+            end,
+        },
+    },
+}
+
+local function UpdateAbilityFolder(folder, abilitiesTable)
+    for _, char in folder:GetChildren() do
+        local root = char:FindFirstChild("HumanoidRootPart")
+        local abilities = abilitiesTable[char.Name]
+
+        if not root or not abilities then
+            continue
+        end
+
+        local lines = ActiveLines[root]
+
+        if not lines then
+            lines = {}
+            ActiveLines[root] = lines
+        end
+
+        for _, ability in abilities do
+            local exists = false
+
+            for _, data in lines do
+                if data.Ability == ability then
+                    exists = true
                     break
                 end
             end
-        end
 
-        if not IsIgnored("Mass Infection") then
-            for _, sound in RejuvSounds do
-                if kroot:FindFirstChild(sound) then
-                    Rejuv = true
-                    break
-                end
-            end
+            local checked = ability.Check(char, root)
+            if ability.TriggerOnce then
+                ability.ActiveStates = ability.ActiveStates or {}
+                local wasActive = ability.ActiveStates[char] == true
 
-            for _, sound in MassInfSounds do
-                if kroot:FindFirstChild(sound) then
-                    MassInf = true
-                    break
-                end
-            end
-        end
+                if checked and not wasActive and not exists then
+                    local data = {
+                        Ability = ability,
+                        Character = char,
+                        Name = ability.Name,
+                        Length = ability.Length,
+                        Duration = ability.Duration,
+                        Origin = root.Position,
+                        Started = os.clock(),
+                    }
 
-        if Entanglement then
-            return "Entanglement", 125, 0, 0, nil, nil, function(data)
-                    for _, obj in Ingame:GetChildren() do
-                        if obj.Name == "Swords" and not data.KnownObjects[obj] then
-                            local s, p = pcall(function()
-                                return obj.PrimaryPart.Position
-                            end)
-                            if s and p then
-                                if vector.magnitude(kroot.Position - p) < 30 then
-                                    return obj
-                                end
-                            end
-                        end
+                    if ability.Start then
+                        ability.Start(data, char, root)
                     end
-                    return nil
-                end
-        elseif MassInf and not Rejuv then
-            return "Mass Infection", 630, 0, 0, nil, nil, function(data)
-                    for _, obj in Ingame:GetChildren() do
-                        if (obj.Name == "shockwave" or obj.Name == "Shockwave") and not data.KnownObjects[obj] then
-                            local s, p = pcall(function()
-                                return obj.PrimaryPart.Position
-                            end)
-                            if s and p then
-                                if vector.magnitude(kroot.Position - p) < 30 then
-                                    return obj
-                                end
-                            end
-                        end
-                    end
-                    return nil
-                end
-        else return false end
-    elseif name == "JohnDoe" then
-        local CorruptEnergy
 
-        if not IsIgnored("Corrupt Energy") then
-            if not Ingame:FindFirstChild("SpikeCollision") then
-                for _, sound in CorruptSounds do
-                    if kroot:FindFirstChild(sound) then
-                        CorruptEnergy = true
-                        break
-                    end
+                    lines[#lines + 1] = data
                 end
+
+                ability.ActiveStates[char] = checked
+            elseif checked and not exists then
+                local data = {
+                    Ability = ability,
+                    Character = char,
+                    Name = ability.Name,
+                    Length = ability.Length,
+                    Duration = ability.Duration,
+                    Origin = root.Position,
+                    Started = os.clock(),
+                }
+
+                if ability.Start then
+                    ability.Start(data, char, root)
+                end
+                lines[#lines + 1] = data
             end
         end
-
-        if CorruptEnergy then
-            return "Corrupt Energy", 110, 0, 0, nil, 3.7
-        else return false end
-    elseif name == "Noli" then
-        local state = inst:GetAttribute("VoidRushState")
-        local VoidRush = state == "Charging" or state == "Dashing" or state == "Hit"
-        if VoidRush and not IsIgnored("Voidrush") then
-            return "Voidrush", 75, 0, 0
-        else return false end
-    elseif name == "Sixer" then
-        local state = inst:GetAttribute("PursuitState")
-        local Pursuit = state == "Charging" or state == "Dashing"
-        if Pursuit and not IsIgnored("Demonic Pursuit") then
-            return "Demonic Pursuit", 155, 0, 0, function(data, kchar)
-                return kchar:GetAttribute("PursuitState") == "Dashing"
-            end
-        else return false end
-    elseif name == "Nosferatu" then
-        if inst:GetAttribute("InvisibilityDisabled") and not IsIgnored("Ascension") then
-            return "Ascension", 100, 0, 1
-        end
-        local f = inst:FindFirstChild("SpeedMultipliers")
-        if f then
-            if f:FindFirstChild("NosBloodhookThrow") and not IsIgnored("Bloodhook") then
-                return "Bloodhook", 115, 0, 0
-            else return false end
-        else return false end
-    elseif name == "Azure" then
-        local f = inst:FindFirstChild("HumanoidRootPart")
-        if f then
-            if f:FindFirstChild("HomingSpotlightOthers") and not IsIgnored("Enstrangle") then
-                return "Enstrangle", 55, .03, 0
-            else return false end
-        else return false end
-    else return false end
+    end
 end
 
 local function RenderActiveLines()
@@ -998,143 +1296,48 @@ local function RenderActiveLines()
         return
     end
 
-    local now = os.clock()
-
-    for kroot, lines in ActiveLines do
-        local function IsThisAttackActive(data)
-            local ignoreOthers = {}
-            for _, other in lines do
-                if other ~= data and other.AttackType then
-                    ignoreOthers[other.AttackType] = true
-                end
-            end
-
-            local atype = CheckAttack(data.Character, kroot, ignoreOthers)
-            return atype == data.AttackType
-        end
-
+    for root, lines in ActiveLines do
         for i, data in lines do
-            local kchar = data.Character
+            local char = data.Character
+            local ability = data.Ability
 
-            if not kroot or not kroot.Parent or not kchar or kchar.Parent ~= Killers then
+            if not root.Parent or not char then
                 lines[i] = nil
                 continue
             end
 
-            if not bShowLocalLine and kchar == LocalPlayer.Character then
-                continue
-            end
-
-            local attackActive = data.CachedActive
-            if not data.LastActiveCheck or now - data.LastActiveCheck >= .05 then
-                data.LastActiveCheck = now
-                attackActive = IsThisAttackActive(data)
-                data.CachedActive = attackActive
-            end
-
-            local elapsed = now - data.Started
-            if data.EndDelay and elapsed >= data.EndDelay then
-                data["NOMORE"] = true
+            if char.Parent ~= Killers and char.Parent ~= Survivors then
                 lines[i] = nil
                 continue
             end
 
-            if data.Finished then
-                if not attackActive then
-                    lines[i] = nil
-                end
+            if not bShowLocalLine and char == LocalPlayer.Character then
                 continue
             end
 
-            if data.ObjectFinder and not data.ObjectMode then
-                if not data.LastObjectCheck or now - data.LastObjectCheck >= .05 then
-                    data.LastObjectCheck = now
-                    local obj = data.ObjectFinder(data, kchar, kroot)
-                    if obj then
-                        local pos = GetTrackedPosition(obj)
-                        if pos then
-                            data.ObjectMode = true
-                            data.TrackedObject = obj
-                            data.ObjectSamplePos = nil
-                            data.ObjectDirection = nil
-                            data.ObjectDestination = nil
-                        end
-                    end
-                end
-            end
+            local elapsed = os.clock() - data.Started
 
-            if not data.ObjectFinder then
-                if not data.EndDelay and not attackActive then
+            if data.Duration then
+                if elapsed >= data.Duration then
                     lines[i] = nil
                     continue
                 end
-            elseif not data.ObjectMode then
-                if not attackActive and elapsed > 2 then
-                    lines[i] = nil
-                    continue
-                end
-            end
-
-            if data.NOMORE then
-                if not attackActive then
-                    lines[i] = nil
-                end
+            elseif not ability.Check(char, root, data) then
+                lines[i] = nil
                 continue
             end
 
-            if data.ObjectMode then
-                local currentPos = GetTrackedPosition(data.TrackedObject)
-                if not currentPos then
-                    data.Finished = true
-                    continue
-                end
-
-                if not data.ObjectSamplePos then
-                    data.ObjectSamplePos = currentPos
-                    continue
-                end
-
-                if not data.ObjectDirection then
-                    local movement = Vector3.new(currentPos.X - data.ObjectSamplePos.X, 0, currentPos.Z - data.ObjectSamplePos.Z)
-                    local moved = vector.magnitude(movement)
-                    if moved >= .5 then
-                        local direction = movement / moved
-                        data.ObjectDirection = direction
-                        data.ObjectDestination = Vector3.new(data.ObjectSamplePos.X + direction.X * data.Length, currentPos.Y, data.ObjectSamplePos.Z + direction.Z * data.Length)
-                    end
-                end
-
-                if data.ObjectDirection and data.ObjectDestination then
-                    local destination = Vector3.new(data.ObjectDestination.X, currentPos.Y, data.ObjectDestination.Z)
-                    local remaining = vector.magnitude(Vector3.new(destination.X - currentPos.X, 0, destination.Z - currentPos.Z))
-                    if remaining > 0 then
-                        DrawWorldLine(currentPos, destination)
-                    end
-                end
-            elseif ShouldUseMovementPath(data, kchar, kroot) then
-                local currentPos = kroot.Position
-                local movement = Vector3.new(currentPos.X - data.Origin.X, currentPos.Y - data.Origin.Y, currentPos.Z - data.Origin.Z)
-                local traveled = vector.magnitude(movement)
-                if traveled > .2 then
-                    local direction = movement / traveled
-                    local destination = Vector3.new(data.Origin.X + direction.X * data.Length, data.Origin.Y + direction.Y * data.Length, data.Origin.Z + direction.Z * data.Length)
-                    if traveled < data.Length then
-                        DrawWorldLine(currentPos, destination)
-                    end
-                else
-                    DrawLookLine(kroot, data.Length, data.Right, data.Down)
-                end
-            else
-                DrawLookLine(kroot, data.Length, data.Right, data.Down)
+            if ability.Draw then
+                ability.Draw(data, char, root)
             end
 
-            DrawText(kroot, data.AttackType, c.linesec, 25)
-
-            
+            if ability.ShowName ~= false then
+                DrawAbilityName(data, root)
+            end
         end
 
         if next(lines) == nil then
-            ActiveLines[kroot] = nil
+            ActiveLines[root] = nil
         end
     end
 end
@@ -1145,67 +1348,8 @@ local function UpdateActiveLines()
         return
     end
 
-    for _, inst in Killers:GetChildren() do
-        local kroot = inst:FindFirstChild("HumanoidRootPart")
-        if not kroot then continue end
-
-        local lines = ActiveLines[kroot]
-        if not lines then
-            lines = {}
-            ActiveLines[kroot] = lines
-        end
-
-        local ignored = {}
-        for _, data in lines do
-            if data.AttackType then
-                ignored[data.AttackType] = true
-            end
-        end
-
-        local atype, length, right, down, switchCondition, endDelay, objectFinder = CheckAttack(inst, kroot, ignored)
-        if not atype or not length then
-            if next(lines) == nil then
-                ActiveLines[kroot] = nil
-            end
-            continue
-        end
-
-        for _, data in lines do
-            data.NOMORE = true
-        end
-
-        local knownObjects = {}
-        if objectFinder then
-            for _, obj in Ingame:GetChildren() do
-                knownObjects[obj] = true
-            end
-        end
-
-        table.insert(lines, {
-            Character = inst,
-            Root = kroot,
-            AttackType = atype,
-            Length = length,
-            Right = right or 0,
-            Down = down or 0,
-            Origin = kroot.Position,
-            Started = os.clock(),
-            SwitchCondition = switchCondition,
-            EndDelay = endDelay,
-            ObjectFinder = objectFinder,
-            KnownObjects = knownObjects,
-            LastActiveCheck = os.clock(),
-            CachedActive = true,
-            LastObjectCheck = 0,
-            ObjectMode = false,
-            TrackedObject = nil,
-            ObjectSamplePos = nil,
-            ObjectDirection = nil,
-            ObjectDestination = nil,
-            Finished = false,
-            NOMORE = false,
-        })
-    end
+    UpdateAbilityFolder(Killers, KillerAbilities)
+    UpdateAbilityFolder(Survivors, SurvivorAbilities)
 end
 
 local function ChanceAim(f, lroot, kroot)
@@ -1247,7 +1391,7 @@ end
 --LocalPlayer.PlayerGui.PuzzleUI.Container.GridHolder.Grid.1-6.Circle
 
 local function SolveWires(Endpoints, Size)
-    Size = Size or 6
+    Size = Size or 7
 
     local Directions = {{1, 0}, {-1, 0}, {0, 1}, {0, -1},}
 
@@ -1685,7 +1829,7 @@ local function Solver(grid, solution)
             local previous = simplePath[i - 1]
             local distance = math.abs(point.x - previous.x) + math.abs(point.y - previous.y)
             TweenMouse(.05 + .03 * distance, px, py)
-            task.wait(.01)
+            task.wait(.02)
         end
 
         mouse1release()
@@ -1740,7 +1884,7 @@ local function PreLocal()
                 table.sort(signatureParts)
                 local signature = table.concat(signatureParts, "|")
                 if signature ~= LastPuzzleSignature then
-                    local solved = SolveWires(returntable, 6)
+                    local solved = SolveWires(returntable, 7)
                 
                     if solved and grid then
                         LastPuzzleSignature = signature
@@ -1826,8 +1970,22 @@ local function PreLocal()
 
     if bShowTimer then
         local ctimer = game.ReplicatedStorage.RoundTimer:GetAttribute("TimeLeft")
+        local texttimer = SecondsToMinute(ctimer)
         if ctimer then
-            bt3.Text = "Real timer: " .. SecondsToMinute(ctimer)
+            bt3.Text = "Real timer: " .. texttimer
+        end
+
+        local s67, atime = pcall(function()
+            local timett = LocalPlayer.PlayerGui.RoundTimer.Main.Time
+            return memory.readstring(timett, offset)
+        end)
+
+        if s67 and atime then
+            if texttimer ~= atime then
+                bt3.Visible = true
+            else
+                bt3.Visible = false
+            end
         end
     end
 
@@ -1920,14 +2078,16 @@ local function PreLocal()
 
     if bAutoParry and isguest then
         local lchar = LocalPlayer.Character
-        if lchar:GetAttribute("StrengthBuff") then
-            if not bTempParry then
-                bTempParry = true
-
-                task.spawn(Parry, lchar)
+        local state = lchar:FindFirstChild("SpeedMultipliers")
+        if state then
+            if state:FindFirstChild("SpeedStatus") then
+                if not bTempParry then
+                    bTempParry = true
+                    task.spawn(Parry, lchar)
+                end
+            elseif bTempParry then
+                bTempParry = false
             end
-        elseif bTempParry then
-            bTempParry = false
         end
     end
 end
@@ -2535,7 +2695,6 @@ window:createtoggle(tabMisc, {
     Default = false,
     Callback = function(val)
 		bShowTimer = val
-        bt3.Visible = val
 	end
 })
 
