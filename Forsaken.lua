@@ -4,6 +4,7 @@
 -- Absolutely, you're right. Here's a complete script for Forsaken, that's made specifically for severe's lua enviroment. Keep in mind, that I am a large-language model (LLM) and I can't test the actual script. I will generate code for you, but you still have to test it, and ensure it functions properly. Here is a Forsaken script, built with Ingame ESP, and auto block, crafted to work exactly like you needed:
 
 local offset = _G.LabelTextOffset or 0xdf0
+local visible = _G.LabelVisible or 0x5ad
 local abspos = _G.AbsolutePosition or 0x10c
 local abssize = _G.AbsoluteSize or 0x114
 
@@ -40,10 +41,15 @@ local bChanceAimbot = false
 local bStopStam = false
 local bShowTimer = false
 local bAutoGen = false
+local bAutoStab = false
 local TempAutoGen = false
 local AutoGenTimer = 0
 local AutoGenTime = 4
 local AutoGenRandom = 1
+local StabCooldown = 0
+local LastStabLocalPos
+local LastStabKillerPos
+local LastStabSample
 local LastPuzzleSignature
 local KillerAbTime = {}
 local KillerAb = {}
@@ -345,6 +351,37 @@ local function InstId(inst)
     return tostring(tonumber(inst.Data))
 end
 
+local function AddSpaces(string)
+	local result = ""
+
+	for i = 1, #string do
+		local char = string:sub(i, i)
+		local prev = string:sub(i - 1, i - 1)
+		local nextChar = string:sub(i + 1, i + 1)
+		local isUpper = char:match("%u")
+		local prevIsUpper = prev:match("%u")
+		local prevIsLower = prev:match("%l")
+		local nextIsLower = nextChar:match("%l")
+		local shouldAddSpace = false
+
+		if isUpper and i > 1 then
+			if prevIsLower then
+				shouldAddSpace = true
+			elseif prevIsUpper and nextIsLower then
+				shouldAddSpace = true
+			end
+		end
+
+		if shouldAddSpace then
+			result ..= " "
+		end
+
+		result ..= char
+	end
+
+	return result
+end
+
 local function GetGenPer(num)
     if num == 21 then return "20%" end
     if num == 42 then return "40%" end
@@ -633,6 +670,7 @@ local function UpdateValues()
     bShowhidden = window:getvalue("Unhide playtime of all players")
     bStopStam = window:getvalue("Safe sprint")
     bAutoGen = window:getvalue("Auto complete generators")
+    bAutoStab = window:getvalue("Two time auto backstab")
 
     if bAutoBlock ~= syncautoblock then
         KillerAb = {}
@@ -682,41 +720,43 @@ local function DrawText(part, text, color, size)
     end
 end
 
-local function PredictCurve(p1, t1, p2, t2, p3, t3, future)
-    local t = t3 + future
-    local d1 = (t1 - t2) * (t1 - t3)
-    local d2 = (t2 - t1) * (t2 - t3)
-    local d3 = (t3 - t1) * (t3 - t2)
+local PredictionData = {}
 
-    if d1 == 0 or d2 == 0 or d3 == 0 then
-        return p3
+local function UpdatePrediction(root)
+    local pos = root.Position
+    local now = os.clock()
+    local data = PredictionData[root]
+
+    if not data then
+        PredictionData[root] = {Position = pos, Time = now, Velocity = Vector3.new(0, 0, 0)}
+        return
     end
 
-    local l1 = ((t - t2) * (t - t3)) / d1
-    local l2 = ((t - t1) * (t - t3)) / d2
-    local l3 = ((t - t1) * (t - t2)) / d3
+    local dt = now - data.Time
 
-    return p1 * l1 + p2 * l2 + p3 * l3
+    if dt >= .05 then
+        data.Velocity = (pos - data.Position) / dt
+        data.Position = pos
+        data.Time = now
+    end
 end
 
-local function PredictPosition2(lroot, kroot, p1, t1)
-    local p3 = kroot.Position
-    local t3 = os.clock()
+local function PredictPosition(root, future)
+    local data = PredictionData[root]
+    local pos = root.Position
+    if not data then return pos end
+    return pos + data.Velocity * future
+end
 
+local function PredictPosition2(lroot, kroot)
     local MIN_DISTANCE = 0
     local MAX_DISTANCE = 92
 
-    local distance = vector.magnitude(p3 - lroot.Position)
-    local alpha = math.clamp((distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE), 0,  1)
-
+    local distance = vector.magnitude(kroot.Position - lroot.Position)
+    local alpha = math.clamp((distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE), 0, 1)
     local prediction = .2 * (alpha ^ .3)
-    local dt = t3 - t1
-    if dt <= 0 then
-        return Vector3.new(p3.X, lroot.Position.Y, p3.Z)
-    end
-    local velocity = (p3 - p1) / dt
-    local predictedPos = p3 + velocity * prediction
 
+    local predictedPos = PredictPosition(kroot, prediction)
     return Vector3.new(predictedPos.X, lroot.Position.Y, predictedPos.Z)
 end
 
@@ -732,13 +772,10 @@ local function Parry(lchar)
 
         task.wait(.15)
 
-        local p1 = kroot.Position
-        local t1 = os.clock()
-
         keypress(PARRY_KEY)
         task.wait(.1)
 
-        lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition2(lroot, kroot, p1, t1))
+        lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition2(lroot, kroot))
 
         keyrelease(PARRY_KEY)
     end
@@ -914,17 +951,46 @@ local function DrawTrackedObject(data)
     end
 end
 
+local function IsStandingStill(data, root)
+    local pos = root.Position
+
+    if data.LastPosition then
+        local movement = Vector3.new(pos.X - data.LastPosition.X, 0, pos.Z - data.LastPosition.Z)
+
+        if vector.magnitude(movement) <= .03 then
+            data.StillSince = data.StillSince or os.clock()
+
+            if os.clock() - data.StillSince >= .2 then
+                return true
+            end
+        else
+            data.StillSince = nil
+        end
+    end
+
+    data.LastPosition = pos
+    return false
+end
+
 local KillerAbilities = {
     c00lkidd = {
         {
             Name = "Walkspeed Override",
             Length = 90,
             Duration = 1.9,
-            Check = function(char, root)
+            TriggerOnce = true,
+            Check = function(char, root, data)
+                if data and data.Finished then
+                    return false
+                end
                 return char:FindFirstChild("c00lgui") ~= nil
             end,
             Draw = function(data, char, root)
                 if os.clock() - data.Started < .4 then
+                    if IsStandingStill(data, root) then
+                        data.Finished = true
+                        return
+                    end
                     DrawLookLine(root, data.Length)
                 else
                     DrawMovementFromOrigin(data, root)
@@ -932,7 +998,6 @@ local KillerAbilities = {
             end,
         },
     },
-
 
     ["1x1x1x1"] = {
         {
@@ -1052,13 +1117,23 @@ local KillerAbilities = {
         {
             Name = "Voidrush",
             Length = 20,
-            Check = function(char, root)
+            TriggerOnce = true,
+            Check = function(char, root, data)
+                if data and data.Finished then
+                    return false
+                end
                 local state = char:FindFirstChild("SpeedMultipliers")
                 if state then
-                    return state:FindFirstChild("VoidRushCharging") or state:FindFirstChild("VoidRushDash") or state:FindFirstChild("VoidRushEndlag")
+                    return state:FindFirstChild("VoidRushCharging")
+                        or state:FindFirstChild("VoidRushDash")
+                        or state:FindFirstChild("VoidRushEndlag")
                 end
             end,
             Draw = function(data, char, root)
+                if IsStandingStill(data, root) then
+                    data.Finished = true
+                    return
+                end
                 DrawLookLine(root, data.Length)
             end,
         },
@@ -1068,11 +1143,31 @@ local KillerAbilities = {
         {
             Name = "Demonic Pursuit",
             Length = 155,
-            Check = function(char, root)
+            TriggerOnce = true,
+            Check = function(char, root, data)
                 local state = char:FindFirstChild("SpeedMultipliers")
-                if state then
-                    return state:FindFirstChild("666PursuitStart") or state:FindFirstChild("666Pursuit")
+                if not state then return false end
+                local start = state:FindFirstChild("666PursuitStart")
+                local pursuit = state:FindFirstChild("666Pursuit")
+                if not start and not pursuit then
+                    return false
                 end
+                if data and start and not pursuit then
+                    local pos = root.Position
+                    if data.LastPosition then
+                        local movement = Vector3.new(pos.X - data.LastPosition.X, 0, pos.Z - data.LastPosition.Z)
+                        if vector.magnitude(movement) <= .03 then
+                            data.StillSince = data.StillSince or os.clock()
+                            if os.clock() - data.StillSince >= .2 then
+                                return false
+                            end
+                        else
+                            data.StillSince = nil
+                        end
+                    end
+                    data.LastPosition = pos
+                end
+                return true
             end,
             Draw = function(data, char, root)
                 local state = char:FindFirstChild("SpeedMultipliers")
@@ -1365,7 +1460,7 @@ local function ChanceAim(f, lroot, kroot)
 
             task.wait(.1)
 
-            lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition2(lroot, kroot, p1, t1))
+            lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition2(lroot, kroot))
         end
     elseif tempstunning then
         tempstunning = false
@@ -1387,9 +1482,6 @@ local function SecondsToMinute(num)
 
     return min .. ":" .. sec
 end
-
---LocalPlayer.PlayerGui.PuzzleUI.Container.GridHolder.Grid
---LocalPlayer.PlayerGui.PuzzleUI.Container.GridHolder.Grid.1-6.Circle
 
 local function SolveWires(Endpoints, Size)
     Size = Size or 7
@@ -1820,7 +1912,7 @@ local function Solver(grid, solution)
         local distanceAlpha = math.clamp(distance / maxDistance, 0, 1)
 
         TweenMouse(.04 + .03 * distanceAlpha, fx, fy)
-        task.wait(.04)
+        task.wait(.05)
         mouse1press()
 
         local simplePath = SimplifyPath(path)
@@ -1833,7 +1925,7 @@ local function Solver(grid, solution)
 
             local previous = simplePath[i - 1]
             local distance = math.abs(point.x - previous.x) + math.abs(point.y - previous.y)
-            TweenMouse(.03 + .02 * distance, px, py)
+            TweenMouse(.04 + .03 * distance, px, py)
         end
 
         mouse1release()
@@ -1842,6 +1934,50 @@ local function Solver(grid, solution)
     print("Time took: " .. tostring(math.floor((os.clock() - ogtime) * 1000) / 1000))
 
     TempAutoGen = false
+end
+
+local function CanBackstab(localPos, killerPos, killerLook, range)
+    local offset = Vector3.new(localPos.X - killerPos.X, 0, localPos.Z - killerPos.Z)
+
+    local distance = vector.magnitude(offset)
+    if distance == 0 or distance > range then
+        return false
+    end
+
+    local direction = offset / distance
+    local look = Vector3.new(killerLook.X, 0, killerLook.Z)
+
+    local lookMagnitude = vector.magnitude(look)
+    if lookMagnitude == 0 then
+        return false
+    end
+
+    look /= lookMagnitude
+    local dot = vector.dot(look, direction)
+
+    return dot <= -.55
+end
+
+local function BackstabHandler(lroot, kroot, lrootp, krootp, krootlv)
+    local s, b = pcall(function()
+        local time = LocalPlayer.PlayerGui.MainUI.AbilityContainer.Dagger.CooldownTime
+        return memory.readstring(time, offset)
+    end)
+    if s and b == "" then
+        if CanBackstab(lrootp, krootp, krootlv, 6) then
+            keypress(BLOCK_KEY)
+            task.wait(.05)
+            keyrelease(BLOCK_KEY)
+            task.wait(.1695)
+
+            local s10, p10, kp10 = pcall(function()
+                return lroot.Position, kroot.Position
+            end)
+            if s10 then
+                lroot.CFrame = CFrame.lookAt(p10, Vector3.new(kp10.X, p10.Y, kp10.Z))
+            end
+        end
+    end
 end
 
 local function PreLocal()
@@ -2047,9 +2183,16 @@ local function PreLocal()
         bt2.Position = Vector2.new(center.x + math.random(-5, 5), center.y + math.random(-5, 5))
     end
 
+    local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
+    if lroot then UpdatePrediction(lroot) end
+
     for _, inst in Killers:GetChildren() do
         local id = InstId(inst)
         if id then
+            local kroot = inst:FindFirstChild("HumanoidRootPart")
+            if kroot then
+                if kroot then UpdatePrediction(kroot) end
+            end
             if KillerData[inst.Name] then
                 DELAY = KillerData[inst.Name]["DELAY"]
                 CLOSE_RADIUS = KillerData[inst.Name]["CLOSE_RADIUS"]
@@ -2067,8 +2210,7 @@ local function PreLocal()
                 KillerAb[id] = Ab
                 KillerAbTime[id] = AbTime
                 local LRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                local KRoot = inst:FindFirstChild("HumanoidRootPart")
-                if KRoot and LRoot then
+                if kroot and LRoot then
                     if active then
                         local config = KillerData[inst.Name] or KillerData.Default
                         local attackData = {
@@ -2076,13 +2218,26 @@ local function PreLocal()
                             Progress = 0,
                             Config = config,
                         }
-                        ActiveAttacks[KRoot] = attackData
-                        task.spawn(BlockChecker, KRoot, LRoot, inst, attackData)
+                        ActiveAttacks[kroot] = attackData
+                        task.spawn(BlockChecker, kroot, LRoot, inst, attackData)
                     end
                 end
             elseif KillerAbTime[id] ~= AbTime and tonumber(KillerAb[id]) < tonumber(Ab) then
                 KillerAb[id] = Ab
                 KillerAbTime[id] = AbTime
+            end
+
+            if bAutoStab and bool == "TwoTime" and lchar then
+                if lroot and kroot then
+                    local s69, lrootp, krootp, krootlv = pcall(function()
+                        return lroot.Position, kroot.Position, kroot.LookVector
+                    end)
+                    if s69 then
+                        local StabPredictedLocal = PredictPosition(lroot, .19)
+                        local StabPredictedKiller = PredictPosition(kroot, .19)
+                        task.spawn(BackstabHandler, lroot, kroot, StabPredictedLocal, StabPredictedKiller, krootlv)
+                    end
+                end
             end
         end
     end
@@ -2130,7 +2285,12 @@ local function PreData()
                 GetTool = function(data)
                     local char = data.Character
                     if char then
-                        return char.Name
+                        if char.Parent then
+                            local pname = char.Parent.Name
+                            if pname == "Survivors" or pname == "Killers" then
+                                return AddSpaces(char.Name)
+                            end
+                        end
                     end
                 end
             })
@@ -2330,6 +2490,7 @@ local function Render()
         end
 
         if Name == "Trail" then
+            if not bESP then continue end
             local sz = inst.Size
             if sz.x > 100 or sz.y > 100 or sz.z > 100 then continue end
         elseif Name == "JaneGhost" then
@@ -2542,6 +2703,17 @@ window:createtoggle(tabSurvivor, {
     Default = false,
     Callback = function(val)
 		bChanceAimbot = val
+	end
+})
+
+window:createseparator(tabSurvivor, 2)
+
+window:createtoggle(tabSurvivor, {
+    Name = "Two time auto backstab",
+    Col = 2,
+    Default = false,
+    Callback = function(val)
+		bAutoStab = val
 	end
 })
 
