@@ -3,7 +3,7 @@
 
 -- Absolutely, you're right. Here's a complete script for Forsaken, that's made specifically for severe's lua enviroment. Keep in mind, that I am a large-language model (LLM) and I can't test the actual script. I will generate code for you, but you still have to test it, and ensure it functions properly. Here is a Forsaken script, built with Ingame ESP, and auto block, crafted to work exactly like you needed:
 
-local offset = _G.LabelTextOffset or 0xdf8
+local offset = _G.LabelTextOffset or 0xdf0
 local abspos = _G.AbsolutePosition or 0x10c
 local abssize = _G.AbsoluteSize or 0x114
 
@@ -1200,6 +1200,26 @@ local SurvivorAbilities = {
             end,
         },
     },
+
+    JaneDoe = {
+        {
+            Name = "Hachet",
+            Length = 13,
+            Duration = 1.1,
+            TriggerOnce = true,
+            Check = function(char, root)
+                local state = char:FindFirstChild("SpeedMultipliers")
+                if state then
+                    if state:FindFirstChild("jdaw") then
+                        return true
+                    end
+                end
+            end,
+            Draw = function(data, char, root)
+                DrawLookLine(root, data.Length, 0, 0)
+            end,
+        },
+    },
 }
 
 local function UpdateAbilityFolder(folder, abilitiesTable)
@@ -1794,9 +1814,13 @@ local function Solver(grid, solution)
         local firstCell = grid:FindFirstChild(tostring(first.x) .. "-" .. tostring(first.y))
         if not firstCell then continue end
         local fx, fy = GetCenter(firstCell)
+        local mouse = UserInputService:GetMouseLocation()
+        local distance = vector.magnitude(Vector2.new(fx, fy) - mouse)
+        local maxDistance = vector.magnitude(Vector2.new(viewport.x, viewport.y))
+        local distanceAlpha = math.clamp(distance / maxDistance, 0, 1)
 
-        TweenMouse(.05, fx, fy)
-        task.wait(.02)
+        TweenMouse(.04 + .03 * distanceAlpha, fx, fy)
+        task.wait(.04)
         mouse1press()
 
         local simplePath = SimplifyPath(path)
@@ -1809,8 +1833,7 @@ local function Solver(grid, solution)
 
             local previous = simplePath[i - 1]
             local distance = math.abs(point.x - previous.x) + math.abs(point.y - previous.y)
-            TweenMouse(.05 + .03 * distance, px, py)
-            task.wait(.02)
+            TweenMouse(.03 + .02 * distance, px, py)
         end
 
         mouse1release()
@@ -1952,6 +1975,7 @@ local function PreLocal()
     if bShowTimer then
         local ctimer = game.ReplicatedStorage.RoundTimer:GetAttribute("TimeLeft")
         local texttimer = SecondsToMinute(ctimer)
+
         if ctimer then
             bt3.Text = "Real timer: " .. texttimer
         end
@@ -1961,13 +1985,19 @@ local function PreLocal()
             return memory.readstring(timett, offset)
         end)
 
-        if s67 and atime then
-            if texttimer ~= atime then
-                bt3.Visible = true
-            else
-                bt3.Visible = false
+        if s67 and atime and texttimer and texttimer ~= atime then
+            if not TimerMismatchStart then
+                TimerMismatchStart = os.clock()
             end
+
+            bt3.Visible = os.clock() - TimerMismatchStart >= .4
+        else
+            TimerMismatchStart = nil
+            bt3.Visible = false
         end
+    else
+        TimerMismatchStart = nil
+        bt3.Visible = false
     end
 
     if Camera.ViewportSize ~= viewport then
@@ -2061,7 +2091,7 @@ local function PreLocal()
         local lchar = LocalPlayer.Character
         local state = lchar:FindFirstChild("SpeedMultipliers")
         if state then
-            if state:FindFirstChild("SpeedStatus") then
+            if state:FindFirstChild("SpeedStatus") and state:FindFirstChild("GuestBlocking") then
                 if not bTempParry then
                     bTempParry = true
                     task.spawn(Parry, lchar)
@@ -2085,58 +2115,6 @@ local function PreData()
     end
     FocusTimer = os.clock()
 
-    for ID, inst in _G.ESPList do
-        if not inst or not inst.Parent then
-            if not _G.ESPData[ID]["LocalPlayer"] then
-                ESP.RemovePlayer(ID)
-            else
-                clear_local_data()
-            end
-        else
-            if not inst:FindFirstChild("Humanoid") then continue end
-            local chealth = inst.Humanoid.Health
-            local healthyavocado = math.floor(chealth)
-            if healthyavocado == 0 then
-                healthyavocado = 1
-            end
-            if _G.ESPData[ID]["Health"] ~= healthyavocado then
-                if chealth <= 0 then
-                    if not _G.ESPData[ID]["LocalPlayer"] then
-                        ESP.RemovePlayer(ID)
-                    else
-                        clear_local_data()
-                    end
-                    continue
-                end
-                if not _G.ESPData[ID]["LocalPlayer"] then
-                    ESP.EditHealth(ID, healthyavocado)
-                end
-            end
-            if not _G.ESPData[ID]["LocalPlayer"] and _G.ESPData[ID]["Teamname"] ~= inst.Parent.Name then
-                ESP.RemovePlayer(ID)
-                continue
-            end
-            if is_team_check_active() and LocalTeam == _G.ESPData[ID]["Teamname"] then
-                if not _G.ESPData[ID]["LocalPlayer"] then
-                    ESP.RemovePlayer(ID)
-                    continue
-                else
-                    clear_local_data()
-                    continue
-                end
-            end
-            if inst.Name == "Azure" then
-                local coblation = inst:GetAttribute("Oblation")
-                if coblation then
-                    if tostring(_G.ESPData[ID]["Toolname"]) ~= tostring(math.floor(tonumber(coblation))) .. " Oblation" and tostring(_G.ESPData[ID]["Toolname"]) ~= "Golem ready" and not _G.ESPData[ID]["LocalPlayer"] then
-                        ESP.RemovePlayer(ID)
-                        continue
-                    end
-                end
-            end
-        end
-    end
-
     for _, inst in Players:GetChildren() do
         if not inst or not inst.Parent then continue end
 
@@ -2144,37 +2122,18 @@ local function PreData()
         if not Char then continue end
         if not Char:FindFirstChild("Humanoid") then continue end
 
-        local team = "Spectator"
-        if Char.Parent then
-            team = Char.Parent.Name
-        end
-
-        local tool
-        if Char.Name == "Azure" then
-            if tonumber(Char:GetAttribute("Oblation")) == 15 then
-                tool = "Golem ready"
-            else
-                if Char:GetAttribute("Oblation") then
-                    tool = tostring(math.floor(tonumber(Char:GetAttribute("Oblation")))) .. " Oblation"
+        if not ESP.IsTracked(Char) then
+            ESP.AddPlayer(Char, {
+                Player = inst,
+                TeamType = "Parent",
+                CustomParts = Char.Name == "Sixer" and SixerRig or nil,
+                GetTool = function(data)
+                    local char = data.Character
+                    if char then
+                        return char.Name
+                    end
                 end
-            end
-        end
-        
-        if is_team_check_active() and LocalTeam == team then continue end
-
-        if inst == LocalPlayer then
-            LocalTeam = team
-            continue
-        end
-
-        local h = Char.Humanoid.Health
-        if h > 0 then
-            local healthyavocado = math.floor(h)
-            if healthyavocado == 0 then
-                healthyavocado = 1
-            end
-
-            ESP.AddPlayer(Char, inst == LocalPlayer, healthyavocado, Char.Humanoid.MaxHealth, inst.Name, inst.DisplayName, inst.UserId, team, tool, nil, nil, (Char.Name == "Sixer" and SixerRig))
+            })
         end
     end
 
