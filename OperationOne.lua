@@ -121,7 +121,7 @@ local function UpdateGadgetCache()
     LastGadgetScan = os.clock()
 
     for inst in GadgetCache do
-        if not inst or not inst.Parent then
+        if not inst or inst.Parent ~= workspace then
             GadgetCache[inst] = nil
         end
     end
@@ -459,7 +459,7 @@ local function PostLocal()
 				GetTool = function(data)
 					for _, part in data.Character:GetChildren() do
 						if part:GetAttribute("loadout_type") then
-							return part.Name
+							return AddSpaces(part.Name)
 						end
 					end
 
