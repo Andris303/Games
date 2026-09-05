@@ -84,10 +84,9 @@ end)
 
 local function PlayerToModel(inst)
 	for _, Char in workspace.Viewmodels:GetChildren() do
-		local torso = inst:FindFirstChild("torso")
-		if not torso then return nil end
-		local class = torso.ClassName
-		if class ~= "Part" and class ~= "MeshPart" and class ~= "UnionOperation" then
+		local torso = GetTorso(inst)
+		if not torso then
+			DebugMTP(inst, "NO VALID TORSO")
 			return nil
 		end
 
@@ -160,34 +159,38 @@ local function InstId(inst)
 end
 
 local function AddSpaces(string)
-	local result = ""
+    local result = ""
 
-	for i = 1, #string do
-		local char = string:sub(i, i)
-		local prev = string:sub(i - 1, i - 1)
-		local nextChar = string:sub(i + 1, i + 1)
-		local isUpper = char:match("%u")
-		local prevIsUpper = prev:match("%u")
-		local prevIsLower = prev:match("%l")
-		local nextIsLower = nextChar:match("%l")
-		local shouldAddSpace = false
+    for i = 1, #string do
+        local char = string:sub(i, i)
+        local prev = string:sub(i - 1, i - 1)
+        local prevPrev = string:sub(i - 2, i - 2)
+        local nextChar = string:sub(i + 1, i + 1)
 
-		if isUpper and i > 1 then
-			if prevIsLower then
-				shouldAddSpace = true
-			elseif prevIsUpper and nextIsLower then
-				shouldAddSpace = true
-			end
-		end
+        local isUpper = char:match("%u")
+        local prevIsUpper = prev:match("%u")
+        local prevPrevIsUpper = prevPrev:match("%u")
+        local prevIsLower = prev:match("%l")
+        local nextIsLower = nextChar:match("%l")
 
-		if shouldAddSpace then
-			result ..= " "
-		end
+        local shouldAddSpace = false
 
-		result ..= char
-	end
+        if isUpper and i > 1 then
+            if prevIsLower then
+                shouldAddSpace = true
+            elseif prevIsUpper and prevPrevIsUpper and nextIsLower then
+                shouldAddSpace = true
+            end
+        end
 
-	return result
+        if shouldAddSpace then
+            result ..= " "
+        end
+
+        result ..= char
+    end
+
+    return result
 end
 
 local function Encoder(String)
@@ -197,36 +200,89 @@ local function Encoder(String)
 	return tonumber("0x00" .. b .. g .. r, 16)
 end
 
+local MTPDebug = {}
+
+local function GetTorso(inst)
+    for _, child in inst:GetChildren() do
+        if child.Name == "torso" then
+            local class = child.ClassName
+            if class == "Part" or class == "MeshPart" or class == "UnionOperation" then
+                return child
+            end
+        end
+    end
+end
+
+local function DebugMTP(inst, ...)
+    local id = InstId(inst)
+    if not id then return end
+
+    local now = os.clock()
+    if MTPDebug[id] and now - MTPDebug[id] < 1 then return end
+    MTPDebug[id] = now
+
+    print("[MTP]", inst.Name, ...)
+end
+
 local function ModelToPlayer(inst)
 	if not inst or not inst.Parent then return nil end
 
-    local torso = inst:FindFirstChild("torso")
-    if not torso then return nil end
-    local class = torso.ClassName
-    if class ~= "Part" and class ~= "MeshPart" and class ~= "UnionOperation" then
-        return nil
-    end
+    local torso = GetTorso(inst)
+	if not torso then
+		DebugMTP(inst, "NO VALID TORSO")
+		if not GetTorso(inst) then
+			print("NO PHYSICAL TORSO:", inst.Name)
 
-	for _, Char in workspace:GetChildren() do
-		if Char.Name ~= "WarehouseMenu" then
-			if Char.ClassName == "Model" then
-				if Char:FindFirstChild("collision") then
-					if Char:FindFirstChild("Electronic") then
-						if not Char:FindFirstChild("Humanoid") then continue end
-						local p = Char.collision.Position
-						local ModelPos = torso.Position
-						CharPos = Vector3.new(p.x + .02, p.y + .25, p.z + .1)
-						local Desync = math.floor(vector.magnitude(ModelPos - CharPos) * 100) / 100
-						if Desync < 1.3 then
-							return Players:FindFirstChild(Char.Name), Char
-						end
-					end
+			for _, child in inst:GetChildren() do
+				if child.Name == "torso" then
+					print("  torso:", child.ClassName)
 				end
 			end
 		end
+		return nil
 	end
 
-	return nil
+	local bestChar
+    local bestDistance
+
+	for _, Char in workspace:GetChildren() do
+        if Char.Name == "WarehouseMenu" then continue end
+        if Char.ClassName ~= "Model" then continue end
+
+        local collision = Char:FindFirstChild("collision")
+        if not collision then continue end
+        if not Char:FindFirstChild("Electronic") then continue end
+        if not Char:FindFirstChild("Humanoid") then continue end
+
+        local p = collision.Position
+        local ModelPos = torso.Position
+        local CharPos = Vector3.new(p.x + .02, p.y + .25, p.z + .1)
+        local Desync = math.floor(vector.magnitude(ModelPos - CharPos) * 100) / 100
+
+        if not bestDistance or Desync < bestDistance then
+            bestDistance = Desync
+            bestChar = Char
+        end
+    end
+
+	if not bestChar then
+        DebugMTP(inst, "NO VALID CHARACTER CANDIDATES")
+        return nil
+    end
+
+    if bestDistance >= 1.3 then
+        DebugMTP(inst, "CLOSEST:", bestChar.Name, "DISTANCE:", bestDistance)
+        return nil
+    end
+
+	local Player = Players:FindFirstChild(bestChar.Name)
+
+    if not Player then
+        DebugMTP(inst, "MATCHED CHAR:", bestChar.Name, "BUT PLAYER NOT FOUND")
+        return nil
+    end
+
+	return Player, bestChar
 end
 
 local function PreLocal()
@@ -491,7 +547,6 @@ local function Render()
     end
 
 	if not GadgetESP then return end
-    if type(workspace:GetChildren()) ~= "table" then return end
 
 	UpdateGadgetCache()
 
@@ -501,13 +556,14 @@ local function Render()
 			if Map:FindFirstChild("DefaultCameras") then
 				if type(Map.DefaultCameras:GetChildren()) == "table" then
 					for _, part in Map.DefaultCameras:GetChildren() do
-						if part:GetAttribute("Disabled") == "false" and part:FindFirstChild("Cam") then
+						local cam = part:FindFirstChild("Cam")
+						if part:GetAttribute("Disabled") == "false" and cam then
 							if part:FindFirstChild("Owner") and not TeamGadgetESP then
 								continue
 							end
-							HLib.Highlight(part.Cam, HighlightColor, .2, .8, .6)
+							HLib.Highlight(cam, HighlightColor, .2, .8, .6)
 
-							local Position, Visible = Camera:WorldToScreenPoint(part.Cam.Position)
+							local Position, Visible = Camera:WorldToScreenPoint(cam.Position)
 							if Visible then
 								local NewPos = Vector2.new(Position.x, Position.y - 6.5)
 								DrawingImmediate.OutlinedText(NewPos, 13, TextColor, 1, "Hacked Camera", true)
@@ -520,32 +576,36 @@ local function Render()
 
 		if not inst:FindFirstChild("StateObject") then continue end
 
+		local iname = inst.Name
 		local PPart = inst.PrimaryPart
-			if inst.Name ~= "Claymore" then
-			if not PPart then continue end
-			local PPartClass = PPart.ClassName
-			if PPartClass ~= "Part" and PPartClass ~= "UnionOperation" then continue end
-		elseif inst:FindFirstChild("Root") then
-			PPart = inst.Root
+		local mayberoot = inst:FindFirstChild("Root")
+		if iname == "Claymore" and inst:FindFirstChild("Root") then
+			PPart = mayberoot
+		end
+		if not PPart then continue end
+		local PPartClass = PPart.ClassName
+		if PPartClass ~= "Part" and PPartClass ~= "MeshPart" and PPartClass ~= "UnionOperation" then
+			continue
 		end
 
-        if inst:FindFirstChild("Owner") and not TeamGadgetESP then
-            if inst.Owner.ClassName == "BillboardGui" then continue end
+		local maybeowner = inst:FindFirstChild("Owner")
+        if maybeowner and not TeamGadgetESP then
+            if maybeowner.ClassName == "BillboardGui" then continue end
         end
 
-		if inst.Name == "Defuser" then
+		if iname == "Defuser" then
 			if not inst.PrimaryPart then continue end
 			if inst.PrimaryPart:FindFirstChild("DefuserFlag") then continue end
 		end
 
         if not PPart then continue end
-		HLib.Highlight(PPart, GadgetColors[inst.Name], 0.2, 0.8, 1)
+		HLib.Highlight(PPart, GadgetColors[iname], .2, .8, 1)
 
         if not PPart then continue end
         local Position, Visible = Camera:WorldToScreenPoint(PPart.Position)
         if Visible then
             local NewPos = Vector2.new(Position.x, Position.y - 6.5)
-            DrawingImmediate.OutlinedText(NewPos, 13, GadgetColors[inst.Name], 1, AddSpaces(inst.Name), true)
+            DrawingImmediate.OutlinedText(NewPos, 13, GadgetColors[iname], 1, AddSpaces(iname), true)
 		end
     end
 end
