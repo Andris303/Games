@@ -21,6 +21,7 @@ local PlayerList
 local PlayerCache = {}
 local RenderCache = {}
 local GadgetCache = {}
+local ModelRetry = {}
 local FocusTimer = 0
 local LastGadgetScan = 0
 local ModList = {"_1"}
@@ -207,8 +208,8 @@ local function ModelToPlayer(inst)
     end
 
 	for _, Char in workspace:GetChildren() do
-		if inst.Name ~= "WarehouseMenu" then
-			if inst.ClassName == "Model" then
+		if Char.Name ~= "WarehouseMenu" then
+			if Char.ClassName == "Model" then
 				if Char:FindFirstChild("collision") then
 					if Char:FindFirstChild("Electronic") then
 						if not Char:FindFirstChild("Humanoid") then continue end
@@ -379,7 +380,6 @@ local function PreLocal()
 end
 
 local function PostLocal()
-	local ModelRetry = {}
     if not workspace:FindFirstChild("Viewmodels") then return end
 
 	if not PlayerList then
@@ -418,7 +418,7 @@ local function PostLocal()
     for _, inst in workspace.Viewmodels:GetChildren() do
 		local instid = InstId(inst)
 		if not instid then continue end
-		ESP.IsTracked(inst)
+		if ESP.IsTracked(inst) then continue end
 
 		if not inst:FindFirstChildOfClass("Model") then continue end
 
