@@ -2232,8 +2232,8 @@ local function PreLocal()
                         return lroot.Position, kroot.Position, kroot.LookVector
                     end)
                     if s69 then
-                        local StabPredictedLocal = PredictPosition(lroot, .19)
-                        local StabPredictedKiller = PredictPosition(kroot, .19)
+                        local StabPredictedLocal = PredictPosition(lroot, .185)
+                        local StabPredictedKiller = PredictPosition(kroot, .185)
                         task.spawn(BackstabHandler, lroot, kroot, StabPredictedLocal, StabPredictedKiller, krootlv)
                     end
                 end
