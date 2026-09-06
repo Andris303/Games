@@ -4,6 +4,7 @@
 -- Absolutely, you're right. Here's a complete script for Forsaken, that's made specifically for severe's lua enviroment. Keep in mind, that I am a large-language model (LLM) and I can't test the actual script. I will generate code for you, but you still have to test it, and ensure it functions properly. Here is a Forsaken script, built with Ingame ESP, and auto block, crafted to work exactly like you needed:
 
 local offset = _G.LabelTextOffset or 0xdf0
+local visible = _G.LabelVisible or 0x5ad
 local abspos = _G.AbsolutePosition or 0x10c
 local abssize = _G.AbsoluteSize or 0x114
 
@@ -164,10 +165,13 @@ local EXTRA_HEIGHT = 1
 local CLOSE_RADIUS = 5
 local MIN_WIDTH_MULTIPLIER = .85
 
-local EntSounds = {"rbxassetid://135854269153231", "rbxassetid://105934041806374", "rbxassetid://130247421279831", "rbxassetid://107039569833867", "rbxassetid://100150551345482", "rbxassetid://91488514366191", "rbxassetid://101739035738613", "rbxassetid://75675413747752", "rbxassetid://78992685630984", "rbxassetid://130994756001980", "rbxassetid://102799653891975"}
-local MassInfSounds = {"rbxassetid://70845653728841", "rbxassetid://73504812754586", "rbxassetid://97061990471922", "rbxassetid://85647688284850", "rbxassetid://83349035240699"}
+local RejuvSuppressUntil = {}
+local REJUV_LINGER = 1.4
+local EntSounds = {"rbxassetid://135854269153231", "rbxassetid://105934041806374", "rbxassetid://130247421279831", "rbxassetid://107039569833867", "rbxassetid://100150551345482", "rbxassetid://91488514366191", "rbxassetid://101739035738613", "rbxassetid://75675413747752", "rbxassetid://78992685630984", "rbxassetid://130994756001980", "rbxassetid://102799653891975", "rbxassetid://106588300253785", "rbxassetid://75814121589418"}
+local MassInfSounds = {"rbxassetid://70845653728841", "rbxassetid://73504812754586", "rbxassetid://97061990471922", "rbxassetid://85647688284850", "rbxassetid://83349035240699", "rbxassetid://90556583105741"}
 local RejuvSounds = {"rbxassetid://109351069746096", "rbxassetid://96908026446030", "rbxassetid://120877949577353", "rbxassetid://108829275072240", "rbxassetid://134770542596997", "rbxassetid://99174224422295", "rbxassetid://135436619867662", "rbxassetid://85069492524977", "rbxassetid://127962518201254", "rbxassetid://90613634629510"}
 local CorruptSounds = {"rbxassetid://75210765058860", "rbxassetid://87883890694872", "rbxassetid://109525294317144", "rbxassetid://119285029803606", "rbxassetid://100163947838165", "rbxassetid://74901476984677", "rbxassetid://99582226869588", "rbxassetid://96733419994623", "rbxassetid://137444402376234", "rbxassetid://108685516047210"}
+local MartyrSounds = {"rbxassetid://124122529017069"}
 
 local SixerRig = {
     RigType = "R15",
@@ -952,48 +956,59 @@ end
 
 local function IsStandingStill(data, root)
     local pos = root.Position
+    local now = os.clock()
 
-    if data.LastPosition then
-        local movement = Vector3.new(pos.X - data.LastPosition.X, 0, pos.Z - data.LastPosition.Z)
-
-        if vector.magnitude(movement) <= .03 then
-            data.StillSince = data.StillSince or os.clock()
-
-            if os.clock() - data.StillSince >= .2 then
-                return true
-            end
-        else
-            data.StillSince = nil
-        end
+    if not data.StillPosition then
+        data.StillPosition = pos
+        data.StillSince = now
+        return false
     end
 
-    data.LastPosition = pos
-    return false
+    local movement = Vector3.new(pos.X - data.StillPosition.X, 0, pos.Z - data.StillPosition.Z)
+
+    if vector.magnitude(movement) > .12 then
+        data.StillPosition = pos
+        data.StillSince = now
+        return false
+    end
+
+    return now - data.StillSince >= .2
 end
+
+local AutoStabBlacklist = {"Walkspeed Override", "Entanglement", "Mass Infection", "Corrupt Energy", "Voidrush", "Demonic Pursuit", "Ascension", "Bloodhook", "Enstrangle"}
 
 local KillerAbilities = {
     c00lkidd = {
         {
             Name = "Walkspeed Override",
             Length = 90,
-            Duration = 1.9,
             TriggerOnce = true,
             Check = function(char, root, data)
-                if data and data.Finished then
-                    return false
+                if not data then
+                    return char:FindFirstChild("c00lgui") ~= nil
                 end
-                return char:FindFirstChild("c00lgui") ~= nil
+
+                if data.Finished then return false end
+                if os.clock() - data.Started >= 1.9 then return false end
+
+                return true
             end,
             Draw = function(data, char, root)
-                if os.clock() - data.Started < .4 then
-                    if IsStandingStill(data, root) then
-                        data.Finished = true
-                        return
-                    end
+                local elapsed = os.clock() - data.Started
+                if elapsed < .6 then
                     DrawLookLine(root, data.Length)
-                else
-                    DrawMovementFromOrigin(data, root)
+                    return
                 end
+                if not data.WSOCheckStarted then
+                    data.WSOCheckStarted = true
+                    data.StillPosition = nil
+                    data.StillSince = nil
+                end
+                if IsStandingStill(data, root) then
+                    data.Finished = true
+                    return
+                end
+                DrawMovementFromOrigin(data, root)
             end,
         },
     },
@@ -1042,6 +1057,13 @@ local KillerAbilities = {
             Name = "Mass Infection",
             Length = 630,
             Check = function(char, root, data)
+                if HasSound(root, MartyrSounds) then
+                    RejuvSuppressUntil[char] = os.clock() + REJUV_LINGER
+                    return false
+                end
+                if os.clock() < (RejuvSuppressUntil[char] or 0) then
+                    return false
+                end
                 local active = HasSound(root, MassInfSounds) and not HasSound(root, RejuvSounds)
                 if data then
                     if data.Finished then
@@ -1123,16 +1145,10 @@ local KillerAbilities = {
                 end
                 local state = char:FindFirstChild("SpeedMultipliers")
                 if state then
-                    return state:FindFirstChild("VoidRushCharging")
-                        or state:FindFirstChild("VoidRushDash")
-                        or state:FindFirstChild("VoidRushEndlag")
+                    return state:FindFirstChild("VoidRushCharging") or state:FindFirstChild("VoidRushDash")
                 end
             end,
             Draw = function(data, char, root)
-                if IsStandingStill(data, root) then
-                    data.Finished = true
-                    return
-                end
                 DrawLookLine(root, data.Length)
             end,
         },
@@ -1151,20 +1167,8 @@ local KillerAbilities = {
                 if not start and not pursuit then
                     return false
                 end
-                if data and start and not pursuit then
-                    local pos = root.Position
-                    if data.LastPosition then
-                        local movement = Vector3.new(pos.X - data.LastPosition.X, 0, pos.Z - data.LastPosition.Z)
-                        if vector.magnitude(movement) <= .03 then
-                            data.StillSince = data.StillSince or os.clock()
-                            if os.clock() - data.StillSince >= .2 then
-                                return false
-                            end
-                        else
-                            data.StillSince = nil
-                        end
-                    end
-                    data.LastPosition = pos
+                if data and not start and pursuit and IsStandingStill(data, root) then
+                    return false
                 end
                 return true
             end,
@@ -1365,7 +1369,17 @@ local function UpdateAbilityFolder(folder, abilitiesTable)
                     lines[#lines + 1] = data
                 end
 
-                ability.ActiveStates[char] = checked
+                ability.InactiveSince = ability.InactiveSince or {}
+                if checked then
+                    ability.ActiveStates[char] = true
+                    ability.InactiveSince[char] = nil
+                else
+                    ability.InactiveSince[char] = ability.InactiveSince[char] or os.clock()
+                    if os.clock() - ability.InactiveSince[char] >= .2 then
+                        ability.ActiveStates[char] = false
+                        ability.InactiveSince[char] = nil
+                    end
+                end
             elseif checked and not exists then
                 local data = {
                     Ability = ability,
@@ -1438,11 +1452,6 @@ local function RenderActiveLines()
 end
 
 local function UpdateActiveLines()
-    if not bShowLine then
-        ActiveLines = {}
-        return
-    end
-
     UpdateAbilityFolder(Killers, KillerAbilities)
     UpdateAbilityFolder(Survivors, SurvivorAbilities)
 end
@@ -1911,7 +1920,7 @@ local function Solver(grid, solution)
         local distanceAlpha = math.clamp(distance / maxDistance, 0, 1)
 
         TweenMouse(.04 + .03 * distanceAlpha, fx, fy)
-        task.wait(.05)
+        task.wait(.07)
         mouse1press()
 
         local simplePath = SimplifyPath(path)
@@ -1933,6 +1942,19 @@ local function Solver(grid, solution)
     print("Time took: " .. tostring(math.floor((os.clock() - ogtime) * 1000) / 1000))
 
     TempAutoGen = false
+end
+
+local function IsKillerAbilityActive(kroot, abilityTable)
+    local lines = ActiveLines[kroot]
+    if not lines then return false end
+
+    for _, data in lines do
+        if table.find(abilityTable, data.Name) then
+            return true
+        end
+    end
+
+    return false
 end
 
 local function CanBackstab(localPos, killerPos, killerLook, range)
@@ -2227,7 +2249,7 @@ local function PreLocal()
             end
 
             if bAutoStab and bool == "TwoTime" and lchar then
-                if lroot and kroot then
+                if lroot and kroot and not IsKillerAbilityActive(kroot, AutoStabBlacklist) and not kroot:FindFirstChild("InvincibleFX") then
                     local s69, lrootp, krootp, krootlv = pcall(function()
                         return lroot.Position, kroot.Position, kroot.LookVector
                     end)
