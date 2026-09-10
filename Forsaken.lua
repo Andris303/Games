@@ -3,9 +3,9 @@
 
 -- Absolutely, you're right. Here's a complete script for Forsaken, that's made specifically for severe's lua enviroment. Keep in mind, that I am a large-language model (LLM) and I can't test the actual script. I will generate code for you, but you still have to test it, and ensure it functions properly. Here is a Forsaken script, built with Ingame ESP, and auto block, crafted to work exactly like you needed:
 
-local offset = _G.LabelTextOffset or 0xdf0
+local offset = _G.LabelTextOffset or 0xe00
 local abspos = _G.AbsolutePosition or 0x10c
-local abssize = _G.AbsoluteSize or 0x114
+local abssize = _G.AbsoluteSize or 0xe8
 
 if game.GameId == 6331902150 then
 
