@@ -126,6 +126,183 @@ local codetable = {
     RightAlt = 0xa5,
 }
 
+local ATTRIBUTE_ROOT_OFFSET = 0x38
+local ATTRIBUTE_STRIDE = 0x58
+local ATTRIBUTE_VALUE_OFFSET = 0x18
+local ATTRIBUTE_TYPES = {
+    [0x8947CD0] = "boolean",
+    [0x8947E10] = "number",
+    [0x8947E60] = "string"
+}
+
+local AttributeNodeCache = {}
+
+local function IsHeapPointer(v)
+    return v and v >= 0x10000000000 and v < 0x70000000000
+end
+
+local function ReadStdString(addr)
+    if not addr or addr == 0 then return "" end
+
+    local okSize, size = pcall(memory.readu64, addr, 0x10)
+    local okCapacity, capacity = pcall(memory.readu64, addr, 0x18)
+    if not okSize or not okCapacity or not size or not capacity or size > 0x10000 then return "" end
+
+    local strAddr = addr
+    if capacity >= 16 then
+        local okPtr, ptr = pcall(memory.readu64, addr)
+        if not okPtr or not IsHeapPointer(ptr) then return "" end
+        strAddr = ptr
+    end
+
+    local ok, value = pcall(memory.readstring, strAddr, 0)
+    return ok and value or ""
+end
+
+local function GetInstanceAddress(instance)
+    local ok, addr = pcall(function()
+        return tonumber(instance.Data)
+    end)
+
+    return ok and addr or nil
+end
+
+local function SearchAttributeNode(node, wantedName)
+    local function SearchVector(first, packed)
+        if not IsHeapPointer(first) or not packed then return nil, false end
+
+        local count = packed % 0x100000000
+        local capacity = math.floor(packed / 0x100000000)
+
+        if count <= 0 or count > capacity or capacity > 256 then
+            return nil, false
+        end
+
+        local valid = false
+
+        for i = 0, count - 1 do
+            local entry = first + i * ATTRIBUTE_STRIDE
+            local ok, namePtr = pcall(memory.readu64, entry)
+
+            if ok and IsHeapPointer(namePtr) then
+                local name = ReadStdString(namePtr + 0x8)
+
+                if name ~= "" and #name < 100 then
+                    valid = true
+                    if name == wantedName then return entry, true end
+                end
+            end
+        end
+
+        return nil, valid
+    end
+
+    -- 1-7 attributes
+    local ok1, first1 = pcall(memory.readu64, node, 0x8)
+    local ok2, packed1 = pcall(memory.readu64, node, 0x10)
+
+    if ok1 and ok2 then
+        local entry, valid = SearchVector(first1, packed1)
+        if entry or valid then return entry, valid end
+    end
+
+    -- 8+ attributes
+    local ok3, packed2 = pcall(memory.readu64, node, 0x8)
+    local ok4, first2 = pcall(memory.readu64, node, 0x18)
+
+    if ok3 and ok4 then
+        local entry, valid = SearchVector(first2, packed2)
+        if entry or valid then return entry, valid end
+    end
+
+    return nil, false
+end
+
+local function FindAttributeEntry(instance, wantedName)
+    local address = GetInstanceAddress(instance)
+    if not address then return nil end
+
+    local okRoot, root = pcall(memory.readu64, address, ATTRIBUTE_ROOT_OFFSET)
+    if not okRoot or not IsHeapPointer(root) then
+        AttributeNodeCache[address] = nil
+        return nil
+    end
+
+    -- Fast path: normally used every frame.
+    local cached = AttributeNodeCache[address]
+
+    if cached and cached.Root == root then
+        local entry, valid = SearchAttributeNode(cached.Node, wantedName)
+
+        if valid then
+            return entry
+        end
+
+        AttributeNodeCache[address] = nil
+    end
+
+    -- Slow path: only needed once or after the structure changes.
+    local queue = {root}
+    local visited = {}
+    local qi = 1
+    local nodes = 0
+
+    while qi <= #queue and nodes < 64 do
+        local node = queue[qi]
+        qi += 1
+
+        if not visited[node] then
+            visited[node] = true
+            nodes += 1
+
+            local entry = SearchAttributeNode(node, wantedName)
+
+            if entry then
+                AttributeNodeCache[address] = {
+                    Root = root,
+                    Node = node
+                }
+
+                return entry
+            end
+
+            -- These are the tree links we actually observed.
+            for _, off in {0x0, 0x10} do
+                local ok, ptr = pcall(memory.readu64, node, off)
+
+                if ok and IsHeapPointer(ptr) and not visited[ptr] then
+                    queue[#queue + 1] = ptr
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+local function GetAttribute(instance, name)
+    local entry = FindAttributeEntry(instance, name)
+    if not entry then return nil end
+
+    local okType, typePtr = pcall(memory.readu64, entry, 0x8)
+    if not okType or not typePtr then return nil end
+
+    local valueType = ATTRIBUTE_TYPES[typePtr - tonumber(memory.base)]
+    local value = entry + ATTRIBUTE_VALUE_OFFSET
+
+    if valueType == "boolean" then
+        local ok, result = pcall(memory.readbool, value)
+        return ok and result or nil
+    elseif valueType == "number" then
+        local ok, result = pcall(memory.readf64, value)
+        return ok and result or nil
+    elseif valueType == "string" then
+        return ReadStdString(value)
+    end
+
+    return nil
+end
+
 local function GetBinds()
     local ab1 = LocalPlayer.PlayerData.Settings.Keybinds.AltAbility1.Value
     local ab3 = LocalPlayer.PlayerData.Settings.Keybinds.AltAbility3.Value
@@ -614,7 +791,7 @@ local function BlockChecker(KRoot, LRoot, inst, attackData)
         if s and t then
             if ShouldBlock(t.kp, t.kl, t.lp, attackProgress) then
                 if not bBlockOnInv then
-                    if inst:GetAttribute("Invincible") or inst:GetAttribute("StunnedDisabled") then
+                    if GetAttribute(inst, "Invincible") or GetAttribute(inst, "StunnedDisabled") then
                         task.wait(.01)
                         continue
                     end
@@ -750,16 +927,63 @@ local function PredictPosition(root, future)
     return pos + data.Velocity * future
 end
 
-local function PredictPosition2(lroot, kroot)
+local function GetPredictionTime(lroot, kroot)
     local MIN_DISTANCE = 0
     local MAX_DISTANCE = 92
-
     local distance = vector.magnitude(kroot.Position - lroot.Position)
     local alpha = math.clamp((distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE), 0, 1)
-    local prediction = .2 * (alpha ^ .3)
 
+    return .2 * (alpha ^ .3)
+end
+
+local function PredictPosition2(lroot, kroot)
+    local prediction = GetPredictionTime(lroot, kroot)
     local predictedPos = PredictPosition(kroot, prediction)
+
     return Vector3.new(predictedPos.X, lroot.Position.Y, predictedPos.Z)
+end
+
+local function DrawPredictionDebug(startPos, predictedPos, text, color)
+    local a, av = Camera:WorldToScreenPoint(startPos)
+    local b, bv = Camera:WorldToScreenPoint(predictedPos)
+
+    if av and bv then
+        local a2 = Vector2.new(a.X, a.Y)
+        local b2 = Vector2.new(b.X, b.Y)
+
+        DrawingImmediate.Line(a2, b2, color, 1, 3, 1)
+        DrawingImmediate.Line(b2 - Vector2.new(5, 0), b2 + Vector2.new(5, 0), color, 1, 3, 1)
+        DrawingImmediate.Line(b2 - Vector2.new(0, 5), b2 + Vector2.new(0, 5), color, 1, 3, 1)
+        DrawingImmediate.OutlinedText(b2 + Vector2.new(7, -7), 16, color, 1, text, false)
+    end
+end
+
+local function VisualizePredictions(lroot, kroot)
+    if not lroot or not kroot then return end
+    if not lroot.Parent then return end
+    local namen = lroot.Parent.Name
+
+    if bAutoStab and namen == "TwoTime" then
+        local lp = PredictPosition(lroot, .185)
+        local kp = PredictPosition(kroot, .185)
+
+        DrawPredictionDebug(lroot.Position, lp, "STAB LOCAL .185", Color3.fromRGB(80, 170, 255))
+        DrawPredictionDebug(kroot.Position, kp, "STAB KILLER .185", Color3.fromRGB(255, 80, 80))
+    end
+
+    if bAutoParry and isguest then
+        local t = GetPredictionTime(lroot, kroot)
+        local kp = PredictPosition2(lroot, kroot)
+
+        DrawPredictionDebug(kroot.Position, kp, "PARRY " .. string.format("%.3f", t), Color3.fromRGB(255, 220, 80))
+    end
+
+    if bChanceAimbot and namen == "Chance" then
+        local t = GetPredictionTime(lroot, kroot)
+        local kp = PredictPosition2(lroot, kroot)
+
+        DrawPredictionDebug(kroot.Position, kp, "CHANCE " .. string.format("%.3f", t), Color3.fromRGB(190, 100, 255))
+    end
 end
 
 local function Parry(lchar)
@@ -2129,7 +2353,7 @@ local function PreLocal()
     end
 
     if bShowTimer then
-        local ctimer = game.ReplicatedStorage.RoundTimer:GetAttribute("TimeLeft")
+        local ctimer = GetAttribute(game.ReplicatedStorage.RoundTimer, "TimeLeft")
         local texttimer = SecondsToMinute(ctimer)
 
         if ctimer then
@@ -2210,9 +2434,7 @@ local function PreLocal()
         local id = InstId(inst)
         if id then
             local kroot = inst:FindFirstChild("HumanoidRootPart")
-            if kroot then
-                if kroot then UpdatePrediction(kroot) end
-            end
+            if kroot then UpdatePrediction(kroot) end
             if KillerData[inst.Name] then
                 DELAY = KillerData[inst.Name]["DELAY"]
                 CLOSE_RADIUS = KillerData[inst.Name]["CLOSE_RADIUS"]
@@ -2220,8 +2442,8 @@ local function PreLocal()
                 ATTACK_LENGTH = KillerData[inst.Name]["ATTACK_LENGTH"]
                 HEIGHT = KillerData[inst.Name]["HEIGHT"]
             end
-            local AbTime = tonumber(inst:GetAttribute("AbilityLastUsed") or 0)
-            local Ab = tonumber(inst:GetAttribute("AbilitiesUsed") or 0)
+            local AbTime = tonumber(GetAttribute(inst, "AbilityLastUsed") or 0)
+            local Ab = tonumber(GetAttribute(inst, "AbilitiesUsed") or 0)
             if not AbTime or not Ab then continue end
             if not KillerAbTime[id] or not KillerAb[id] then
                 KillerAbTime[id] = AbTime
@@ -2379,7 +2601,7 @@ local function PreData()
 
     for _, inst in Killers:GetChildren() do
         if inst.Name == "Noli" and not ItemCache[InstId(inst)] then
-            local usern = inst:GetAttribute("Username")
+            local usern = GetAttribute(inst, "Username")
             if usern or noliname then
                 if usern then
                     noliname = usern
@@ -2452,6 +2674,18 @@ end
 
 local function Render()
     RenderActiveLines()
+
+    local lchar = LocalPlayer.Character
+    local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
+
+    if lroot then
+        for _, killer in Killers:GetChildren() do
+            local kroot = killer:FindFirstChild("HumanoidRootPart")
+            if kroot then
+                VisualizePredictions(lroot, kroot)
+            end
+        end
+    end
 
     if bShowBlock then
         for KRoot, data in ActiveAttacks do
@@ -2610,7 +2844,7 @@ window = UI:createwindow({
     DefaultColor = Color3.fromRGB(28, 27, 31),
     DefaultAccent = Color3.fromRGB(208, 188, 255),
     DefaultSnowfall = true,
-    DefaultScale = 1.0,
+    DefaultScale = _G.DPIScale or 1.0,
     DefaultFont = 0,
 })
 
