@@ -1,6 +1,8 @@
 --!strict
 --!optimize 2
 
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Attribute.lua"))()
+
 local RobloxVersion = _G.RobloxVersion or "version-c5aecda2245e4fae"
 local O = crypt.json.decode(game:HttpGet("https://offsets.imtheo.lol/" .. RobloxVersion .. "/offsets.json")).Offsets
 local ActiveAnimations = O.Animator.ActiveAnimations
@@ -15,9 +17,15 @@ local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
 
 local bAutoBlock = false
+local bNoSwingCD = false
 local blockBusy = false
 local swingStates = {}
 local list = {}
+local SetSwingCD
+local SetEjectCD
+local lchar
+local oldmaxstam = 100
+local maximumstam = 100
 
 local ATTACK_DURATION = .35
 local START_WIDTH = 7.5
@@ -167,6 +175,11 @@ local function PreLocal()
     local lchar = LocalPlayer.Character
     local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
 
+    if bNoSwingCD then
+        if SetSwingCD then SetSwingCD("") end
+        if SetEjectCD then SetEjectCD("") end
+    end
+
     for _, char in workspace.GameAssets.Teams.Killer:GetChildren() do
         local humanoid = char:FindFirstChildOfClass("Humanoid")
         local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
@@ -210,7 +223,41 @@ local function PreLocal()
     list = templist
 end
 
-window = UI:createwindow({
+task.spawn(function()
+    while true do
+        local newlchar = LocalPlayer.Character
+        local changedCharacter = newlchar ~= lchar
+
+        if changedCharacter then
+            lchar = newlchar
+            SetSwingCD = nil
+            SetEjectCD = nil
+        end
+
+        if lchar and lchar.Parent then
+            local team = lchar.Parent.Name
+
+            if team == "Killer" or team == "Survivor" then
+                if changedCharacter or oldmaxstam ~= maximumstam then
+                    oldmaxstam = maximumstam
+                    lchar:FixedSetAttribute("MaxStamina", maximumstam)
+                end
+            end
+
+            if team == "Killer" then
+                SetSwingCD = lchar:PrepareAttributeSetter("SwingCooldown")
+                SetEjectCD = lchar:PrepareAttributeSetter("EjectCooldown")
+            else
+                SetSwingCD = nil
+                SetEjectCD = nil
+            end
+        end
+
+        task.wait(.25)
+    end
+end)
+
+local window = UI:createwindow({
     Title = "Die of Death | Andris",
     Version = "VX",
     Keybind = "RightShift",
@@ -230,10 +277,31 @@ window = UI:createwindow({
 local tabMain = window:createtab("Main")
 
 window:createtoggle(tabMain, {
-    Name = "Auto Block", Col = 1, Default = false,
+    Name = "Auto Block",
+    Col = 1,
+    Default = false,
     Callback = function(val)
         bAutoBlock = val
         if not val then table.clear(swingStates) end
+    end
+})
+
+window:createtoggle(tabMain, {
+    Name = "No killer M1 cooldown",
+    Col = 1,
+    Default = false,
+    Callback = function(val)
+        bNoSwingCD = val
+    end
+})
+
+window:createslider(tabMain, {
+    Name = "Maximum stamina",
+    Col = 2, 
+    Min = 10, Max = 1000, Default = 100,
+    Step = 5,
+    Callback = function(val)
+        maximumstam = val
     end
 })
 
