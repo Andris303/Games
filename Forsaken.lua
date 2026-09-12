@@ -3,9 +3,13 @@
 
 -- Absolutely, you're right. Here's a complete script for Forsaken, that's made specifically for severe's lua enviroment. Keep in mind, that I am a large-language model (LLM) and I can't test the actual script. I will generate code for you, but you still have to test it, and ensure it functions properly. Here is a Forsaken script, built with Ingame ESP, and auto block, crafted to work exactly like you needed:
 
-local offset = _G.LabelTextOffset or 0xe00
-local abspos = _G.AbsolutePosition or 0x10c
-local abssize = _G.AbsoluteSize or 0xe8
+local RobloxVersion = _G.RobloxVersion or "version-c5aecda2245e4fae"
+local O = crypt.json.decode(game:HttpGet("https://offsets.imtheo.lol/" .. RobloxVersion .. "/offsets.json")).Offsets
+local Primitive = O.BasePart.Primitive
+local AssemblyLinearVelocity = O.Primitive.AssemblyLinearVelocity
+local offset = O.GuiObject.Text
+local abspos = O.GuiBase2D.AbsolutePosition
+local abssize = O.GuiBase2D.AbsoluteSize
 
 if game.GameId == 6331902150 then
 
@@ -50,6 +54,7 @@ local LastStabLocalPos
 local LastStabKillerPos
 local LastStabSample
 local LastPuzzleSignature
+local PredictKillerPosition
 local KillerAbTime = {}
 local KillerAb = {}
 local ActiveAttacks = {}
@@ -335,10 +340,9 @@ local MAX_WIDTH = 13
 local WIDTH_POINT = .75
 local END_WIDTH = 5
 local EXTRA_FORWARD = 4
-local HEIGHT = 6
+local HEIGHT = 7
 local ATTACK_LENGTH = 7.5
 local EXTRA_HEIGHT = 1
-local CLOSE_RADIUS = 5
 local MIN_WIDTH_MULTIPLIER = .85
 
 local RejuvSuppressUntil = {}
@@ -386,67 +390,67 @@ local ColorPickers = {
 
 local KillerData = {
     ["Default"] = {
-        DELAY = 0,
-        CLOSE_RADIUS = 5,
-        ATTACK_LINGER = 35,
+        WINDUP = .2,
+        LINGER = .25,
         ATTACK_LENGTH = 7.5,
-        HEIGHT = 6,
+        HEIGHT = 7,
+        BACKWARD_RANGE = 3,
     },
     ["c00lkidd"] = {
-        DELAY = 0,
-        CLOSE_RADIUS = 4,
-        ATTACK_LINGER = 30,
-        ATTACK_LENGTH = 5,
-        HEIGHT = 6,
+        WINDUP = .1,
+        LINGER = .3,
+        ATTACK_LENGTH = 6,
+        HEIGHT = 7,
+        BACKWARD_RANGE = 2,
     },
     ["Slasher"] = {
-        DELAY = 0,
-        CLOSE_RADIUS = 5,
-        ATTACK_LINGER = 35,
+        WINDUP = .2,
+        LINGER = .25,
         ATTACK_LENGTH = 7.5,
-        HEIGHT = 6,
+        HEIGHT = 7,
+        BACKWARD_RANGE = 3,
     },
     ["JohnDoe"] = {
-        DELAY = .2,
-        CLOSE_RADIUS = 5,
-        ATTACK_LINGER = 35,
+        WINDUP = .4,
+        LINGER = .25,
         ATTACK_LENGTH = 7.5,
-        HEIGHT = 6,
+        HEIGHT = 7,
+        BACKWARD_RANGE = 3,
     },
     ["Noli"] = {
-        DELAY = .15,
-        CLOSE_RADIUS = 5,
-        ATTACK_LINGER = 35,
+        WINDUP = .35,
+        LINGER = .25,
         ATTACK_LENGTH = 8,
-        HEIGHT = 6,
+        HEIGHT = 7,
+        BACKWARD_RANGE = 3,
     },
     ["1x1x1x1"] = {
-        DELAY = .2,
-        CLOSE_RADIUS = 5,
-        ATTACK_LINGER = 35,
+        WINDUP = .4,
+        LINGER = .25,
         ATTACK_LENGTH = 7.5,
-        HEIGHT = 6,
+        HEIGHT = 7,
+        BACKWARD_RANGE = 3,
     },
     ["Sixer"] = {
-        DELAY = .1,
-        CLOSE_RADIUS = 5,
-        ATTACK_LINGER = 35,
-        ATTACK_LENGTH = 9.5,
+        WINDUP = .3,
+        LINGER = .25,
+        ATTACK_LENGTH = 8.5,
         HEIGHT = 8,
+        BACKWARD_RANGE = 2,
     },
     ["Nosferatu"] = {
-        DELAY = .1,
-        CLOSE_RADIUS = 5,
-        ATTACK_LINGER = 40,
+        WINDUP = .3,
+        LINGER = .3,
         ATTACK_LENGTH = 8.5,
-        HEIGHT = 6,
+        HEIGHT = 7,
+        BACKWARD_RANGE = 3,
     },
     ["Azure"] = {
-        DELAY = .02,
-        CLOSE_RADIUS = 5,
-        ATTACK_LINGER = 35,
+        WINDUP = .2,
+        LINGER = .25,
         ATTACK_LENGTH = 8.5,
-        HEIGHT = 6,
+        HEIGHT = 7,
+        BACKWARD_RANGE = 3.5,
     },
 }
 
@@ -617,210 +621,236 @@ local function Highlight(inst, color)
     end
 end
 
-local function ShouldBlock(kp, kl, lp, prog)
-    local forward = vector.create(kl.x, 0, kl.z)
-    if vector.magnitude(forward) == 0 then
-        return false
-    end
+local AUTO_BLOCK_MODE = "default"
 
-    forward = forward / vector.magnitude(forward)
-    local offset = lp - kp
-    local horizontalOffset = vector.create(offset.x, 0, offset.z)
-    local horizontalDistance = vector.magnitude(horizontalOffset)
+local AutoBlockProfiles = {
+    ["very-strict"] = {
+        Shape = "Rectangle",
+        RadiusMode = "Inner",
+    },
+    ["strict"] = {
+        Shape = "Cone",
+        Angle = 100,
+        RadiusMode = "Inner",
+    },
+    ["default"] = {
+        Shape = "Cone",
+        Angle = 140,
+        RadiusMode = "Inner",
+    },
+    ["permissive"] = {
+        Shape = "Cone",
+        Angle = 240,
+        InnerRadius = 4.5,
+        RadiusMode = "Inner",
+    },
+    ["always"] = {
+        Shape = "Circle",
+        RadiusMode = "Outer",
+    },
+}
 
-    if horizontalDistance <= CLOSE_RADIUS and math.abs(offset.y) <= (HEIGHT / 2 + EXTRA_HEIGHT) then
-        return true
-    end
+local function GetQueryRadii(hitbox)
+    local size = hitbox.Size
+    local hx = size.x / 2
+    local hz = size.z / 2
+    local inner = math.min(hx, hz)
+    local outer = math.sqrt(hx * hx + hz * hz)
 
-    local forwardDistance = vector.dot(offset, forward)
-    if forwardDistance < -1 then
-        return false
-    end
-
-    local extraForward = EXTRA_FORWARD
-    if prog > .5 then
-        extraForward = EXTRA_FORWARD - (2 * (prog - .5) / .5)
-    end
-
-    local maxForward = ATTACK_LENGTH + extraForward
-    if forwardDistance > maxForward then
-        return false
-    end
-
-    local startHalfWidth = START_WIDTH / 2
-    local maxHalfWidth = MAX_WIDTH / 2
-    local endHalfWidth = END_WIDTH / 2
-    local midDistance = maxForward * WIDTH_POINT
-
-    local allowedHalfWidth
-    if forwardDistance <= midDistance then
-        local alpha = math.clamp(forwardDistance / midDistance, 0, 1)
-        allowedHalfWidth = startHalfWidth + (maxHalfWidth - startHalfWidth) * alpha
-    else
-        local alpha = math.clamp((forwardDistance - midDistance) / (maxForward - midDistance), 0, 1 )
-        allowedHalfWidth = maxHalfWidth + (endHalfWidth - maxHalfWidth) * alpha
-    end
-
-    if prog > .5 then
-        local narrowAlpha = (prog - .5) / .5
-        local widthMultiplier = 1 - ((1 - MIN_WIDTH_MULTIPLIER) * narrowAlpha)
-        allowedHalfWidth *= widthMultiplier
-    end
-
-    if math.abs(offset.y) > (HEIGHT / 2 + EXTRA_HEIGHT) then
-        return false
-    end
-
-    local right = vector.create(-forward.z, 0, forward.x)
-    local sideDistance = math.abs(vector.dot(offset, right))
-
-    return sideDistance <= allowedHalfWidth
+    return inner, outer, size.y / 2
 end
 
-local function RenderBlockShape(KRoot, LRoot, prog)
-    if not KRoot or not LRoot then return end
+local function DistanceToRectangle(forwardDistance, sideDistance, length, halfWidth, backward)
+    backward = backward or 0
 
-    local kp = KRoot.Position
+    local closestForward = math.clamp(forwardDistance, -backward, length)
+    local closestSide = math.clamp(sideDistance, -halfWidth, halfWidth)
+
+    local df = forwardDistance - closestForward
+    local ds = sideDistance - closestSide
+
+    return math.sqrt(df * df + ds * ds)
+end
+
+local function GetBlockOrigin(KRoot)
+    local lchar = LocalPlayer.Character
+    local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
+
+    if lroot and PredictKillerPosition then
+        return PredictKillerPosition(lroot, KRoot, 1.5)
+    end
+
+    return KRoot.Position
+end
+
+local function BuildBlockTest(KRoot, QueryHitbox)
+    if not KRoot or not QueryHitbox then return end
+
+    local profile = AutoBlockProfiles[AUTO_BLOCK_MODE]
+    if not profile then return end
+
+    local config = KillerData[KRoot.Parent.Name] or KillerData.Default
+    local backwardRange = config.BACKWARD_RANGE or 0
+
+    local kp = GetBlockOrigin(KRoot)
     local kl = KRoot.LookVector
-    local forward = vector.create(kl.X, 0, kl.Z)
+    local forward = vector.create(kl.x, 0, kl.z)
+    local magnitude = vector.magnitude(forward)
+    if magnitude == 0 then return end
 
-    if vector.magnitude(forward) == 0 then return end
+    forward /= magnitude
 
-    forward = forward / vector.magnitude(forward)
-    local right = vector.create(-forward.Z, 0, forward.X)
-    local extraForward = EXTRA_FORWARD
+    local right = vector.create(-forward.z, 0, forward.x)
+    local innerRadius, outerRadius, halfHeight = GetQueryRadii(QueryHitbox)
+    local queryRadius = profile.RadiusMode == "Outer" and outerRadius or innerRadius
+    local halfWidth = START_WIDTH / 2
+    local innerCircle = profile.InnerRadius
+    local hasInnerCircle = innerCircle ~= nil
 
-    if prog > .5 then
-        extraForward = 4 - (2 * (prog - .5) / .5)
+    if KRoot.Parent and KRoot.Parent.Name == "c00lkidd" then
+        innerCircle = 3.5
     end
 
-    local maxForward = ATTACK_LENGTH + extraForward
-    local startHalfWidth = START_WIDTH / 2
-    local maxHalfWidth = MAX_WIDTH / 2
-    local endHalfWidth = END_WIDTH / 2
-    local midDistance = maxForward * WIDTH_POINT
+    local function Inside(lp)
+        local offset = lp - kp
+        local horizontal = vector.create(offset.x, 0, offset.z)
+        local distance = vector.magnitude(horizontal)
+        local forwardDistance = vector.dot(offset, forward)
+        local sideDistance = vector.dot(offset, right)
 
-    local function GetHalfWidth(distance)
-        local thing
-        if distance <= midDistance then
-            local alpha = math.clamp(distance / midDistance, 0, 1)
-            thing = startHalfWidth + (maxHalfWidth - startHalfWidth) * alpha
-        else
-            local alpha = math.clamp((distance - midDistance) / (maxForward - midDistance), 0, 1)
-            thing = maxHalfWidth + (endHalfWidth - maxHalfWidth) * alpha
+        if math.abs(offset.y) > HEIGHT / 2 + halfHeight then return false end
+
+        if profile.Shape == "Rectangle" then
+            return DistanceToRectangle(forwardDistance, sideDistance, ATTACK_LENGTH, halfWidth) <= queryRadius
         end
-        if prog > .5 then
-            local narrowAlpha = (prog - .5) / .5
-            local widthMultiplier = 1 - ((1 - MIN_WIDTH_MULTIPLIER) * narrowAlpha)
-            thing *= widthMultiplier
+
+        if profile.Shape == "Circle" then
+            return distance <= ATTACK_LENGTH + queryRadius
         end
-        return thing
+
+        if hasInnerCircle and distance <= innerCircle + queryRadius then return true end
+
+        if DistanceToRectangle(forwardDistance, sideDistance, ATTACK_LENGTH, halfWidth, backwardRange) <= queryRadius then
+            return true
+        end
+
+        if distance > ATTACK_LENGTH + queryRadius then return false end
+        if distance <= queryRadius then return true end
+
+        local halfAngle = math.rad(profile.Angle / 2)
+        local anglePadding = math.asin(math.clamp(queryRadius / distance, 0, 1))
+        local allowedAngle = math.min(math.pi, halfAngle + anglePadding)
+
+        return forwardDistance / distance >= math.cos(allowedAngle)
     end
+
+    local rectRadius = math.sqrt((math.max(ATTACK_LENGTH, backwardRange) + queryRadius) ^ 2 + (halfWidth + queryRadius) ^ 2)
+    local maxRadius = math.max(ATTACK_LENGTH + queryRadius, hasInnerCircle and (innerCircle + queryRadius) or 0, rectRadius) + 1
+
+    return Inside, kp, forward, right, maxRadius
+end
+
+local function ShouldBlock(KRoot, QueryHitbox)
+    local Inside = BuildBlockTest(KRoot, QueryHitbox)
+    return Inside and Inside(QueryHitbox.Position) or false
+end
+
+local function RenderBlockShape(KRoot, QueryHitbox)
+    local Inside, kp, forward, right, maxRadius = BuildBlockTest(KRoot, QueryHitbox)
+    if not Inside then return end
 
     local function WorldToScreen(position)
         local p, visible = Camera:WorldToScreenPoint(position)
-        if not visible then
-            return nil
-        end
+        if not visible then return nil end
         return Vector2.new(p.X, p.Y)
     end
 
-    local startLeft = kp - right * startHalfWidth
-    local startRight = kp + right * startHalfWidth
-    local midCenter = kp + forward * midDistance
-    local midLeft = midCenter - right * GetHalfWidth(midDistance)
-    local midRight = midCenter + right * GetHalfWidth(midDistance)
-    local endCenter = kp + forward * maxForward
-    local endLeft = endCenter - right * endHalfWidth
-    local endRight = endCenter + right * endHalfWidth
+    local SEGMENTS = 36
+    local SEARCH_STEPS = 6
+    local points = {}
 
-    local points = {
-        WorldToScreen(startLeft),
-        WorldToScreen(midLeft),
-        WorldToScreen(endLeft),
-        WorldToScreen(endRight),
-        WorldToScreen(midRight),
-        WorldToScreen(startRight),
-    }
+    for i = 0, SEGMENTS - 1 do
+        local angle = -math.pi + (i / SEGMENTS) * math.pi * 2
+        local ca = math.cos(angle)
+        local sa = math.sin(angle)
+        local low = 0
+        local high = maxRadius
 
-    local fillOpacity = .2
+        for _ = 1, SEARCH_STEPS do
+            local mid = (low + high) / 2
+            local point = kp + forward * (mid * ca) + right * (mid * sa)
+            local testPoint = vector.create(point.x, QueryHitbox.Position.y, point.z)
 
-    if points[1] and points[2] and points[3] and points[4] and points[5] and points[6] then
-        DrawingImmediate.FilledTriangle(points[1], points[2], points[3], c.autoblock, fillOpacity)
-        DrawingImmediate.FilledTriangle(points[1], points[3], points[4], c.autoblock, fillOpacity)
-        DrawingImmediate.FilledTriangle(points[1], points[4], points[5], c.autoblock, fillOpacity)
-        DrawingImmediate.FilledTriangle(points[1], points[5], points[6], c.autoblock, fillOpacity)
+            if Inside(testPoint) then low = mid else high = mid end
+        end
+
+        local worldPoint = kp + forward * (low * ca) + right * (low * sa)
+        points[#points + 1] = WorldToScreen(worldPoint)
+    end
+
+    local center = WorldToScreen(kp)
+    if center then
+        for i = 1, #points do
+            local a = points[i]
+            local b = points[i % #points + 1]
+            if a and b then DrawingImmediate.FilledTriangle(center, a, b, c.autoblock, .15) end
+        end
     end
 
     for i = 1, #points do
         local a = points[i]
         local b = points[i % #points + 1]
-        if a and b then
-            DrawingImmediate.Line(a, b, c.autoblock, 1, 2, 1)
-        end
+        if a and b then DrawingImmediate.Line(a, b, c.autoblock, 1, 2, 1) end
     end
 end
+
+local BLOCK_SAFETY = .1
 
 local function BlockChecker(KRoot, LRoot, inst, attackData)
     if ActiveAttacks[KRoot] ~= attackData then return end
 
-    if DELAY > 0 then
-        local ping = game:GetPing()
-        if ping < 150 then
-            task.wait(DELAY)
-        end
+    local config = attackData.Config or KillerData.Default
+    local windup = config.WINDUP or 0
+    local linger = config.LINGER or 0
+    local started = os.clock()
+    local ping = game:GetPing() / 1000
+    local blockStartDelay = math.max(0, windup - ping - BLOCK_SAFETY)
+    local blockEndDelay = math.max(0, windup + linger - ping - BLOCK_SAFETY - .05)
+
+    if blockStartDelay > 0 then
+        task.wait(blockStartDelay)
     end
 
-    local c = 0
-
-    while c <= ATTACK_LINGER do
+    while os.clock() - started < blockEndDelay do
         if not active or not bAutoBlock then break end
-        c += 1
-        local attackProgress = c / ATTACK_LINGER
-        if ActiveAttacks[KRoot] then
-            ActiveAttacks[KRoot].Progress = attackProgress
-        end
 
-        local s, t = pcall(function()
-            return {
-                kp = KRoot.Position,
-                kl = KRoot.LookVector,
-                lp = LRoot.Position,
-            }
-        end)
-        if s and t then
-            if ShouldBlock(t.kp, t.kl, t.lp, attackProgress) then
-                if not bBlockOnInv then
-                    if GetAttribute(inst, "Invincible") or GetAttribute(inst, "StunnedDisabled") then
-                        task.wait(.01)
-                        continue
-                    end
-                end
+        local lchar = LocalPlayer.Character
+        local queryHitbox = lchar and lchar:FindFirstChild("QueryHitbox", true)
 
-                if ActiveAttacks[KRoot] == attackData then
-                    ActiveAttacks[KRoot] = nil
-                end
-
-                if isguest then
-                    bt2.Visible = true
-                    keypress(BLOCK_KEY)
-                    task.wait(.1)
-                    keyrelease(BLOCK_KEY)
-                    task.wait(.9)
-                end
-
-                if ActiveAttacks[KRoot] == attackData then
-                    bt2.Visible = false
-                end
-
-                break
+        if queryHitbox and ShouldBlock(KRoot, queryHitbox) then
+            if not bBlockOnInv and (GetAttribute(inst, "Invincible") or GetAttribute(inst, "StunnedDisabled")) then
+                task.wait(.01)
+                continue
             end
+
+            if ActiveAttacks[KRoot] == attackData then ActiveAttacks[KRoot] = nil end
+
+            if isguest then
+                bt2.Visible = true
+                keypress(BLOCK_KEY)
+                task.wait(.1)
+                keyrelease(BLOCK_KEY)
+                task.wait(.9)
+                bt2.Visible = false
+            end
+
+            break
         end
+
         task.wait(.01)
     end
-    if ActiveAttacks[KRoot] == attackData then
-        ActiveAttacks[KRoot] = nil
-    end
+
+    if ActiveAttacks[KRoot] == attackData then ActiveAttacks[KRoot] = nil end
 end
 
 local function UpdateValues()
@@ -834,6 +864,7 @@ local function UpdateValues()
     local syncesp = window:getvalue("Enable ESP")
     local synckeybind = window:getvalue("AutoBlockKeybind")
     local syncshowtimer = window:getvalue("Show round timer when hallucinating")
+    local syncblockmode = window:getvalue("AutoBlockMode")
 
     bBlockOnInv = window:getvalue("Block when the killer is stun immune")
     bShowBlock = window:getvalue("Show Auto block range")
@@ -850,6 +881,10 @@ local function UpdateValues()
     bStopStam = window:getvalue("Safe sprint")
     bAutoGen = window:getvalue("Auto complete generators")
     bAutoStab = window:getvalue("Two time auto backstab")
+
+    if AutoBlockProfiles[syncblockmode] then
+        AUTO_BLOCK_MODE = syncblockmode
+    end
 
     if bAutoBlock ~= syncautoblock then
         KillerAb = {}
@@ -899,6 +934,28 @@ local function DrawText(part, text, color, size)
     end
 end
 
+local function GetRootVelocity(root)
+    local s, velocity = pcall(function()
+        local address = tonumber(root.Data)
+        if not address then return end
+
+        local primitive = memory.readu64(address, Primitive)
+        if not primitive or primitive == 0 then return end
+
+        return vector.create(
+            memory.readf32(primitive, AssemblyLinearVelocity),
+            memory.readf32(primitive, AssemblyLinearVelocity + 0x4),
+            memory.readf32(primitive, AssemblyLinearVelocity + 0x8)
+        )
+    end)
+
+    if s and velocity then
+        return velocity
+    end
+
+    return vector.create(0, 0, 0)
+end
+
 local PredictionData = {}
 
 local function UpdatePrediction(root)
@@ -907,17 +964,31 @@ local function UpdatePrediction(root)
     local data = PredictionData[root]
 
     if not data then
-        PredictionData[root] = {Position = pos, Time = now, Velocity = Vector3.new(0, 0, 0)}
+        PredictionData[root] = {Position = pos, Time = now, Velocity = vector.create(0, 0, 0), LastMovement = now}
         return
     end
 
     local dt = now - data.Time
+    if dt < .05 then return end
 
-    if dt >= .05 then
-        data.Velocity = (pos - data.Position) / dt
-        data.Position = pos
-        data.Time = now
+    local delta = pos - data.Position
+    local moved = vector.magnitude(delta)
+
+    if moved > .03 then
+        local measuredVelocity = delta / dt
+
+        data.Velocity = data.Velocity * .5 + measuredVelocity * .5
+        data.LastMovement = now
+    elseif now - data.LastMovement > .25 then
+        data.Velocity *= .7
+
+        if vector.magnitude(data.Velocity) < .5 then
+            data.Velocity = vector.create(0, 0, 0)
+        end
     end
+
+    data.Position = pos
+    data.Time = now
 end
 
 local function PredictPosition(root, future)
@@ -936,11 +1007,18 @@ local function GetPredictionTime(lroot, kroot)
     return .2 * (alpha ^ .3)
 end
 
-local function PredictPosition2(lroot, kroot)
-    local prediction = GetPredictionTime(lroot, kroot)
-    local predictedPos = PredictPosition(kroot, prediction)
+PredictKillerPosition = function(lroot, kroot, multiplier)
+    multiplier = multiplier or 1
 
-    return Vector3.new(predictedPos.X, lroot.Position.Y, predictedPos.Z)
+    local prediction = GetPredictionTime(lroot, kroot) * multiplier
+    local data = PredictionData[kroot]
+    if not data then return kroot.Position end
+
+    return kroot.Position + data.Velocity * prediction
+end
+
+local function PredictPosition2(lroot, kroot, multiplier)
+    return PredictKillerPosition(lroot, kroot, multiplier)
 end
 
 local function DrawPredictionDebug(startPos, predictedPos, text, color)
@@ -996,14 +1074,14 @@ local function Parry(lchar)
             task.wait(PARRY_DELAY)
         end
 
-        task.wait(.15)
-
         keypress(PARRY_KEY)
         task.wait(.1)
-
-        lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition2(lroot, kroot))
-
         keyrelease(PARRY_KEY)
+
+        task.wait(.25)
+
+        local predictedPos = PredictPosition2(lroot, kroot, 2.25)
+        lroot.CFrame = CFrame.lookAt(lroot.Position, predictedPos)
     end
 end
 
@@ -2678,7 +2756,6 @@ local function Render()
     local lchar = LocalPlayer.Character
     local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
 
-    --[[
     if lroot then
         for _, killer in Killers:GetChildren() do
             local kroot = killer:FindFirstChild("HumanoidRootPart")
@@ -2687,14 +2764,19 @@ local function Render()
             end
         end
     end
-    ]]
 
-    if bShowBlock then
-        for KRoot, data in ActiveAttacks do
-            if KRoot and KRoot.Parent and data.LRoot and data.LRoot.Parent then
-                RenderBlockShape(KRoot, data.LRoot, data.Progress)
-            else
-                ActiveAttacks[KRoot] = nil
+    if bShowBlock and active and lchar then
+        local QueryHitbox = lchar:FindFirstChild("QueryHitbox", true)
+        if QueryHitbox then
+            for _, killer in Killers:GetChildren() do
+                local KRoot = killer:FindFirstChild("HumanoidRootPart")
+                if KRoot then
+                    local config = KillerData[killer.Name] or KillerData.Default
+                    ATTACK_LENGTH = config.ATTACK_LENGTH
+                    CLOSE_RADIUS = config.CLOSE_RADIUS
+                    HEIGHT = config.HEIGHT
+                    RenderBlockShape(KRoot, QueryHitbox)
+                end
             end
         end
     end
@@ -2875,6 +2957,17 @@ window:createtoggle(tabSurvivor, {
 
         bAutoBlock = val
 	end
+})
+
+window:createdropdown(tabSurvivor, {
+    Name = "Auto block mode",
+    StateKey = "AutoBlockMode",
+    Col = 1,
+    Options = {"very-strict", "strict", "default", "permissive", "always"},
+    Default = "default",
+    Callback = function(val)
+        AUTO_BLOCK_MODE = val
+    end
 })
 
 window:createtoggle(tabSurvivor, {
