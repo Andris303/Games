@@ -2756,6 +2756,7 @@ local function Render()
     local lchar = LocalPlayer.Character
     local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
 
+	--[[
     if lroot then
         for _, killer in Killers:GetChildren() do
             local kroot = killer:FindFirstChild("HumanoidRootPart")
@@ -2764,6 +2765,7 @@ local function Render()
             end
         end
     end
+	]]
 
     if bShowBlock and active and lchar then
         local QueryHitbox = lchar:FindFirstChild("QueryHitbox", true)
