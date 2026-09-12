@@ -779,7 +779,7 @@ local function RenderBlockShape(KRoot, QueryHitbox)
         for _ = 1, SEARCH_STEPS do
             local mid = (low + high) / 2
             local point = kp + forward * (mid * ca) + right * (mid * sa)
-            local testPoint = vector.create(point.x, QueryHitbox.Position.y, point.z)
+            local testPoint = vector.create(point.x, kp.y, point.z)
 
             if Inside(testPoint) then low = mid else high = mid end
         end
