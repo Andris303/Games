@@ -5,8 +5,6 @@
 
 local RobloxVersion = _G.RobloxVersion or "version-c5aecda2245e4fae"
 local O = crypt.json.decode(game:HttpGet("https://offsets.imtheo.lol/" .. RobloxVersion .. "/offsets.json")).Offsets
-local Primitive = O.BasePart.Primitive
-local AssemblyLinearVelocity = O.Primitive.AssemblyLinearVelocity
 local offset = O.GuiObject.Text
 local abspos = O.GuiBase2D.AbsolutePosition
 local abssize = O.GuiBase2D.AbsoluteSize
@@ -46,13 +44,8 @@ local bShowTimer = false
 local bAutoGen = false
 local bAutoStab = false
 local TempAutoGen = false
-local AutoGenTimer = 0
-local AutoGenTime = 4
-local AutoGenRandom = 1
-local StabCooldown = 0
-local LastStabLocalPos
-local LastStabKillerPos
-local LastStabSample
+local AutoGenTime = 1.75
+local AutoGenRandom = .5
 local LastPuzzleSignature
 local PredictKillerPosition
 local KillerAbTime = {}
@@ -74,10 +67,7 @@ local bBlockOnInv = false
 local noliname
 local window
 local keybindlabel
-local LastValueSync = 0
 local LastAttackScan = 0
-local delay_minus = 0
-local LocalTeam = "None"
 local tempstunning = false
 
 local suc2, bool2 = pcall(function()
@@ -333,24 +323,14 @@ if s then
     SPRINT_KEY = GetKeycode(sprintkeystr)
 end
 local PARRY_DELAY = 0
-local DELAY = 0
-local ATTACK_LINGER = 35
 local START_WIDTH = 7.5
-local MAX_WIDTH = 13
-local WIDTH_POINT = .75
-local END_WIDTH = 5
-local EXTRA_FORWARD = 4
-local HEIGHT = 7
-local ATTACK_LENGTH = 7.5
-local EXTRA_HEIGHT = 1
-local MIN_WIDTH_MULTIPLIER = .85
 
 local RejuvSuppressUntil = {}
 local REJUV_LINGER = 1.4
 local EntSounds = {"rbxassetid://135854269153231", "rbxassetid://105934041806374", "rbxassetid://130247421279831", "rbxassetid://107039569833867", "rbxassetid://100150551345482", "rbxassetid://91488514366191", "rbxassetid://101739035738613", "rbxassetid://75675413747752", "rbxassetid://78992685630984", "rbxassetid://130994756001980", "rbxassetid://102799653891975", "rbxassetid://106588300253785", "rbxassetid://75814121589418"}
 local MassInfSounds = {"rbxassetid://70845653728841", "rbxassetid://73504812754586", "rbxassetid://97061990471922", "rbxassetid://85647688284850", "rbxassetid://83349035240699", "rbxassetid://90556583105741"}
 local RejuvSounds = {"rbxassetid://109351069746096", "rbxassetid://96908026446030", "rbxassetid://120877949577353", "rbxassetid://108829275072240", "rbxassetid://134770542596997", "rbxassetid://99174224422295", "rbxassetid://135436619867662", "rbxassetid://85069492524977", "rbxassetid://127962518201254", "rbxassetid://90613634629510"}
-local CorruptSounds = {"rbxassetid://75210765058860", "rbxassetid://87883890694872", "rbxassetid://109525294317144", "rbxassetid://119285029803606", "rbxassetid://100163947838165", "rbxassetid://74901476984677", "rbxassetid://99582226869588", "rbxassetid://96733419994623", "rbxassetid://137444402376234", "rbxassetid://108685516047210"}
+local CorruptSounds = {"rbxassetid://75210765058860", "rbxassetid://87883890694872", "rbxassetid://109525294317144", "rbxassetid://119285029803606", "rbxassetid://100163947838165", "rbxassetid://74901476984677", "rbxassetid://99582226869588", "rbxassetid://96733419994623", "rbxassetid://137444402376234", "rbxassetid://108685516047210", "rbxassetid://129466330433467"}
 local MartyrSounds = {"rbxassetid://124122529017069"}
 
 local SixerRig = {
@@ -373,28 +353,12 @@ local SixerRig = {
     LeftFoot = "Left Lowerleg",
 }
 
-local ColorPickers = {
-    danger = "Projectile color",
-    trap = "Trap color",
-    slightdanger = "Passive trap color",
-    neutral = "Clone color",
-    azure = "Azure ability color",
-    autoblock = "Auto block visual color",
-    yellow = "Minion color",
-    generator = "Generator color",
-    medkit = "Medkit color",
-    cola = "Bloxy cola color",
-    lineprim = "Show projectile line color",
-    linesec = "Show projectile text color",
-}
-
 local KillerData = {
     ["Default"] = {
         WINDUP = .2,
         LINGER = .25,
         ATTACK_LENGTH = 7.5,
         HEIGHT = 7,
-        BACKWARD_RANGE = 3,
     },
     ["c00lkidd"] = {
         WINDUP = .1,
@@ -690,6 +654,8 @@ local function BuildBlockTest(KRoot, QueryHitbox)
     if not profile then return end
 
     local config = KillerData[KRoot.Parent.Name] or KillerData.Default
+    local attackLength = config.ATTACK_LENGTH or KillerData.Default.ATTACK_LENGTH
+    local attackHeight = config.HEIGHT or KillerData.Default.HEIGHT
     local backwardRange = config.BACKWARD_RANGE or 0
 
     local kp = GetBlockOrigin(KRoot)
@@ -707,7 +673,7 @@ local function BuildBlockTest(KRoot, QueryHitbox)
     local innerCircle = profile.InnerRadius
     local hasInnerCircle = innerCircle ~= nil
 
-    if KRoot.Parent and KRoot.Parent.Name == "c00lkidd" then
+    if hasInnerCircle and KRoot.Parent and KRoot.Parent.Name == "c00lkidd" then
         innerCircle = 3.5
     end
 
@@ -718,23 +684,23 @@ local function BuildBlockTest(KRoot, QueryHitbox)
         local forwardDistance = vector.dot(offset, forward)
         local sideDistance = vector.dot(offset, right)
 
-        if math.abs(offset.y) > HEIGHT / 2 + halfHeight then return false end
+        if math.abs(offset.y) > attackHeight / 2 + halfHeight then return false end
 
         if profile.Shape == "Rectangle" then
-            return DistanceToRectangle(forwardDistance, sideDistance, ATTACK_LENGTH, halfWidth) <= queryRadius
+            return DistanceToRectangle(forwardDistance, sideDistance, attackLength, halfWidth) <= queryRadius
         end
 
         if profile.Shape == "Circle" then
-            return distance <= ATTACK_LENGTH + queryRadius
+            return distance <= attackLength + queryRadius
         end
 
         if hasInnerCircle and distance <= innerCircle + queryRadius then return true end
 
-        if DistanceToRectangle(forwardDistance, sideDistance, ATTACK_LENGTH, halfWidth, backwardRange) <= queryRadius then
+        if DistanceToRectangle(forwardDistance, sideDistance, attackLength, halfWidth, backwardRange) <= queryRadius then
             return true
         end
 
-        if distance > ATTACK_LENGTH + queryRadius then return false end
+        if distance > attackLength + queryRadius then return false end
         if distance <= queryRadius then return true end
 
         local halfAngle = math.rad(profile.Angle / 2)
@@ -744,8 +710,8 @@ local function BuildBlockTest(KRoot, QueryHitbox)
         return forwardDistance / distance >= math.cos(allowedAngle)
     end
 
-    local rectRadius = math.sqrt((math.max(ATTACK_LENGTH, backwardRange) + queryRadius) ^ 2 + (halfWidth + queryRadius) ^ 2)
-    local maxRadius = math.max(ATTACK_LENGTH + queryRadius, hasInnerCircle and (innerCircle + queryRadius) or 0, rectRadius) + 1
+    local rectRadius = math.sqrt((math.max(attackLength, backwardRange) + queryRadius) ^ 2 + (halfWidth + queryRadius) ^ 2)
+    local maxRadius = math.max(attackLength + queryRadius, hasInnerCircle and (innerCircle + queryRadius) or 0, rectRadius) + 1
 
     return Inside, kp, forward, right, maxRadius
 end
@@ -806,7 +772,7 @@ end
 
 local BLOCK_SAFETY = .1
 
-local function BlockChecker(KRoot, LRoot, inst, attackData)
+local function BlockChecker(KRoot, inst, attackData)
     if ActiveAttacks[KRoot] ~= attackData then return end
 
     local config = attackData.Config or KillerData.Default
@@ -853,73 +819,6 @@ local function BlockChecker(KRoot, LRoot, inst, attackData)
     if ActiveAttacks[KRoot] == attackData then ActiveAttacks[KRoot] = nil end
 end
 
-local function UpdateValues()
-    local now = os.clock()
-    if now - LastValueSync < .1 then
-        return
-    end
-    LastValueSync = now
-
-    local syncautoblock = window:getvalue("Enable Auto block")
-    local syncesp = window:getvalue("Enable ESP")
-    local synckeybind = window:getvalue("AutoBlockKeybind")
-    local syncshowtimer = window:getvalue("Show round timer when hallucinating")
-    local syncblockmode = window:getvalue("AutoBlockMode")
-
-    bBlockOnInv = window:getvalue("Block when the killer is stun immune")
-    bShowBlock = window:getvalue("Show Auto block range")
-    bHighlight = window:getvalue("Highlight part")
-    bTextName = window:getvalue("Show object name")
-    bAutoParry = window:getvalue("Guest 1337 auto parry")
-    PARRY_DELAY = window:getvalue("Auto parry delay")
-    AutoGenTime = window:getvalue("Delay before starting puzzle (seconds)")
-    AutoGenRandom = window:getvalue("Randomize time by (seconds)")
-    bShowLine = window:getvalue("Show attack path")
-    bShowLocalLine = window:getvalue("Show path when you're killer")
-    bChanceAimbot = window:getvalue("Chance aimbot")
-    bShowhidden = window:getvalue("Unhide playtime of all players")
-    bStopStam = window:getvalue("Safe sprint")
-    bAutoGen = window:getvalue("Auto complete generators")
-    bAutoStab = window:getvalue("Two time auto backstab")
-
-    if AutoBlockProfiles[syncblockmode] then
-        AUTO_BLOCK_MODE = syncblockmode
-    end
-
-    if bAutoBlock ~= syncautoblock then
-        KillerAb = {}
-        KillerAbTime = {}
-        tempactive = false
-		active = false
-        bt.Visible = false
-        bt2.Visible = false
-
-        bAutoBlock = syncautoblock
-    end
-    if keybindlabel.Txt.Text ~= "Current keybind: " .. synckeybind then
-        KEYBIND = synckeybind
-        keybindlabel.Txt.Text = "Current keybind: " .. synckeybind
-    end
-    if bESP ~= syncesp then
-        bESP = syncesp
-		if not bESP then
-			ItemCache = {}
-            PartCache = {}
-            GeneratorCache = {}
-		end
-    end
-    if bShowTimer ~= syncshowtimer then
-        bShowTimer = syncshowtimer
-    end
-
-    for name, inst in ColorPickers do
-        local newval = window:getvalue(inst)
-        if c[name] ~= newval then
-            c[name] = newval
-        end
-    end
-end
-
 local function DrawText(part, text, color, size)
     local nsize = size or 13
     local s, pos = pcall(function()
@@ -932,28 +831,6 @@ local function DrawText(part, text, color, size)
             DrawingImmediate.OutlinedText(NewPos, nsize, color, 1, text, true)
         end
     end
-end
-
-local function GetRootVelocity(root)
-    local s, velocity = pcall(function()
-        local address = tonumber(root.Data)
-        if not address then return end
-
-        local primitive = memory.readu64(address, Primitive)
-        if not primitive or primitive == 0 then return end
-
-        return vector.create(
-            memory.readf32(primitive, AssemblyLinearVelocity),
-            memory.readf32(primitive, AssemblyLinearVelocity + 0x4),
-            memory.readf32(primitive, AssemblyLinearVelocity + 0x8)
-        )
-    end)
-
-    if s and velocity then
-        return velocity
-    end
-
-    return vector.create(0, 0, 0)
 end
 
 local PredictionData = {}
@@ -1764,8 +1641,6 @@ local function ChanceAim(f, lroot, kroot)
 
             task.wait(.725)
 
-            local p1 = kroot.Position
-            local t1 = os.clock()
 
             task.wait(.1)
 
@@ -2303,8 +2178,6 @@ local function BackstabHandler(lroot, kroot, lrootp, krootp, krootlv)
 end
 
 local function PreLocal()
-    UpdateValues()
-
     if bAutoGen and bInUI then
         if not TempAutoGen then
             local s, grid = pcall(function()
@@ -2513,13 +2386,6 @@ local function PreLocal()
         if id then
             local kroot = inst:FindFirstChild("HumanoidRootPart")
             if kroot then UpdatePrediction(kroot) end
-            if KillerData[inst.Name] then
-                DELAY = KillerData[inst.Name]["DELAY"]
-                CLOSE_RADIUS = KillerData[inst.Name]["CLOSE_RADIUS"]
-                ATTACK_LINGER = KillerData[inst.Name]["ATTACK_LINGER"]
-                ATTACK_LENGTH = KillerData[inst.Name]["ATTACK_LENGTH"]
-                HEIGHT = KillerData[inst.Name]["HEIGHT"]
-            end
             local AbTime = tonumber(GetAttribute(inst, "AbilityLastUsed") or 0)
             local Ab = tonumber(GetAttribute(inst, "AbilitiesUsed") or 0)
             if not AbTime or not Ab then continue end
@@ -2534,12 +2400,10 @@ local function PreLocal()
                     if active then
                         local config = KillerData[inst.Name] or KillerData.Default
                         local attackData = {
-                            LRoot = LRoot,
-                            Progress = 0,
                             Config = config,
                         }
                         ActiveAttacks[kroot] = attackData
-                        task.spawn(BlockChecker, kroot, LRoot, inst, attackData)
+                        task.spawn(BlockChecker, kroot, inst, attackData)
                     end
                 end
             elseif KillerAbTime[id] ~= AbTime and tonumber(KillerAb[id]) < tonumber(Ab) then
@@ -2756,7 +2620,7 @@ local function Render()
     local lchar = LocalPlayer.Character
     local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
 
-	--[[
+    --[[
     if lroot then
         for _, killer in Killers:GetChildren() do
             local kroot = killer:FindFirstChild("HumanoidRootPart")
@@ -2765,7 +2629,7 @@ local function Render()
             end
         end
     end
-	]]
+    ]]
 
     if bShowBlock and active and lchar then
         local QueryHitbox = lchar:FindFirstChild("QueryHitbox", true)
@@ -2773,10 +2637,6 @@ local function Render()
             for _, killer in Killers:GetChildren() do
                 local KRoot = killer:FindFirstChild("HumanoidRootPart")
                 if KRoot then
-                    local config = KillerData[killer.Name] or KillerData.Default
-                    ATTACK_LENGTH = config.ATTACK_LENGTH
-                    CLOSE_RADIUS = config.CLOSE_RADIUS
-                    HEIGHT = config.HEIGHT
                     RenderBlockShape(KRoot, QueryHitbox)
                 end
             end
@@ -2934,8 +2794,10 @@ window = UI:createwindow({
     DefaultFont = 0,
 })
 
-window:registerkey("AutoBlockKeybind", KEYBIND)
-KEYBIND = window:getvalue("AutoBlockKeybind")
+window:registerkey("AutoBlockKeybind", KEYBIND, function(val)
+    KEYBIND = val
+    if keybindlabel then keybindlabel.Txt.Text = "Current keybind: " .. val end
+end)
 
 local tabSurvivor = window:createtab("Survivor")
 local tabKiller = window:createtab("Killer")
@@ -2943,20 +2805,21 @@ local tabVisual = window:createtab("Visual")
 local tabMisc = window:createtab("Misc")
 local tabColors = window:createtab("Colors")
 
-window:createlabel(tabMain, "After enabling, you need to press your keybind", 1)
+window:createlabel(tabSurvivor, "After enabling, you need to press your keybind", 1)
 
 window:createtoggle(tabSurvivor, {
     Name = "Enable Auto block",
     Col = 1,
     Default = false,
     Callback = function(val)
+        if bAutoBlock == val then return end
+
         KillerAb = {}
         KillerAbTime = {}
         tempactive = false
-		active = false
+        active = false
         bt.Visible = false
         bt2.Visible = false
-
         bAutoBlock = val
 	end
 })
@@ -3008,9 +2871,7 @@ keybindbtn = window:createbutton(tabSurvivor, {
                 for i, v in key do
                     if v ~= "LeftMouse" then
                         tempactive = true
-                        KEYBIND = key[i]
-                        window:setvalue("AutoBlockKeybind", KEYBIND)
-                        keybindlabel.Txt.Text = "Current keybind: " .. KEYBIND
+                        window:setvalue("AutoBlockKeybind", key[i])
                         keybindbtn.Txt.Text = "Change keybind"
                         bChangingBind = false
                         send_notification("Keybind set to: " .. KEYBIND, "info")
@@ -3077,12 +2938,14 @@ window:createtoggle(tabVisual, {
     Col = 1,
     Default = true,
     Callback = function(val)
-		bESP = val
-		if not val then
-			ItemCache = {}
+		if bESP == val then return end
+
+        bESP = val
+        if not bESP then
+            ItemCache = {}
             PartCache = {}
             GeneratorCache = {}
-		end
+        end
 	end
 })
 
@@ -3136,7 +2999,7 @@ window:createtoggle(tabMisc, {
 window:createslider(tabMisc, {
     Name = "Delay before starting puzzle (seconds)",
     Col = 1,
-    Min = .3, Max = 3, Default = 1.45,
+    Min = .3, Max = 3, Default = 1.75,
     Step = .05,
     Callback = function(val)
         AutoGenTime = val
@@ -3146,7 +3009,7 @@ window:createslider(tabMisc, {
 window:createslider(tabMisc, {
     Name = "Randomize time by (seconds)",
     Col = 1,
-    Min = 0, Max = 2, Default = .25,
+    Min = 0, Max = 2, Default = .5,
     Step = .05,
     Callback = function(val)
         AutoGenRandom = val
@@ -3206,72 +3069,108 @@ window:createcolorpicker(tabColors, {
     Name = "Projectile color",
     Col = 1,
     Default = c.danger,
+    Callback = function(val)
+        c.danger = val
+    end
 })
 
 window:createcolorpicker(tabColors, {
     Name = "Trap color",
     Col = 1,
     Default = c.trap,
+    Callback = function(val)
+        c.trap = val
+    end
 })
 
 window:createcolorpicker(tabColors, {
     Name = "Passive trap color",
     Col = 1,
     Default = c.slightdanger,
+    Callback = function(val)
+        c.slightdanger = val
+    end
 })
 
 window:createcolorpicker(tabColors, {
     Name = "Clone color",
     Col = 1,
     Default = c.neutral,
+    Callback = function(val)
+        c.neutral = val
+    end
 })
 
 window:createcolorpicker(tabColors, {
     Name = "Azure ability color",
     Col = 1,
     Default = c.azure,
+    Callback = function(val)
+        c.azure = val
+    end
 })
 
 window:createcolorpicker(tabColors, {
     Name = "Show projectile line color",
     Col = 1,
     Default = c.lineprim,
+    Callback = function(val)
+        c.lineprim = val
+    end
 })
 
 window:createcolorpicker(tabColors, {
     Name = "Auto block visual color",
     Col = 2,
     Default = c.autoblock,
+    Callback = function(val)
+        c.autoblock = val
+    end
 })
 
 window:createcolorpicker(tabColors, {
     Name = "Minion color",
     Col = 2,
     Default = c.yellow,
+    Callback = function(val)
+        c.yellow = val
+    end
 })
 
 window:createcolorpicker(tabColors, {
     Name = "Generator color",
     Col = 2,
     Default = c.generator,
+    Callback = function(val)
+        c.generator = val
+    end
 })
 
 window:createcolorpicker(tabColors, {
     Name = "Medkit color",
     Col = 2,
     Default = c.medkit,
+    Callback = function(val)
+        c.medkit = val
+    end
 })
 
 window:createcolorpicker(tabColors, {
     Name = "Bloxy cola color",
     Col = 2,
     Default = c.cola,
+    Callback = function(val)
+        c.cola = val
+    end
 })
 
 window:createcolorpicker(tabColors, {
     Name = "Show projectile text color",
     Col = 2,
     Default = c.linesec,
+    Callback = function(val)
+        c.linesec = val
+    end
 })
 
 RunService.PreLocal:Connect(PreLocal)
