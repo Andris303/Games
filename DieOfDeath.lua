@@ -1,9 +1,7 @@
 --!strict
 --!optimize 2
 
-loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Attribute.lua"))()
-
-local RobloxVersion = _G.RobloxVersion or "version-c5aecda2245e4fae"
+local RobloxVersion = _G.RobloxVersion or game:GetClientVersion()
 local O = crypt.json.decode(game:HttpGet("https://offsets.imtheo.lol/" .. RobloxVersion .. "/offsets.json")).Offsets
 local ActiveAnimations = O.Animator.ActiveAnimations
 local TrackAnimation = O.AnimationTrack.Animation
@@ -175,11 +173,6 @@ local function PreLocal()
     local lchar = LocalPlayer.Character
     local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
 
-    if bNoSwingCD then
-        if SetSwingCD then SetSwingCD("") end
-        if SetEjectCD then SetEjectCD("") end
-    end
-
     for _, char in workspace.GameAssets.Teams.Killer:GetChildren() do
         local humanoid = char:FindFirstChildOfClass("Humanoid")
         local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
@@ -202,7 +195,6 @@ local function PreLocal()
         templist[#templist + 1] = char
         local state = swingStates[char]
 
-        -- A different track pointer means this is a new Swing, even if the previous Swing is still fading out.
         if not state or state.Track ~= swing.Track then
             state = {Track = swing.Track, Started = os.clock(), Progress = 0, Blocked = false,}
             swingStates[char] = state
@@ -230,8 +222,6 @@ task.spawn(function()
 
         if changedCharacter then
             lchar = newlchar
-            SetSwingCD = nil
-            SetEjectCD = nil
         end
 
         if lchar and lchar.Parent then
@@ -240,20 +230,17 @@ task.spawn(function()
             if team == "Killer" or team == "Survivor" then
                 if changedCharacter or oldmaxstam ~= maximumstam then
                     oldmaxstam = maximumstam
-                    lchar:FixedSetAttribute("MaxStamina", maximumstam)
+                    lchar:SetAttribute("MaxStamina", maximumstam)
                 end
             end
 
             if team == "Killer" then
-                SetSwingCD = lchar:PrepareAttributeSetter("SwingCooldown")
-                SetEjectCD = lchar:PrepareAttributeSetter("EjectCooldown")
-            else
-                SetSwingCD = nil
-                SetEjectCD = nil
+                SetSwingCD = lchar:SetAttribute("SwingCooldown", "")
+                SetEjectCD = lchar:SetAttribute("EjectCooldown", "")
             end
         end
 
-        task.wait(.25)
+        task.wait(.05)
     end
 end)
 
