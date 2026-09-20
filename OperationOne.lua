@@ -81,8 +81,6 @@ local s, vis = pcall(function()
 	return LocalPlayer.PlayerGui.LoadoutMenu.Center.Bottom.SpectateFrame --0x5ad, u8 == 1
 end)
 
--- Instances can be destroyed (and their memory reused, e.g. by a Beam) between
--- any two reads, so the whole draw is protected instead of pre-checking.
 local function Highlight(inst, color, opacityFill, opacityOutline, thickness)
     return (pcall(HLib.Highlight, inst, color, opacityFill or .23, opacityOutline or .6, thickness or .7))
 end
@@ -181,17 +179,12 @@ local NextPlayerScan = 0
 local LastBeat = 0
 local DebugErrors = false
 
--- Instances can be destroyed between two reads, so per-instance work is
--- protected and failures are skipped. Set DebugErrors to true to print them.
 local function LogError(label, err)
     if DebugErrors then
         print("[Skipped]", label, err)
     end
 end
 
--- Severe stops running scripts while Roblox is unfocused, so every callback
--- goes through Heartbeat. A long gap since the last call means we were paused
--- and every cache may point at destroyed or replaced instances.
 local function ResetCaches()
     PlayerCache = {}
     RenderCache = {}
@@ -250,8 +243,6 @@ local function CollisionToPosition(collision)
     return Vector3.new(p.x + .02, p.y + .25, p.z + .1)
 end
 
--- World character -> viewmodel. The viewmodel's torso is compared against the
--- character's collision part, and the closest viewmodel within range wins.
 local function PlayerToModel(Char)
     local collision = Char:FindFirstChild("collision")
     local viewmodels = workspace:FindFirstChild("Viewmodels")
@@ -283,7 +274,6 @@ local function PlayerToModel(Char)
     return nil
 end
 
--- Built once per scan and shared by every viewmodel that needs matching.
 local function GetCharCandidates()
     local candidates = {}
 
@@ -302,13 +292,20 @@ local function GetCharCandidates()
     return candidates
 end
 
-local function ModelToPlayer(inst, candidates)
+-- scan.Candidates is built lazily, only once a viewmodel with a torso needs it.
+local function ModelToPlayer(inst, scan)
     if not inst or not inst.Parent then return nil end
 
     local torso = GetTorso(inst)
     if not torso then
         DebugMTP(inst, "NO VALID TORSO")
-        return nil
+        return nil, "NoTorso"
+    end
+
+    local candidates = scan.Candidates
+    if not candidates then
+        candidates = GetCharCandidates()
+        scan.Candidates = candidates
     end
 
     local ModelPos = torso.Position
@@ -350,8 +347,6 @@ for _, name in BodyParts do
     BodyPartSet[name] = true
 end
 
--- Several children can share a name (a "torso" may be a Beam), so only real
--- parts are taken, one per name.
 local function GetBodyParts(model)
     local parts = {}
     local found = {}
@@ -401,14 +396,11 @@ local function GunSoundColor(gun, rootPos)
     return color
 end
 
--- Returns keep, isTeammate. A false keep means the entry should be dropped.
 local function UpdateSoundEntry(id, entry, rootPos, now, viewmodelsId)
     local Char = entry.Char
     local model = entry.Model
     local player = entry.Player
 
-    -- The character, viewmodel or player may have been destroyed or replaced
-    -- since this entry was cached (respawn, leaving, address reuse).
     if not player.Parent then return false end
     if InstId(player.Character) ~= id then return false end
     if not InstId(model) or InstId(model.Parent) ~= viewmodelsId then return false end
@@ -603,7 +595,7 @@ local function PostLocal()
 
     PruneExpired(ModelRetry, now)
 
-    local candidates
+    local scan = {}
 
     for _, inst in viewmodels:GetChildren() do
         local instid = InstId(inst)
@@ -612,12 +604,13 @@ local function PostLocal()
         if ModelRetry[instid] then continue end
         if not inst:FindFirstChildOfClass("Model") then continue end
 
-        candidates = candidates or GetCharCandidates()
-        local ok, Player, Char = pcall(ModelToPlayer, inst, candidates)
+        local ok, Player, Char = pcall(ModelToPlayer, inst, scan)
         if not ok then LogError("ModelToPlayer", Player) end
 
         if not ok or not Player then
-            ModelRetry[instid] = now + .5
+            -- A viewmodel with no torso is unlikely to gain one within a
+            -- fraction of a second, so it is retried less often.
+            ModelRetry[instid] = now + (ok and Char == "NoTorso" and 2 or .5)
             continue
         end
 
@@ -653,8 +646,6 @@ local function PostLocal()
                 return "Friendly"
             end,
 
-            -- Keeps the current weapon until it disappears so the name can't
-            -- flip between weapons, and only rescans a few times per second.
             GetTool = function(data)
                 local t = os.clock()
                 if t < toolCache.Next then return toolCache.Name end
@@ -687,8 +678,6 @@ local function PostLocal()
     end
 end
 
--- Rebuilds the list of gadgets and cameras to draw a few times per second.
--- Render then only projects and draws what this found.
 local function UpdateGadgets(now)
     if now - LastGadgetScan < GADGET_INTERVAL then return end
     LastGadgetScan = now
