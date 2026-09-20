@@ -51,6 +51,7 @@ local PredictKillerPosition
 local KillerAbTime = {}
 local KillerAb = {}
 local ActiveAttacks = {}
+local AttackVisUntil = {}
 local ActiveLines = {}
 local PartCache = {}
 local PartCacheRefresh = {}
@@ -68,6 +69,7 @@ local noliname
 local window
 local keybindlabel
 local LastAttackScan = 0
+local LastItemScan = 0
 local tempstunning = false
 
 local suc2, bool2 = pcall(function()
@@ -252,6 +254,7 @@ local c = {
     azure = Color3.fromRGB(127,0,255),
     yellow = Color3.fromRGB(241,195,56),
     autoblock = Color3.fromRGB(241,195,56),
+    autoblockattack = Color3.fromRGB(255,255,255),
     lineprim = Color3.fromRGB(179,27,27),
     linesec = Color3.fromRGB(241,195,56),
 }
@@ -399,10 +402,16 @@ local function RemoveCachedItem(id)
     GeneratorCache[id] = nil
 end
 
+local function ReadPosition(inst)
+    return inst.Position
+end
+
+local function ReadName(inst)
+    return inst.Name
+end
+
 local function Highlight(inst, color)
-    local s, p = pcall(function()
-        return inst.Position
-    end)
+    local s, p = pcall(ReadPosition, inst)
     if s then
         h.Highlight(inst, color, .18, .7, .7)
     end
@@ -544,15 +553,29 @@ local function ShouldBlock(KRoot, QueryHitbox)
     return Inside and Inside(QueryHitbox.Position) or false
 end
 
+local function WorldToScreen(position)
+    local p, visible = Camera:WorldToScreenPoint(position)
+    if not visible then return nil end
+    return Vector2.new(p.X, p.Y)
+end
+
+local CachedQueryHitbox
+local CachedQueryHitboxChar
+
+local function GetQueryHitbox(lchar)
+    if CachedQueryHitboxChar == lchar and CachedQueryHitbox and CachedQueryHitbox.Parent then
+        return CachedQueryHitbox
+    end
+
+    CachedQueryHitbox = lchar:FindFirstChild("QueryHitbox", true)
+    CachedQueryHitboxChar = lchar
+
+    return CachedQueryHitbox
+end
+
 local function RenderBlockShape(KRoot, QueryHitbox)
     local Inside, kp, forward, right, maxRadius = BuildBlockTest(KRoot, QueryHitbox)
     if not Inside then return end
-
-    local function WorldToScreen(position)
-        local p, visible = Camera:WorldToScreenPoint(position)
-        if not visible then return nil end
-        return Vector2.new(p.X, p.Y)
-    end
 
     local SEGMENTS = 36
     local SEARCH_STEPS = 6
@@ -577,19 +600,30 @@ local function RenderBlockShape(KRoot, QueryHitbox)
         points[#points + 1] = WorldToScreen(worldPoint)
     end
 
+    local color = c.autoblock
+    local attackUntil = AttackVisUntil[KRoot]
+
+    if attackUntil then
+        if os.clock() < attackUntil then
+            color = c.autoblockattack
+        else
+            AttackVisUntil[KRoot] = nil
+        end
+    end
+
     local center = WorldToScreen(kp)
     if center then
         for i = 1, #points do
             local a = points[i]
             local b = points[i % #points + 1]
-            if a and b then DrawingImmediate.FilledTriangle(center, a, b, c.autoblock, .15) end
+            if a and b then DrawingImmediate.FilledTriangle(center, a, b, color, .15) end
         end
     end
 
     for i = 1, #points do
         local a = points[i]
         local b = points[i % #points + 1]
-        if a and b then DrawingImmediate.Line(a, b, c.autoblock, 1, 2, 1) end
+        if a and b then DrawingImmediate.Line(a, b, color, 1, 2, 1) end
     end
 end
 
@@ -614,7 +648,7 @@ local function BlockChecker(KRoot, inst, attackData)
         if not active or not bAutoBlock then break end
 
         local lchar = LocalPlayer.Character
-        local queryHitbox = lchar and lchar:FindFirstChild("QueryHitbox", true)
+        local queryHitbox = lchar and GetQueryHitbox(lchar)
 
         if queryHitbox and ShouldBlock(KRoot, queryHitbox) then
             if not bBlockOnInv and (inst:GetAttribute("Invincible") or inst:GetAttribute("StunnedDisabled")) then
@@ -644,9 +678,7 @@ end
 
 local function DrawText(part, text, color, size)
     local nsize = size or 13
-    local s, pos = pcall(function()
-        return part.Position
-    end)
+    local s, pos = pcall(ReadPosition, part)
     if s then
         local p, v = Camera:WorldToScreenPoint(pos)
         if v then
@@ -764,9 +796,35 @@ local function VisualizePredictions(lroot, kroot)
     end
 end
 
+local function IsFakeNoliUnsafe(inst)
+    if inst.Name ~= "Noli" or not inst.Parent then return false end
+
+    local usern = inst:GetAttribute("Username") or noliname
+    if not usern then return false end
+
+    local player = Players:FindFirstChild(usern)
+    local char = player and player.Character
+    if not char then return false end
+
+    return char ~= inst and #Killers:GetChildren() > 1
+end
+
+local function IsFakeNoli(inst)
+    local ok, result = pcall(IsFakeNoliUnsafe, inst)
+    return ok and result == true
+end
+
+local function GetRealKiller()
+    for _, killer in Killers:GetChildren() do
+        if killer.ClassName == "Model" and not IsFakeNoli(killer) then
+            return killer
+        end
+    end
+end
+
 local function Parry(lchar)
     local lroot = lchar:FindFirstChild("HumanoidRootPart")
-    local killer = Killers:FindFirstChildOfClass("Model")
+    local killer = GetRealKiller()
     local kroot = killer and killer:FindFirstChild("HumanoidRootPart")
 
     if lroot and kroot then
@@ -2208,6 +2266,7 @@ local function PreLocal()
         local id = InstId(inst)
         if id then
             local kroot = inst:FindFirstChild("HumanoidRootPart")
+            if IsFakeNoli(inst) then continue end
             if kroot then UpdatePrediction(kroot) end
             local AbTime = tonumber(inst:GetAttribute("AbilityLastUsed") or 0)
             local Ab = tonumber(inst:GetAttribute("AbilitiesUsed") or 0)
@@ -2226,6 +2285,7 @@ local function PreLocal()
                             Config = config,
                         }
                         ActiveAttacks[kroot] = attackData
+                        AttackVisUntil[kroot] = os.clock() + (config.WINDUP or 0) + (config.LINGER or 0)
                         task.spawn(BlockChecker, kroot, inst, attackData)
                     end
                 end
@@ -2337,6 +2397,9 @@ local function PreData()
     else
         bInUI = false
     end
+
+    if now - LastItemScan < .1 then return end
+    LastItemScan = now
 
     local IngameChildren = Ingame:GetChildren()
 
@@ -2455,7 +2518,7 @@ local function Render()
     ]]
 
     if bShowBlock and active and lchar then
-        local QueryHitbox = lchar:FindFirstChild("QueryHitbox", true)
+        local QueryHitbox = GetQueryHitbox(lchar)
         if QueryHitbox then
             for _, killer in Killers:GetChildren() do
                 local KRoot = killer:FindFirstChild("HumanoidRootPart")
@@ -2473,9 +2536,7 @@ local function Render()
             RemoveCachedItem(id)
             continue
         else
-            local s, r = pcall(function()
-                return iParent.Name
-            end)
+            local s, r = pcall(ReadName, iParent)
             if s and r == "Backpack" then
                 RemoveCachedItem(id)
                 continue
@@ -2948,6 +3009,15 @@ window:createcolorpicker(tabColors, {
     Default = c.autoblock,
     Callback = function(val)
         c.autoblock = val
+    end
+})
+
+window:createcolorpicker(tabColors, {
+    Name = "Auto block visual attack color",
+    Col = 2,
+    Default = c.autoblockattack,
+    Callback = function(val)
+        c.autoblockattack = val
     end
 })
 
