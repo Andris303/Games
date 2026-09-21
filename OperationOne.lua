@@ -159,6 +159,12 @@ local GADGET_INTERVAL = .25
 local PLAYER_SCAN_INTERVAL = 1
 local PAUSE_GAP = 1
 local MATCH_DISTANCE = 1.3
+local MAX_MATCHES_PER_TICK = 3
+local MAX_MODEL_LOOKUPS_PER_TICK = 2
+
+local function RetryDelay(base)
+    return base + math.random() * base * .5
+end
 
 local GadgetSet = {}
 for _, name in GadgetWhitelist do
@@ -235,7 +241,9 @@ local function DebugMTP(inst, ...)
     if MTPDebug[id] and now - MTPDebug[id] < 1 then return end
     MTPDebug[id] = now
 
-    print("[MTP]", inst.Name, ...)
+    if DebugErrors then
+        print("[MTP]", inst.Name, ...)
+    end
 end
 
 local function CollisionToPosition(collision)
@@ -494,12 +502,17 @@ local function PreLocal()
 
     PruneExpired(SoundRetry, now)
 
+    local lookups = 0
+
     for _, player in Players:GetChildren() do
         if player.Name == LocalPlayer.Name then continue end
 
         local Char = player.Character
         local id = InstId(Char)
         if not id or PlayerCache[id] or SoundRetry[id] then continue end
+
+        if lookups >= MAX_MODEL_LOOKUPS_PER_TICK then break end
+        lookups += 1
 
         local model
         if Char:FindFirstChild("legs") then
@@ -524,7 +537,7 @@ local function PreLocal()
                 Parts = {},
             }
         else
-            SoundRetry[id] = now + .5
+            SoundRetry[id] = now + RetryDelay(.5)
         end
     end
 
@@ -538,7 +551,7 @@ local function PreLocal()
         if not keep then
             PlayerCache[id] = nil
             RenderCache[id] = nil
-            SoundRetry[id] = now + (teammate and 1 or .5)
+            SoundRetry[id] = now + RetryDelay(teammate and 1 or .5)
         end
     end
 end
@@ -596,6 +609,7 @@ local function PostLocal()
     PruneExpired(ModelRetry, now)
 
     local scan = {}
+    local matches = 0
 
     for _, inst in viewmodels:GetChildren() do
         local instid = InstId(inst)
@@ -604,13 +618,16 @@ local function PostLocal()
         if ModelRetry[instid] then continue end
         if not inst:FindFirstChildOfClass("Model") then continue end
 
+        if matches >= MAX_MATCHES_PER_TICK then break end
+        matches += 1
+
         local ok, Player, Char = pcall(ModelToPlayer, inst, scan)
         if not ok then LogError("ModelToPlayer", Player) end
 
         if not ok or not Player then
             -- A viewmodel with no torso is unlikely to gain one within a
             -- fraction of a second, so it is retried less often.
-            ModelRetry[instid] = now + (ok and Char == "NoTorso" and 2 or .5)
+            ModelRetry[instid] = now + RetryDelay(ok and Char == "NoTorso" and 2 or .5)
             continue
         end
 
