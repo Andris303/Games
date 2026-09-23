@@ -25,6 +25,8 @@ local Ingame = Map.Ingame
 local Killers = workspace.Players.Killers
 local Survivors = workspace.Players.Survivors
 local ItemCache = {}
+local lchar = LocalPlayer.Character
+local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
 local bSurv = false
 local bKill = false
 local bInUI = false
@@ -56,6 +58,16 @@ local ActiveLines = {}
 local PartCache = {}
 local PartCacheRefresh = {}
 local GeneratorCache = {}
+local ItemRenderCache = {}
+local ItemQueue = {}
+local ItemQueuePos = 1
+local ITEM_BUDGET = .002
+local ITEM_CYCLE = .1
+local ItemQueueBuilt = 0
+local KillerSnapshot = {}
+local LocalRoot
+local LocalPos
+local LocalHitboxSize
 local tempactive = false
 local active = false
 local bt = Drawing.new("Text")
@@ -400,6 +412,7 @@ local function RemoveCachedItem(id)
     PartCache[id] = nil
     PartCacheRefresh[id] = nil
     GeneratorCache[id] = nil
+    ItemRenderCache[id] = nil
 end
 
 local function ReadPosition(inst)
@@ -410,10 +423,205 @@ local function ReadName(inst)
     return inst.Name
 end
 
-local function Highlight(inst, color)
-    local s, p = pcall(ReadPosition, inst)
-    if s then
-        h.Highlight(inst, color, .18, .7, .7)
+local function BuildHighlightData(part)
+    local ok, data = pcall(function()
+        return {
+            Position = part.Position,
+            RightVector = part.RightVector,
+            UpVector = part.UpVector,
+            LookVector = part.LookVector,
+            PartSize = part.Size,
+            Parent = part.Parent,
+        }
+    end)
+
+    if ok and data.Parent then return data end
+    return nil
+end
+
+local function BuildHighlightGroupData(parts)
+    local list = {}
+
+    for _, part in parts do
+        local data = BuildHighlightData(part)
+        if data then
+            list[#list + 1] = data
+        end
+    end
+
+    return list
+end
+
+local function Highlight(data, color)
+    if not data then return end
+
+    pcall(h.Highlight, data, color, .18, .7, .7)
+end
+
+local function BuildItemRenderInfo(id, inst, now)
+    local iParent = inst.Parent
+    if not iParent then
+        RemoveCachedItem(id)
+        return
+    end
+
+    local okParentName, parentName = pcall(ReadName, iParent)
+    if okParentName and parentName == "Backpack" then
+        RemoveCachedItem(id)
+        return
+    end
+
+    local Name = inst.Name
+    if type(Name) ~= "string" then
+        RemoveCachedItem(id)
+        return
+    end
+
+    if Name == "Generator" then
+        if bInUI or bKill then
+            ItemRenderCache[id] = nil
+            return
+        end
+
+        local Main = inst:FindFirstChild("Main")
+        local Progress = inst:FindFirstChild("Progress")
+        if not Main or not Progress then
+            RemoveCachedItem(id)
+            return
+        end
+
+        local okVal, val = pcall(function() return Progress.Value end)
+        if not okVal or val == 100 then
+            RemoveCachedItem(id)
+            return
+        end
+
+        local okPos, pos = pcall(ReadPosition, Main)
+        if not okPos then
+            ItemRenderCache[id] = nil
+            return
+        end
+
+        ItemRenderCache[id] = {
+            Kind = "Generator",
+            Pos = pos,
+            HighlightData = BuildHighlightData(Main),
+            Color = c.generator,
+            Text = GetGenPer(val),
+        }
+        return
+    end
+
+    if Name == "Trail" then
+        if not bESP then
+            ItemRenderCache[id] = nil
+            return
+        end
+
+        local okSize, sz = pcall(function() return inst.Size end)
+        if not okSize or sz.x > 100 or sz.y > 100 or sz.z > 100 then
+            ItemRenderCache[id] = nil
+            return
+        end
+    elseif Name == "JaneGhost" then
+        ItemRenderCache[id] = nil
+        return
+    end
+
+    local colorKey = NameColors[Name]
+    local color = colorKey and c[colorKey] or c.yellow
+    local name = FullNames[Name]
+
+    for _, v in PNames do
+        if string.find(Name, v) then
+            local pColorKey = NameColors[v]
+            color = pColorKey and c[pColorKey] or c.yellow
+            name = FullNames[v]
+        end
+    end
+
+    if bSurv and (table.find(SNames, Name) or string.find(Name, "TaphTripwire") or string.find(Name, "SubspaceTripmine")) then
+        ItemRenderCache[id] = nil
+        return
+    end
+    if bKill and (table.find(KNames, Name) or string.find(Name, "Puddle") or string.find(Name, "Shockwave")) then
+        ItemRenderCache[id] = nil
+        return
+    end
+    if string.find(Name, "Spray") then
+        ItemRenderCache[id] = nil
+        return
+    end
+
+    local Parts = PartCache[id]
+    local refresh = false
+
+    if type(Parts) == "table" then
+        if not PartCacheRefresh[id] or now - PartCacheRefresh[id] >= .25 then
+            refresh = true
+        else
+            for _, part in Parts do
+                if not part.Parent then
+                    refresh = true
+                    break
+                end
+            end
+        end
+    else
+        if not Parts or not Parts.Parent then
+            refresh = true
+        elseif inst:FindFirstChild("Humanoid") then
+            if not PartCacheRefresh[id] or now - PartCacheRefresh[id] >= .25 then
+                refresh = true
+            end
+        end
+    end
+
+    if refresh then
+        local newParts = GetPart(inst)
+        if newParts then
+            Parts = newParts
+            PartCache[id] = Parts
+            PartCacheRefresh[id] = now
+        elseif type(Parts) ~= "table" then
+            Parts = nil
+            PartCache[id] = nil
+        end
+    end
+
+    if type(Parts) == "table" then
+        local torsoPart
+        for _, part in Parts do
+            if part.Name == "Torso" then
+                torsoPart = part
+                break
+            end
+        end
+
+        local torsoPos
+        if torsoPart then
+            local okTorso, tp = pcall(ReadPosition, torsoPart)
+            if okTorso then torsoPos = tp end
+        end
+
+        ItemRenderCache[id] = {
+            Kind = "Body",
+            TorsoPos = torsoPos,
+            HighlightParts = BuildHighlightGroupData(Parts),
+            Color = color,
+            Text = name or "Minion",
+        }
+    elseif Parts then
+        local okPos, pos = pcall(ReadPosition, Parts)
+        ItemRenderCache[id] = {
+            Kind = "Part",
+            Pos = okPos and pos or nil,
+            HighlightData = BuildHighlightData(Parts),
+            Color = color,
+            Text = name,
+        }
+    else
+        ItemRenderCache[id] = nil
     end
 end
 
@@ -446,8 +654,7 @@ local AutoBlockProfiles = {
     },
 }
 
-local function GetQueryRadii(hitbox)
-    local size = hitbox.Size
+local function GetQueryRadii(size)
     local hx = size.x / 2
     local hz = size.z / 2
     local inner = math.min(hx, hz)
@@ -468,30 +675,27 @@ local function DistanceToRectangle(forwardDistance, sideDistance, length, halfWi
     return math.sqrt(df * df + ds * ds)
 end
 
-local function GetBlockOrigin(KRoot)
-    local lchar = LocalPlayer.Character
-    local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
-
-    if lroot and PredictKillerPosition then
-        return PredictKillerPosition(lroot, KRoot, 1.5)
+local function GetBlockOrigin(killerKey, killerPos, localPos)
+    if localPos and PredictKillerPosition then
+        return PredictKillerPosition(killerKey, killerPos, localPos, 1.5)
     end
 
-    return KRoot.Position
+    return killerPos
 end
 
-local function BuildBlockTest(KRoot, QueryHitbox)
-    if not KRoot or not QueryHitbox then return end
+local function BuildBlockTest(killerKey, killerPos, killerLook, killerName, hitboxSize, localPos)
+    if not killerKey or not killerPos or not killerLook or not hitboxSize then return end
 
     local profile = AutoBlockProfiles[AUTO_BLOCK_MODE]
     if not profile then return end
 
-    local config = KillerData[KRoot.Parent.Name] or KillerData.Default
+    local config = KillerData[killerName] or KillerData.Default
     local attackLength = config.ATTACK_LENGTH or KillerData.Default.ATTACK_LENGTH
     local attackHeight = config.HEIGHT or KillerData.Default.HEIGHT
     local backwardRange = config.BACKWARD_RANGE or 0
 
-    local kp = GetBlockOrigin(KRoot)
-    local kl = KRoot.LookVector
+    local kp = GetBlockOrigin(killerKey, killerPos, localPos)
+    local kl = killerLook
     local forward = vector.create(kl.x, 0, kl.z)
     local magnitude = vector.magnitude(forward)
     if magnitude == 0 then return end
@@ -499,13 +703,13 @@ local function BuildBlockTest(KRoot, QueryHitbox)
     forward /= magnitude
 
     local right = vector.create(-forward.z, 0, forward.x)
-    local innerRadius, outerRadius, halfHeight = GetQueryRadii(QueryHitbox)
+    local innerRadius, outerRadius, halfHeight = GetQueryRadii(hitboxSize)
     local queryRadius = profile.RadiusMode == "Outer" and outerRadius or innerRadius
     local halfWidth = START_WIDTH / 2
     local innerCircle = profile.InnerRadius
     local hasInnerCircle = innerCircle ~= nil
 
-    if hasInnerCircle and KRoot.Parent and KRoot.Parent.Name == "c00lkidd" then
+    if hasInnerCircle and killerName == "c00lkidd" then
         innerCircle = 3.5
     end
 
@@ -548,8 +752,8 @@ local function BuildBlockTest(KRoot, QueryHitbox)
     return Inside, kp, forward, right, maxRadius
 end
 
-local function ShouldBlock(KRoot, QueryHitbox)
-    local Inside = BuildBlockTest(KRoot, QueryHitbox)
+local function ShouldBlock(KRoot, killerPos, killerLook, killerName, QueryHitbox, localPos)
+    local Inside = BuildBlockTest(KRoot, killerPos, killerLook, killerName, QueryHitbox.Size, localPos)
     return Inside and Inside(QueryHitbox.Position) or false
 end
 
@@ -573,8 +777,9 @@ local function GetQueryHitbox(lchar)
     return CachedQueryHitbox
 end
 
-local function RenderBlockShape(KRoot, QueryHitbox)
-    local Inside, kp, forward, right, maxRadius = BuildBlockTest(KRoot, QueryHitbox)
+local function RenderBlockShape(snapshot, hitboxSize, localPos)
+    local KRoot = snapshot.Root
+    local Inside, kp, forward, right, maxRadius = BuildBlockTest(KRoot, snapshot.Position, snapshot.LookVector, snapshot.Name, hitboxSize, localPos)
     if not Inside then return end
 
     local SEGMENTS = 36
@@ -649,8 +854,11 @@ local function BlockChecker(KRoot, inst, attackData)
 
         local lchar = LocalPlayer.Character
         local queryHitbox = lchar and GetQueryHitbox(lchar)
+        local okPoll, killerPos, killerLook, localPos = pcall(function()
+            return KRoot.Position, KRoot.LookVector, lchar and lchar:FindFirstChild("HumanoidRootPart") and lchar.HumanoidRootPart.Position
+        end)
 
-        if queryHitbox and ShouldBlock(KRoot, queryHitbox) then
+        if queryHitbox and okPoll and killerPos and ShouldBlock(KRoot, killerPos, killerLook, inst.Name, queryHitbox, localPos) then
             if not bBlockOnInv and (inst:GetAttribute("Invincible") or inst:GetAttribute("StunnedDisabled")) then
                 task.wait(.01)
                 continue
@@ -676,27 +884,23 @@ local function BlockChecker(KRoot, inst, attackData)
     if ActiveAttacks[KRoot] == attackData then ActiveAttacks[KRoot] = nil end
 end
 
-local function DrawText(part, text, color, size)
+local function DrawTextAt(pos, text, color, size)
     local nsize = size or 13
-    local s, pos = pcall(ReadPosition, part)
-    if s then
-        local p, v = Camera:WorldToScreenPoint(pos)
-        if v then
-            local NewPos = Vector2.new(p.x, p.y - 6.5)
-            DrawingImmediate.OutlinedText(NewPos, nsize, color, 1, text, true)
-        end
+    local p, v = Camera:WorldToScreenPoint(pos)
+    if v then
+        local NewPos = Vector2.new(p.x, p.y - 6.5)
+        DrawingImmediate.OutlinedText(NewPos, nsize, color, 1, text, true)
     end
 end
 
 local PredictionData = {}
 
-local function UpdatePrediction(root)
-    local pos = root.Position
+local function UpdatePrediction(key, pos)
     local now = os.clock()
-    local data = PredictionData[root]
+    local data = PredictionData[key]
 
     if not data then
-        PredictionData[root] = {Position = pos, Time = now, Velocity = vector.create(0, 0, 0), LastMovement = now}
+        PredictionData[key] = {Position = pos, Time = now, Velocity = vector.create(0, 0, 0), LastMovement = now}
         return
     end
 
@@ -723,100 +927,78 @@ local function UpdatePrediction(root)
     data.Time = now
 end
 
-local function PredictPosition(root, future)
-    local data = PredictionData[root]
-    local pos = root.Position
-    if not data then return pos end
-    return pos + data.Velocity * future
+local function PredictPosition(key, currentPos, future)
+    local data = PredictionData[key]
+    if not data then return currentPos end
+    return currentPos + data.Velocity * future
 end
 
-local function GetPredictionTime(lroot, kroot)
+local function GetPredictionTime(localPos, killerPos)
     local MIN_DISTANCE = 0
     local MAX_DISTANCE = 92
-    local distance = vector.magnitude(kroot.Position - lroot.Position)
+    local distance = vector.magnitude(killerPos - localPos)
     local alpha = math.clamp((distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE), 0, 1)
 
     return .2 * (alpha ^ .3)
 end
 
-PredictKillerPosition = function(lroot, kroot, multiplier)
+PredictKillerPosition = function(killerKey, killerPos, localPos, multiplier)
     multiplier = multiplier or 1
 
-    local prediction = GetPredictionTime(lroot, kroot) * multiplier
-    local data = PredictionData[kroot]
-    if not data then return kroot.Position end
-
-    return kroot.Position + data.Velocity * prediction
+    local prediction = GetPredictionTime(localPos, killerPos) * multiplier
+    return PredictPosition(killerKey, killerPos, prediction)
 end
 
-local function PredictPosition2(lroot, kroot, multiplier)
-    return PredictKillerPosition(lroot, kroot, multiplier)
+local function PredictPosition2(killerKey, killerPos, localPos, multiplier)
+    return PredictKillerPosition(killerKey, killerPos, localPos, multiplier)
 end
 
-local function DrawPredictionDebug(startPos, predictedPos, text, color)
-    local a, av = Camera:WorldToScreenPoint(startPos)
-    local b, bv = Camera:WorldToScreenPoint(predictedPos)
 
-    if av and bv then
-        local a2 = Vector2.new(a.X, a.Y)
-        local b2 = Vector2.new(b.X, b.Y)
 
-        DrawingImmediate.Line(a2, b2, color, 1, 3, 1)
-        DrawingImmediate.Line(b2 - Vector2.new(5, 0), b2 + Vector2.new(5, 0), color, 1, 3, 1)
-        DrawingImmediate.Line(b2 - Vector2.new(0, 5), b2 + Vector2.new(0, 5), color, 1, 3, 1)
-        DrawingImmediate.OutlinedText(b2 + Vector2.new(7, -7), 16, color, 1, text, false)
-    end
-end
-
-local function VisualizePredictions(lroot, kroot)
-    if not lroot or not kroot then return end
-    if not lroot.Parent then return end
-    local namen = lroot.Parent.Name
-
-    if bAutoStab and namen == "TwoTime" then
-        local lp = PredictPosition(lroot, .185)
-        local kp = PredictPosition(kroot, .185)
-
-        DrawPredictionDebug(lroot.Position, lp, "STAB LOCAL .185", Color3.fromRGB(80, 170, 255))
-        DrawPredictionDebug(kroot.Position, kp, "STAB KILLER .185", Color3.fromRGB(255, 80, 80))
-    end
-
-    if bAutoParry and isguest then
-        local t = GetPredictionTime(lroot, kroot)
-        local kp = PredictPosition2(lroot, kroot)
-
-        DrawPredictionDebug(kroot.Position, kp, "PARRY " .. string.format("%.3f", t), Color3.fromRGB(255, 220, 80))
-    end
-
-    if bChanceAimbot and namen == "Chance" then
-        local t = GetPredictionTime(lroot, kroot)
-        local kp = PredictPosition2(lroot, kroot)
-
-        DrawPredictionDebug(kroot.Position, kp, "CHANCE " .. string.format("%.3f", t), Color3.fromRGB(190, 100, 255))
-    end
-end
-
-local function IsFakeNoliUnsafe(inst)
+local function IsFakeNoliUnsafe(inst, killerCount)
     if inst.Name ~= "Noli" or not inst.Parent then return false end
 
-    local usern = inst:GetAttribute("Username") or noliname
+    local usern = noliname or inst:GetAttribute("Username")
     if not usern then return false end
+    noliname = usern
 
     local player = Players:FindFirstChild(usern)
     local char = player and player.Character
     if not char then return false end
 
-    return char ~= inst and #Killers:GetChildren() > 1
+    return char ~= inst and killerCount > 1
 end
 
-local function IsFakeNoli(inst)
-    local ok, result = pcall(IsFakeNoliUnsafe, inst)
-    return ok and result == true
+local FakeNoliCache = {}
+local FAKE_NOLI_INTERVAL = .3
+
+local function IsFakeNoli(inst, killerCount)
+    if inst.Name ~= "Noli" then return false end
+
+    local id = InstId(inst)
+    if not id then
+        local ok, result = pcall(IsFakeNoliUnsafe, inst, killerCount)
+        return ok and result == true
+    end
+
+    local now = os.clock()
+    local cached = FakeNoliCache[id]
+    if cached and now - cached.Time < FAKE_NOLI_INTERVAL then
+        return cached.Value
+    end
+
+    local ok, result = pcall(IsFakeNoliUnsafe, inst, killerCount)
+    local value = ok and result == true
+    FakeNoliCache[id] = {Value = value, Time = now}
+    return value
 end
 
 local function GetRealKiller()
-    for _, killer in Killers:GetChildren() do
-        if killer.ClassName == "Model" and not IsFakeNoli(killer) then
+    local killerChildren = Killers:GetChildren()
+    local killerCount = #killerChildren
+
+    for _, killer in killerChildren do
+        if killer.ClassName == "Model" and not IsFakeNoli(killer, killerCount) then
             return killer
         end
     end
@@ -838,8 +1020,9 @@ local function Parry(lchar)
 
         task.wait(.25)
 
-        local predictedPos = PredictPosition2(lroot, kroot, 2.25)
-        lroot.CFrame = CFrame.lookAt(lroot.Position, predictedPos)
+        local lpos, kpos = lroot.Position, kroot.Position
+        local predictedPos = PredictPosition2(kroot, kpos, lpos, 2.25)
+        lroot.CFrame = CFrame.lookAt(lpos, predictedPos)
     end
 end
 
@@ -876,11 +1059,10 @@ local function DrawWorldLine(startPos, endPos)
     end
 end
 
-local function DrawLookLine(root, dist, right, down)
-    local startPos = root.Position
+local function DrawLookLine(rootpos, rootlv, rootrv, rootuv, dist, right, down)
     right = right or 0
     down = down or 0
-    local direction = root.LookVector + root.RightVector * right - root.UpVector * down
+    local direction = rootlv + rootrv * right - rootuv * down
     direction = direction / vector.magnitude(direction)
 
     local SEGMENT_LENGTH = 5
@@ -890,8 +1072,8 @@ local function DrawLookLine(root, dist, right, down)
     for i = 0, segments - 1 do
         local d1 = i * segml
         local d2 = math.min((i + 1) * segml, dist)
-        local p1 = startPos + direction * d1
-        local p2 = startPos + direction * d2
+        local p1 = rootpos + direction * d1
+        local p2 = rootpos + direction * d2
         local a, aVisible = Camera:WorldToScreenPoint(p1)
         local b, bVisible = Camera:WorldToScreenPoint(p2)
 
@@ -901,8 +1083,9 @@ local function DrawLookLine(root, dist, right, down)
     end
 end
 
-local function DrawAbilityName(data, root)
-    DrawText(root, data.Name or data.Ability.Name, c.linesec, 25)
+local function DrawAbilityName(data)
+    local pos = data.CurrentPosition or data.Origin
+    DrawTextAt(pos, data.Name or data.Ability.Name, c.linesec, 25)
 end
 
 local function GetTrackedPosition(obj)
@@ -961,13 +1144,13 @@ local function FindNewObject(data, root, names)
     end
 end
 
-local function DrawMovementFromOrigin(data, root)
-    local currentPos = root.Position
+local function DrawMovementFromOrigin(data)
+    local currentPos = data.CurrentPosition
     local movement = Vector3.new(currentPos.X - data.Origin.X, currentPos.Y - data.Origin.Y, currentPos.Z - data.Origin.Z)
     local traveled = vector.magnitude(movement)
 
     if traveled <= .2 then
-        DrawLookLine(root, data.Length)
+        DrawLookLine(currentPos, data.CurrentLookVector, data.CurrentRightVector, data.CurrentUpVector, data.Length)
         return
     end
 
@@ -979,22 +1162,25 @@ local function DrawMovementFromOrigin(data, root)
     end
 end
 
-local function DrawTrackedObject(data)
+local function UpdateTrackedObject(data)
     local obj = data.TrackedObject
 
     if not obj or not obj.Parent then
         data.Finished = true
+        data.HasTrackedLine = false
         return
     end
 
     local currentPos = GetTrackedPosition(obj)
     if not currentPos then
         data.Finished = true
+        data.HasTrackedLine = false
         return
     end
 
     if not data.ObjectSamplePos then
         data.ObjectSamplePos = currentPos
+        data.HasTrackedLine = false
         return
     end
 
@@ -1009,7 +1195,17 @@ local function DrawTrackedObject(data)
     end
 
     if data.ObjectDestination then
-        DrawWorldLine(currentPos, Vector3.new(data.ObjectDestination.X, currentPos.Y, data.ObjectDestination.Z))
+        data.TrackedFrom = currentPos
+        data.TrackedTo = Vector3.new(data.ObjectDestination.X, currentPos.Y, data.ObjectDestination.Z)
+        data.HasTrackedLine = true
+    else
+        data.HasTrackedLine = false
+    end
+end
+
+local function DrawTrackedObject(data)
+    if data.HasTrackedLine then
+        DrawWorldLine(data.TrackedFrom, data.TrackedTo)
     end
 end
 
@@ -1036,6 +1232,10 @@ end
 
 local AutoStabBlacklist = {"Walkspeed Override", "Entanglement", "Mass Infection", "Corrupt Energy", "Voidrush", "Demonic Pursuit", "Ascension", "Bloodhook", "Enstrangle"}
 
+local function DrawCurrentLookLine(data, right, down)
+    DrawLookLine(data.CurrentPosition, data.CurrentLookVector, data.CurrentRightVector, data.CurrentUpVector, data.Length, right, down)
+end
+
 local KillerAbilities = {
     c00lkidd = {
         {
@@ -1052,12 +1252,10 @@ local KillerAbilities = {
 
                 return true
             end,
-            Draw = function(data, char, root)
+            Update = function(char, root, data)
                 local elapsed = os.clock() - data.Started
-                if elapsed < .6 then
-                    DrawLookLine(root, data.Length)
-                    return
-                end
+                if elapsed < .6 then return end
+
                 if not data.WSOCheckStarted then
                     data.WSOCheckStarted = true
                     data.StillPosition = nil
@@ -1065,9 +1263,15 @@ local KillerAbilities = {
                 end
                 if IsStandingStill(data, root) then
                     data.Finished = true
+                end
+            end,
+            Draw = function(data)
+                local elapsed = os.clock() - data.Started
+                if elapsed < .6 then
+                    DrawCurrentLookLine(data)
                     return
                 end
-                DrawMovementFromOrigin(data, root)
+                DrawMovementFromOrigin(data)
             end,
         },
     },
@@ -1093,22 +1297,22 @@ local KillerAbilities = {
             Start = function(data)
                 data.KnownObjects = SnapshotObjects()
             end,
-            Draw = function(data, char, root)
-                if data.Finished then
-                    return
-                end
+            Update = function(char, root, data)
+                if data.Finished then return end
                 if not data.TrackedObject then
-                    data.TrackedObject = FindNewObject(data, root,
-                        {
-                            Swords = true,
-                        }
-                    )
-                    if not data.TrackedObject then
-                        DrawLookLine(root, data.Length)
-                        return
-                    end
+                    data.TrackedObject = FindNewObject(data, root, {Swords = true})
                 end
-                DrawTrackedObject(data)
+                if data.TrackedObject then
+                    UpdateTrackedObject(data)
+                end
+            end,
+            Draw = function(data)
+                if data.Finished then return end
+                if data.TrackedObject then
+                    DrawTrackedObject(data)
+                else
+                    DrawCurrentLookLine(data)
+                end
             end,
         },
 
@@ -1140,21 +1344,22 @@ local KillerAbilities = {
             Start = function(data)
                 data.KnownObjects = SnapshotObjects()
             end,
-            Draw = function(data, char, root)
+            Update = function(char, root, data)
                 if data.Finished then return end
                 if not data.TrackedObject then
-                    data.TrackedObject = FindNewObject(data, root,
-                        {
-                            shockwave = true,
-                            Shockwave = true,
-                        }
-                    )
-                    if not data.TrackedObject then
-                        DrawLookLine(root, data.Length)
-                        return
-                    end
+                    data.TrackedObject = FindNewObject(data, root, {shockwave = true, Shockwave = true})
                 end
-                DrawTrackedObject(data)
+                if data.TrackedObject then
+                    UpdateTrackedObject(data)
+                end
+            end,
+            Draw = function(data)
+                if data.Finished then return end
+                if data.TrackedObject then
+                    DrawTrackedObject(data)
+                else
+                    DrawCurrentLookLine(data)
+                end
             end,
         },
     },
@@ -1170,24 +1375,24 @@ local KillerAbilities = {
                     return true
                 end
             end,
-            Draw = function(data, char, root)
+            Draw = function(data)
                 local WINDUP = 2
                 local elapsed = os.clock() - data.Started
 
                 if elapsed < WINDUP then
-                    DrawLookLine(root, data.Length)
+                    DrawCurrentLookLine(data)
                     return
                 end
 
-                local direction = root.LookVector
+                local direction = data.CurrentLookVector
                 local magnitude = vector.magnitude(direction)
 
                 if magnitude == 0 then return end
 
                 direction /= magnitude
-                local endPos = root.Position + direction * data.Length
+                local endPos = data.CurrentPosition + direction * data.Length
                 local alpha = math.clamp((elapsed - WINDUP) / (data.Duration - WINDUP), 0, 2)
-                local startPos = root.Position + direction * data.Length * alpha
+                local startPos = data.CurrentPosition + direction * data.Length * alpha
                 DrawWorldLine(startPos, endPos)
             end,
         },
@@ -1207,8 +1412,8 @@ local KillerAbilities = {
                     return state:FindFirstChild("VoidRushCharging") or state:FindFirstChild("VoidRushDash")
                 end
             end,
-            Draw = function(data, char, root)
-                DrawLookLine(root, data.Length)
+            Draw = function(data)
+                DrawCurrentLookLine(data)
             end,
         },
     },
@@ -1231,14 +1436,15 @@ local KillerAbilities = {
                 end
                 return true
             end,
-            Draw = function(data, char, root)
+            Update = function(char, root, data)
                 local state = char:FindFirstChild("SpeedMultipliers")
-                if state then
-                    if state:FindFirstChild("666Pursuit") then
-                        DrawMovementFromOrigin(data, root)
-                    else
-                        DrawLookLine(root, data.Length)
-                    end
+                data.Pursuing = state and state:FindFirstChild("666Pursuit") ~= nil
+            end,
+            Draw = function(data)
+                if data.Pursuing then
+                    DrawMovementFromOrigin(data)
+                else
+                    DrawCurrentLookLine(data)
                 end
             end,
         },
@@ -1271,8 +1477,8 @@ local KillerAbilities = {
                 return false
             end,
 
-            Draw = function(data, char, root)
-                DrawLookLine(root, data.Length, 0, 1)
+            Draw = function(data)
+                DrawCurrentLookLine(data, 0, 1)
             end,
         },
         {
@@ -1282,8 +1488,8 @@ local KillerAbilities = {
                 local folder = char:FindFirstChild("SpeedMultipliers")
                 return folder and folder:FindFirstChild("NosBloodhookThrow") ~= nil
             end,
-            Draw = function(data, char, root)
-                DrawLookLine(root, data.Length)
+            Draw = function(data)
+                DrawCurrentLookLine(data)
             end,
         },
     },
@@ -1295,8 +1501,8 @@ local KillerAbilities = {
             Check = function(char, root)
                 return root:FindFirstChild("HomingSpotlightOthers") ~= nil
             end,
-            Draw = function(data, char, root)
-                DrawLookLine(root, data.Length, .03, 0)
+            Draw = function(data)
+                DrawCurrentLookLine(data, .03, 0)
             end,
         },
     },
@@ -1316,8 +1522,8 @@ local SurvivorAbilities = {
                     end
                 end
             end,
-            Draw = function(data, char, root)
-                DrawLookLine(root, data.Length, 0, 0)
+            Draw = function(data)
+                DrawCurrentLookLine(data)
             end,
         },
     },
@@ -1334,8 +1540,8 @@ local SurvivorAbilities = {
                     return state.Transparency == 0
                 end
             end,
-            Draw = function(data, char, root)
-                DrawLookLine(root, data.Length, 0, 0)
+            Draw = function(data)
+                DrawCurrentLookLine(data)
             end,
         },
     },
@@ -1372,8 +1578,8 @@ local SurvivorAbilities = {
                     end
                 end
             end,
-            Draw = function(data, char, root)
-                DrawLookLine(root, data.Length, 0, 0)
+            Draw = function(data)
+                DrawCurrentLookLine(data)
             end,
         },
     },
@@ -1384,10 +1590,7 @@ local function UpdateAbilityFolder(folder, abilitiesTable)
         local root = char:FindFirstChild("HumanoidRootPart")
         local abilities = abilitiesTable[char.Name]
 
-        if not root or not abilities then
-            continue
-        end
-
+        if not root or not abilities then continue end
         local lines = ActiveLines[root]
 
         if not lines then
@@ -1395,34 +1598,44 @@ local function UpdateAbilityFolder(folder, abilitiesTable)
             ActiveLines[root] = lines
         end
 
-        for _, ability in abilities do
-            local exists = false
+        local rootPos = root.Position
+        local rootlv = root.LookVector
+        local rootrv = root.RightVector
+        local rootuv = root.UpVector
 
-            for _, data in lines do
-                if data.Ability == ability then
-                    exists = true
+        for _, ability in abilities do
+            local data
+
+            for _, existing in lines do
+                if existing.Ability == ability then
+                    data = existing
                     break
                 end
             end
 
-            local checked = ability.Check(char, root)
+            local checked = ability.Check(char, root, data)
+
             if ability.TriggerOnce then
                 ability.ActiveStates = ability.ActiveStates or {}
                 local wasActive = ability.ActiveStates[char] == true
 
-                if checked and not wasActive and not exists then
-                    local data = {
+                if checked and not wasActive and not data then
+                    data = {
                         Ability = ability,
                         Character = char,
+                        IsLocal = char == LocalPlayer.Character,
                         Name = ability.Name,
                         Length = ability.Length,
                         Duration = ability.Duration,
-                        Origin = root.Position,
+                        Origin = rootPos,
+                        Rootlv = rootlv,
+                        Rootrv = rootrv,
+                        Rootuv = rootuv,
                         Started = os.clock(),
                     }
 
                     if ability.Start then
-                        ability.Start(data, char, root)
+                        ability.Start(data, char)
                     end
 
                     lines[#lines + 1] = data
@@ -1439,21 +1652,62 @@ local function UpdateAbilityFolder(folder, abilitiesTable)
                         ability.InactiveSince[char] = nil
                     end
                 end
-            elseif checked and not exists then
-                local data = {
+            elseif checked and not data then
+                data = {
                     Ability = ability,
                     Character = char,
+                    IsLocal = char == LocalPlayer.Character,
                     Name = ability.Name,
                     Length = ability.Length,
                     Duration = ability.Duration,
-                    Origin = root.Position,
+                    Origin = rootPos,
+                    Rootlv = rootlv,
+                    Rootrv = rootrv,
+                    Rootuv = rootuv,
                     Started = os.clock(),
                 }
 
                 if ability.Start then
-                    ability.Start(data, char, root)
+                    ability.Start(data, char)
                 end
                 lines[#lines + 1] = data
+            end
+
+            if data and not data.LineDone then
+                data.CurrentPosition = rootPos
+                data.CurrentLookVector = rootlv
+                data.CurrentRightVector = rootrv
+                data.CurrentUpVector = rootuv
+
+                if ability.Update then
+                    ability.Update(char, root, data)
+                end
+
+                if not data.Duration then
+                    if not ability.Check(char, root, data) then
+                        data.LineDone = true
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function CleanupActiveLines()
+    for root, lines in ActiveLines do
+        local rootValid = root.Parent ~= nil
+
+        for _, data in lines do
+            if data.LineDone then continue end
+
+            if not rootValid then
+                data.LineDone = true
+                continue
+            end
+
+            local char = data.Character
+            if not char or (char.Parent ~= Killers and char.Parent ~= Survivors) then
+                data.LineDone = true
             end
         end
     end
@@ -1466,20 +1720,7 @@ local function RenderActiveLines()
 
     for root, lines in ActiveLines do
         for i, data in lines do
-            local char = data.Character
-            local ability = data.Ability
-
-            if not root.Parent or not char then
-                lines[i] = nil
-                continue
-            end
-
-            if char.Parent ~= Killers and char.Parent ~= Survivors then
-                lines[i] = nil
-                continue
-            end
-
-            if not bShowLocalLine and char == LocalPlayer.Character then
+            if not bShowLocalLine and data.IsLocal then
                 continue
             end
 
@@ -1490,17 +1731,19 @@ local function RenderActiveLines()
                     lines[i] = nil
                     continue
                 end
-            elseif not ability.Check(char, root, data) then
+            elseif data.LineDone then
                 lines[i] = nil
                 continue
             end
 
+            local ability = data.Ability
+
             if ability.Draw then
-                ability.Draw(data, char, root)
+                ability.Draw(data)
             end
 
             if ability.ShowName ~= false then
-                DrawAbilityName(data, root)
+                DrawAbilityName(data)
             end
         end
 
@@ -1513,6 +1756,7 @@ end
 local function UpdateActiveLines()
     UpdateAbilityFolder(Killers, KillerAbilities)
     UpdateAbilityFolder(Survivors, SurvivorAbilities)
+    CleanupActiveLines()
 end
 
 local function ChanceAim(f, lroot, kroot)
@@ -1525,7 +1769,8 @@ local function ChanceAim(f, lroot, kroot)
 
             task.wait(.1)
 
-            lroot.CFrame = CFrame.lookAt(lroot.Position, PredictPosition2(lroot, kroot))
+            local lpos, kpos = lroot.Position, kroot.Position
+            lroot.CFrame = CFrame.lookAt(lpos, PredictPosition2(kroot, kpos, lpos))
         end
     elseif tempstunning then
         tempstunning = false
@@ -2059,6 +2304,12 @@ local function BackstabHandler(lroot, kroot, lrootp, krootp, krootlv)
 end
 
 local function PreLocal()
+    local cam = workspace.CurrentCamera
+    if cam then
+        Camera = cam
+        if h.SetCamera then h.SetCamera(cam) end
+    end
+
     if bAutoGen and bInUI then
         if not TempAutoGen then
             local s, grid = pcall(function()
@@ -2117,6 +2368,9 @@ local function PreLocal()
         TempAutoGen = false
         LastPuzzleSignature = nil
     end
+
+    lchar = LocalPlayer.Character
+    lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
 
     if not BLOCK_KEY or not PARRY_KEY or not SPRINT_KEY then
         local s, e1, e2, e3 = pcall(GetBinds)
@@ -2260,14 +2514,40 @@ local function PreLocal()
     end
 
     local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
-    if lroot then UpdatePrediction(lroot) end
+    LocalRoot = lroot
+    LocalPos = lroot and lroot.Position
 
-    for _, inst in Killers:GetChildren() do
+    if lroot and LocalPos then UpdatePrediction(lroot, LocalPos) end
+
+    if bShowBlock and lchar then
+        local hitbox = GetQueryHitbox(lchar)
+        LocalHitboxSize = hitbox and hitbox.Size
+    else
+        LocalHitboxSize = nil
+    end
+
+    local killerChildren = Killers:GetChildren()
+    local killerCount = #killerChildren
+    local newSnapshot = {}
+
+    for _, inst in killerChildren do
         local id = InstId(inst)
         if id then
             local kroot = inst:FindFirstChild("HumanoidRootPart")
-            if IsFakeNoli(inst) then continue end
-            if kroot then UpdatePrediction(kroot) end
+            if IsFakeNoli(inst, killerCount) then continue end
+
+            if kroot then
+                local krootPos = kroot.Position
+                UpdatePrediction(kroot, krootPos)
+
+                newSnapshot[#newSnapshot + 1] = {
+                    Root = kroot,
+                    Position = krootPos,
+                    LookVector = kroot.LookVector,
+                    Name = inst.Name,
+                }
+            end
+
             local AbTime = tonumber(inst:GetAttribute("AbilityLastUsed") or 0)
             local Ab = tonumber(inst:GetAttribute("AbilitiesUsed") or 0)
             if not AbTime or not Ab then continue end
@@ -2277,8 +2557,7 @@ local function PreLocal()
             elseif KillerAbTime[id] ~= AbTime and KillerAb[id] == Ab then
                 KillerAb[id] = Ab
                 KillerAbTime[id] = AbTime
-                local LRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if kroot and LRoot then
+                if kroot and LocalRoot then
                     if active then
                         local config = KillerData[inst.Name] or KillerData.Default
                         local attackData = {
@@ -2300,14 +2579,16 @@ local function PreLocal()
                         return lroot.Position, kroot.Position, kroot.LookVector
                     end)
                     if s69 then
-                        local StabPredictedLocal = PredictPosition(lroot, .185)
-                        local StabPredictedKiller = PredictPosition(kroot, .185)
+                        local StabPredictedLocal = PredictPosition(lroot, lrootp, .185)
+                        local StabPredictedKiller = PredictPosition(kroot, krootp, .185)
                         task.spawn(BackstabHandler, lroot, kroot, StabPredictedLocal, StabPredictedKiller, krootlv)
                     end
                 end
             end
         end
     end
+
+    KillerSnapshot = newSnapshot
 
     if bAutoParry and isguest then
         local lchar = LocalPlayer.Character
@@ -2330,6 +2611,11 @@ local function PreData()
         ItemCache = {}
         PartCache = {}
         GeneratorCache = {}
+        ItemRenderCache = {}
+        ItemQueue = {}
+        ItemQueuePos = 1
+        ItemQueueBuilt = 0
+        FakeNoliCache = {}
         _G.ESPList = {}
         _G.ESPHealths = {}
         _G.ESPData = {}
@@ -2396,6 +2682,31 @@ local function PreData()
         end
     else
         bInUI = false
+    end
+
+    if ItemQueuePos > #ItemQueue and now - ItemQueueBuilt >= ITEM_CYCLE then
+        ItemQueueBuilt = now
+        ItemQueue = {}
+        for id in ItemCache do
+            ItemQueue[#ItemQueue + 1] = id
+        end
+        ItemQueuePos = 1
+    end
+
+    local refreshStart = os.clock()
+    while ItemQueuePos <= #ItemQueue do
+        local id = ItemQueue[ItemQueuePos]
+        ItemQueuePos += 1
+
+        local inst = ItemCache[id]
+        if inst then
+            local ok = pcall(BuildItemRenderInfo, id, inst, now)
+            if not ok then
+                RemoveCachedItem(id)
+            end
+        end
+
+        if os.clock() - refreshStart >= ITEM_BUDGET then break end
     end
 
     if now - LastItemScan < .1 then return end
@@ -2479,183 +2790,55 @@ local function PreData()
         end
     end
 
-    if not Ingame:FindFirstChild("Map") then return end
+    local MapFolder = Ingame:FindFirstChild("Map")
+    if MapFolder then
+        for _, inst in MapFolder:GetChildren() do
+            local id = InstId(inst)
+            if not id then continue end
+            if ItemCache[id] then continue end
 
-    for _, inst in Ingame.Map:GetChildren() do
-        local id = InstId(inst)
-        if not id then continue end
-        if ItemCache[id] then continue end
-
-        local Name = inst.Name
-        if Name == "Generator" and inst:FindFirstChild("Progress") then
-            local s, r = pcall(function()
-                return inst.Progress.Value
-            end)
-            if s and r ~= 100 then
+            local Name = inst.Name
+            if Name == "Generator" and inst:FindFirstChild("Progress") then
+                local s, r = pcall(function()
+                    return inst.Progress.Value
+                end)
+                if s and r ~= 100 then
+                    ItemCache[id] = inst
+                end
+            elseif Name == "FakeGenerator" or Name == "BloxyCola" or Name == "Medkit" then
                 ItemCache[id] = inst
             end
-        elseif Name == "FakeGenerator" or Name == "BloxyCola" or Name == "Medkit" then
-            ItemCache[id] = inst
         end
     end
+
 end
 
 local function Render()
     RenderActiveLines()
 
-    local lchar = LocalPlayer.Character
-    local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
-
-    --[[
-    if lroot then
-        for _, killer in Killers:GetChildren() do
-            local kroot = killer:FindFirstChild("HumanoidRootPart")
-            if kroot then
-                VisualizePredictions(lroot, kroot)
-            end
-        end
-    end
-    ]]
-
-    if bShowBlock and active and lchar then
-        local QueryHitbox = GetQueryHitbox(lchar)
-        if QueryHitbox then
-            for _, killer in Killers:GetChildren() do
-                local KRoot = killer:FindFirstChild("HumanoidRootPart")
-                if KRoot then
-                    RenderBlockShape(KRoot, QueryHitbox)
-                end
-            end
+    if bShowBlock and active and LocalHitboxSize then
+        for _, snapshot in KillerSnapshot do
+            RenderBlockShape(snapshot, LocalHitboxSize, LocalPos)
         end
     end
 
-    for id, inst in ItemCache do
-        local Name
-        local iParent = inst.Parent
-        if not inst or not iParent then
-            RemoveCachedItem(id)
-            continue
-        else
-            local s, r = pcall(ReadName, iParent)
-            if s and r == "Backpack" then
-                RemoveCachedItem(id)
-                continue
-            else
-                Name = inst.Name
+    for id, info in ItemRenderCache do
+        if info.Kind == "Generator" then
+            if bHighlight then Highlight(info.HighlightData, info.Color) end
+            if bTextName then DrawTextAt(info.Pos, info.Text, info.Color) end
+        elseif info.Kind == "Body" then
+            if bHighlight and info.HighlightParts then
+                pcall(h.HighlightGroup, info.HighlightParts, info.Color, .18, .7, .7, 1.25)
             end
-        end
-
-        if type(Name) ~= "string" then
-            RemoveCachedItem(id)
-            continue
-        end
-
-        if Name == "Generator" and (bInUI or bKill) then continue end
-
-        if Name == "Generator" then
-            local Main = inst:FindFirstChild("Main")
-            local Progress = inst:FindFirstChild("Progress")
-
-            if not Main or not Progress then
-                RemoveCachedItem(id)
-                continue
+            if info.TorsoPos and bTextName then
+                DrawTextAt(info.TorsoPos, info.Text, info.Color)
             end
-
-            local val = Progress.Value
-
-            if val == 100 then
-                RemoveCachedItem(id)
-                continue
-            end
-
-            if bHighlight then Highlight(Main, c.generator) end
-            if bTextName then DrawText(Main, GetGenPer(val), c.generator) end
-            continue
-        end
-
-        if Name == "Trail" then
-            if not bESP then continue end
-            local sz = inst.Size
-            if sz.x > 100 or sz.y > 100 or sz.z > 100 then continue end
-        elseif Name == "JaneGhost" then
-            continue
-        end
-
-        local colorKey = NameColors[Name]
-        local color = colorKey and c[colorKey] or c.yellow
-        local name = FullNames[Name]
-
-        for _, v in PNames do
-            if string.find(Name, v) then
-                local colorKey = NameColors[v]
-                color = colorKey and c[colorKey] or c.yellow
-                name = FullNames[v]
-            end
-        end
-
-        if bSurv and (table.find(SNames, Name) or string.find(Name, "TaphTripwire") or string.find(Name, "SubspaceTripmine")) then continue end
-        if bKill and (table.find(KNames, Name) or string.find(Name, "Puddle") or string.find(Name, "Shockwave")) then continue end
-        if string.find(Name, "Spray") then continue end
-
-        local Parts = PartCache[id]
-
-        if type(Parts) == "table" then
-            local refresh = false
-            if not PartCacheRefresh[id] or os.clock() - PartCacheRefresh[id] >= .25 then
-                refresh = true
-            else
-                for _, part in Parts do
-                    if not part or not part.Parent then
-                        refresh = true
-                        break
-                    end
-                end
-            end
-            if refresh then
-                Parts = GetPart(inst)
-                PartCache[id] = Parts
-                PartCacheRefresh[id] = os.clock()
-            end
-        else
-            local refresh = false
-            if not Parts or not Parts.Parent then
-                refresh = true
-            elseif inst:FindFirstChild("Humanoid") then
-                if not PartCacheRefresh[id] or os.clock() - PartCacheRefresh[id] >= .25 then
-                    refresh = true
-                end
-            end
-            if refresh then
-                Parts = GetPart(inst)
-                if Parts then
-                    PartCache[id] = Parts
-                    PartCacheRefresh[id] = os.clock()
-                end
-            end
-        end
-
-        if type(Parts) == "table" then
-            if bHighlight then
-                h.HighlightGroup(Parts, color, .18, .7, .7, 1.25)
-            end
-            for _, part in Parts do
-                if part.Name == "Torso" then
-                    if not name then
-                        name = "Minion"
-                    end
-                    if bTextName then
-                        DrawText(part, name, color)
-                    end
-                end
-            end
-        elseif Parts then
-            if name then
-                if bTextName then
-                    DrawText(Parts, name, color)
-                end
+        elseif info.Kind == "Part" then
+            if info.Text and info.Pos and bTextName then
+                DrawTextAt(info.Pos, info.Text, info.Color)
             end
             if bHighlight then
-                Highlight(Parts, color)
+                Highlight(info.HighlightData, info.Color)
             end
         end
     end
@@ -3066,9 +3249,26 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-RunService.PreLocal:Connect(PreLocal)
-RunService.PreData:Connect(PreData)
-RunService.Render:Connect(Render)
+local function Timed(name, fn)
+    return function(...)
+        local started = os.clock()
+        fn(...)
+        local took = os.clock() - started
+        if took >= .008 then
+            print(string.format("[Perf] %s took %.1fms", name, took * 1000))
+        end
+    end
+end
+
+if _G.ForsakenPerf then
+    RunService.PreLocal:Connect(Timed("PreLocal", PreLocal))
+    RunService.PreData:Connect(Timed("PreData", PreData))
+    RunService.Render:Connect(Timed("Render", Render))
+else
+    RunService.PreLocal:Connect(PreLocal)
+    RunService.PreData:Connect(PreData)
+    RunService.Render:Connect(Render)
+end
 
 clear_model_data()
 
