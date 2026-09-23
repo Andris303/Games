@@ -25,8 +25,6 @@ local Ingame = Map.Ingame
 local Killers = workspace.Players.Killers
 local Survivors = workspace.Players.Survivors
 local ItemCache = {}
-local lchar = LocalPlayer.Character
-local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
 local bSurv = false
 local bKill = false
 local bInUI = false
@@ -57,13 +55,9 @@ local AttackVisUntil = {}
 local ActiveLines = {}
 local PartCache = {}
 local PartCacheRefresh = {}
-local GeneratorCache = {}
 local ItemRenderCache = {}
-local ItemQueue = {}
-local ItemQueuePos = 1
-local ITEM_BUDGET = .002
-local ITEM_CYCLE = .1
-local ItemQueueBuilt = 0
+local ItemQueue = {List = {}, Pos = 1, Built = 0, Next = {}}
+local Timers = {Camera = 0, AutoGen = 0, Bind = 0, Viewport = 0, Players = 0}
 local KillerSnapshot = {}
 local LocalRoot
 local LocalPos
@@ -84,34 +78,24 @@ local LastAttackScan = 0
 local LastItemScan = 0
 local tempstunning = false
 
-local suc2, bool2 = pcall(function()
-    return LocalPlayer.Character.Name == "Guest1337"
-end)
+do
+    local ok, name = pcall(function()
+        return LocalPlayer.Character.Name
+    end)
 
-if suc2 and bool2 then
-    isguest = true
-    bt.Text = "AUTO BLOCK"
-    bt.Color = Color3.fromRGB(248,131,121)
-else
-    isguest = false
-    bt.Color = Color3.fromRGB(109,129,150)
-    bt.Text = "AUTO BLOCK (inactive)"
+    isguest = ok and name == "Guest1337"
+    bt.Text = isguest and "AUTO BLOCK" or "AUTO BLOCK (inactive)"
+    bt.Color = isguest and Color3.fromRGB(248,131,121) or Color3.fromRGB(109,129,150)
 end
 
 bt.Size = 30
 bt.Font = 0
-local length = bt.TextBounds.x
-local height = bt.TextBounds.y
-bt.Position = Vector2.new(viewport.x / 2 - length / 2, (viewport.y - viewport.y / 4) - height)
 bt.Outline = true
 bt.Visible = false
 
 bt2.Text = "BLOCK"
 bt2.Size = 35
 bt2.Font = 0
-local length2 = bt2.TextBounds.x
-local height2 = bt2.TextBounds.y
-bt2.Position = Vector2.new(viewport.x / 2 - length2 / 2, viewport.y / 2 - height2 / 2)
 bt2.Color = Color3.fromRGB(255,25,25)
 bt2.Outline = true
 bt2.Visible = false
@@ -119,21 +103,16 @@ bt2.Visible = false
 bt3.Text = "Real timer: 0:00"
 bt3.Size = 30
 bt3.Font = 0
-local length3 = bt3.TextBounds.x
-local height3 = bt3.TextBounds.y
-bt3.Position = Vector2.new(viewport.x / 2 - length3 / 2, viewport.y / 10 - height3 / 2)
 bt3.Color = Color3.fromRGB(214,181,136)
 bt3.Outline = true
 bt3.Visible = false
 
-local codetable = {
-    LeftShift = 0xa0,
-    RightShift = 0xa1,
-    LeftCtrl = 0xa2,
-    RightCtrl = 0xa3,
-    LeftAlt = 0xa4,
-    RightAlt = 0xa5,
-}
+local function LayoutLabels()
+    bt.Position = Vector2.new(viewport.x / 2 - bt.TextBounds.x / 2, (viewport.y - viewport.y / 4) - bt.TextBounds.y)
+    bt3.Position = Vector2.new(viewport.x / 2 - bt3.TextBounds.x / 2, viewport.y / 10 - bt3.TextBounds.y / 2)
+end
+
+LayoutLabels()
 
 local function GetBinds()
     local ab1 = LocalPlayer.PlayerData.Settings.Keybinds.AltAbility1.Value
@@ -143,32 +122,49 @@ local function GetBinds()
     return ab1, ab3, sprint
 end
 
-local function GetKeycode(str)
-    if #str == 1 then
-        return string.byte(string.upper(str))
-    elseif codetable[str] then
-        return codetable[str]
+local GetKeycode
+
+do
+    local modifierCodes = {
+        LeftShift = 0xa0,
+        RightShift = 0xa1,
+        LeftCtrl = 0xa2,
+        RightCtrl = 0xa3,
+        LeftAlt = 0xa4,
+        RightAlt = 0xa5,
+    }
+
+    GetKeycode = function(str)
+        if #str == 1 then
+            return string.byte(string.upper(str))
+        end
+
+        return modifierCodes[str]
     end
 end
 
 local KEYBIND = "V"
-local s, blockkeystr, parrykeystr, sprintkeystr = pcall(GetBinds)
 local BLOCK_KEY, PARRY_KEY, SPRINT_KEY
-if s then
-    BLOCK_KEY = GetKeycode(blockkeystr)
-    PARRY_KEY = GetKeycode(parrykeystr)
-    SPRINT_KEY = GetKeycode(sprintkeystr)
+
+do
+    local s, blockkeystr, parrykeystr, sprintkeystr = pcall(GetBinds)
+    if s then
+        BLOCK_KEY = GetKeycode(blockkeystr)
+        PARRY_KEY = GetKeycode(parrykeystr)
+        SPRINT_KEY = GetKeycode(sprintkeystr)
+    end
 end
 local PARRY_DELAY = 0
 local START_WIDTH = 7.5
 
 local RejuvSuppressUntil = {}
-local REJUV_LINGER = 1.4
-local EntSounds = {"rbxassetid://135854269153231", "rbxassetid://105934041806374", "rbxassetid://130247421279831", "rbxassetid://107039569833867", "rbxassetid://100150551345482", "rbxassetid://91488514366191", "rbxassetid://101739035738613", "rbxassetid://75675413747752", "rbxassetid://78992685630984", "rbxassetid://130994756001980", "rbxassetid://102799653891975", "rbxassetid://106588300253785", "rbxassetid://75814121589418"}
-local MassInfSounds = {"rbxassetid://70845653728841", "rbxassetid://73504812754586", "rbxassetid://97061990471922", "rbxassetid://85647688284850", "rbxassetid://83349035240699", "rbxassetid://90556583105741"}
-local RejuvSounds = {"rbxassetid://109351069746096", "rbxassetid://96908026446030", "rbxassetid://120877949577353", "rbxassetid://108829275072240", "rbxassetid://134770542596997", "rbxassetid://99174224422295", "rbxassetid://135436619867662", "rbxassetid://85069492524977", "rbxassetid://127962518201254", "rbxassetid://90613634629510"}
-local CorruptSounds = {"rbxassetid://75210765058860", "rbxassetid://87883890694872", "rbxassetid://109525294317144", "rbxassetid://119285029803606", "rbxassetid://100163947838165", "rbxassetid://74901476984677", "rbxassetid://99582226869588", "rbxassetid://96733419994623", "rbxassetid://137444402376234", "rbxassetid://108685516047210", "rbxassetid://129466330433467"}
-local MartyrSounds = {"rbxassetid://124122529017069"}
+local Sounds = {
+    Ent = {"rbxassetid://135854269153231", "rbxassetid://105934041806374", "rbxassetid://130247421279831", "rbxassetid://107039569833867", "rbxassetid://100150551345482", "rbxassetid://91488514366191", "rbxassetid://101739035738613", "rbxassetid://75675413747752", "rbxassetid://78992685630984", "rbxassetid://130994756001980", "rbxassetid://102799653891975", "rbxassetid://106588300253785", "rbxassetid://75814121589418"},
+    MassInf = {"rbxassetid://70845653728841", "rbxassetid://73504812754586", "rbxassetid://97061990471922", "rbxassetid://85647688284850", "rbxassetid://83349035240699", "rbxassetid://90556583105741"},
+    Rejuv = {"rbxassetid://109351069746096", "rbxassetid://96908026446030", "rbxassetid://120877949577353", "rbxassetid://108829275072240", "rbxassetid://134770542596997", "rbxassetid://99174224422295", "rbxassetid://135436619867662", "rbxassetid://85069492524977", "rbxassetid://127962518201254", "rbxassetid://90613634629510"},
+    Corrupt = {"rbxassetid://75210765058860", "rbxassetid://87883890694872", "rbxassetid://109525294317144", "rbxassetid://119285029803606", "rbxassetid://100163947838165", "rbxassetid://74901476984677", "rbxassetid://99582226869588", "rbxassetid://96733419994623", "rbxassetid://137444402376234", "rbxassetid://108685516047210", "rbxassetid://129466330433467"},
+    Martyr = {"rbxassetid://124122529017069"},
+}
 
 local SixerRig = {
     RigType = "R15",
@@ -271,9 +267,9 @@ local c = {
     linesec = Color3.fromRGB(241,195,56),
 }
 
-local Names = {"shockwave", "Shockwave", "Swords", "SpikeCollision", "HumanoidRootProjectile", "Voidstar", "Bats", "Shadow", "VineModel", "GroundBulbModel", "GroundBulb", "BuildermanDispenser", "BuildermanSentry", "007n7", "Pizza", "GraffitiCL", "CrystalProjectile", "Medkit", "BloxyCola", "MisterBeast", "Noli"}
-local SNames = {"BuildermanDispenser", "BuildermanSentry", "Pizza", "GraffitiCL", "CrystalProjectile", "TaphTripwire", "SubspaceTripmine"}
-local KNames = {"SpikeCollision", "Shadow", "VineModel", "GroundBulbModel", "GroundBulb", "Medkit", "BloxyCola", "MisterBeast", "Noli", "Puddle"}
+local Names = {shockwave = true, Shockwave = true, Swords = true, SpikeCollision = true, HumanoidRootProjectile = true, Voidstar = true, Bats = true, Shadow = true, VineModel = true, GroundBulbModel = true, GroundBulb = true, BuildermanDispenser = true, BuildermanSentry = true, ["007n7"] = true, Pizza = true, GraffitiCL = true, CrystalProjectile = true, Medkit = true, BloxyCola = true, MisterBeast = true, Noli = true}
+local SNames = {BuildermanDispenser = true, BuildermanSentry = true, Pizza = true, GraffitiCL = true, CrystalProjectile = true, TaphTripwire = true, SubspaceTripmine = true}
+local KNames = {SpikeCollision = true, Shadow = true, VineModel = true, GroundBulbModel = true, GroundBulb = true, Medkit = true, BloxyCola = true, MisterBeast = true, Noli = true, Puddle = true}
 local PNames = {"TaphTripwire", "SubspaceTripmine", "Puddle", "Shockwave"}
 
 local NameColors = {
@@ -336,35 +332,10 @@ local function InstId(inst)
     return tostring(tonumber(inst.Data))
 end
 
-local function AddSpaces(string)
-	local result = ""
-
-	for i = 1, #string do
-		local char = string:sub(i, i)
-		local prev = string:sub(i - 1, i - 1)
-		local nextChar = string:sub(i + 1, i + 1)
-		local isUpper = char:match("%u")
-		local prevIsUpper = prev:match("%u")
-		local prevIsLower = prev:match("%l")
-		local nextIsLower = nextChar:match("%l")
-		local shouldAddSpace = false
-
-		if isUpper and i > 1 then
-			if prevIsLower then
-				shouldAddSpace = true
-			elseif prevIsUpper and nextIsLower then
-				shouldAddSpace = true
-			end
-		end
-
-		if shouldAddSpace then
-			result ..= " "
-		end
-
-		result ..= char
-	end
-
-	return result
+local function AddSpaces(text)
+    text = text:gsub("(%l)(%u)", "%1 %2")
+    text = text:gsub("(%u)(%u%l)", "%1 %2")
+    return text
 end
 
 local function GetGenPer(num)
@@ -411,8 +382,19 @@ local function RemoveCachedItem(id)
     ItemCache[id] = nil
     PartCache[id] = nil
     PartCacheRefresh[id] = nil
-    GeneratorCache[id] = nil
     ItemRenderCache[id] = nil
+    ItemQueue.Next[id] = nil
+end
+
+local function ClearItems()
+    ItemCache = {}
+    PartCache = {}
+    PartCacheRefresh = {}
+    ItemRenderCache = {}
+    ItemQueue.List = {}
+    ItemQueue.Pos = 1
+    ItemQueue.Built = 0
+    ItemQueue.Next = {}
 end
 
 local function ReadPosition(inst)
@@ -429,7 +411,47 @@ local function Highlight(part, color)
     pcall(h.Highlight, part, color, .18, .7, .7)
 end
 
+local NameInfo = {Cache = {}, Count = 0}
+
+local function GetNameInfo(Name)
+    local info = NameInfo.Cache[Name]
+    if info then return info end
+
+    local colorKey = NameColors[Name]
+    local display = FullNames[Name]
+    local pattern = false
+
+    for _, p in PNames do
+        if string.find(Name, p) then
+            colorKey = NameColors[p]
+            display = FullNames[p]
+            pattern = true
+        end
+    end
+
+    info = {
+        ColorKey = colorKey,
+        Display = display,
+        IsItem = Names[Name] == true or pattern,
+        IsTrailFolder = string.find(Name, "JohnDoeTrail") ~= nil or string.find(Name, "Shadows") ~= nil,
+        Hidden = Name == "JaneGhost" or string.find(Name, "Spray") ~= nil,
+        SurvHidden = SNames[Name] == true or string.find(Name, "TaphTripwire") ~= nil or string.find(Name, "SubspaceTripmine") ~= nil,
+        KillHidden = KNames[Name] == true or string.find(Name, "Puddle") ~= nil or string.find(Name, "Shockwave") ~= nil,
+    }
+
+    if NameInfo.Count >= 400 then
+        NameInfo.Cache = {}
+        NameInfo.Count = 0
+    end
+    NameInfo.Cache[Name] = info
+    NameInfo.Count += 1
+
+    return info
+end
+
 local function BuildItemRenderInfo(id, inst, now)
+    ItemQueue.Next[id] = now + .25
+
     local iParent = inst.Parent
     if not iParent then
         RemoveCachedItem(id)
@@ -467,8 +489,7 @@ local function BuildItemRenderInfo(id, inst, now)
             return
         end
 
-        local okPos = pcall(ReadPosition, Main)
-        if not okPos then
+        if not pcall(ReadPosition, Main) then
             ItemRenderCache[id] = nil
             return
         end
@@ -483,45 +504,20 @@ local function BuildItemRenderInfo(id, inst, now)
     end
 
     if Name == "Trail" then
-        if not bESP then
-            ItemRenderCache[id] = nil
-            return
-        end
-
         local okSize, sz = pcall(function() return inst.Size end)
-        if not okSize or sz.x > 100 or sz.y > 100 or sz.z > 100 then
+        if not bESP or not okSize or sz.x > 100 or sz.y > 100 or sz.z > 100 then
             ItemRenderCache[id] = nil
             return
         end
-    elseif Name == "JaneGhost" then
+    end
+
+    local info = GetNameInfo(Name)
+    if info.Hidden or (bSurv and info.SurvHidden) or (bKill and info.KillHidden) then
         ItemRenderCache[id] = nil
         return
     end
 
-    local colorKey = NameColors[Name]
-    local color = colorKey and c[colorKey] or c.yellow
-    local name = FullNames[Name]
-
-    for _, v in PNames do
-        if string.find(Name, v) then
-            local pColorKey = NameColors[v]
-            color = pColorKey and c[pColorKey] or c.yellow
-            name = FullNames[v]
-        end
-    end
-
-    if bSurv and (table.find(SNames, Name) or string.find(Name, "TaphTripwire") or string.find(Name, "SubspaceTripmine")) then
-        ItemRenderCache[id] = nil
-        return
-    end
-    if bKill and (table.find(KNames, Name) or string.find(Name, "Puddle") or string.find(Name, "Shockwave")) then
-        ItemRenderCache[id] = nil
-        return
-    end
-    if string.find(Name, "Spray") then
-        ItemRenderCache[id] = nil
-        return
-    end
+    local color = info.ColorKey and c[info.ColorKey] or c.yellow
 
     local Parts = PartCache[id]
     local refresh = false
@@ -537,14 +533,10 @@ local function BuildItemRenderInfo(id, inst, now)
                 end
             end
         end
-    else
-        if not Parts or not Parts.Parent then
-            refresh = true
-        elseif inst:FindFirstChild("Humanoid") then
-            if not PartCacheRefresh[id] or now - PartCacheRefresh[id] >= .25 then
-                refresh = true
-            end
-        end
+    elseif not Parts or not Parts.Parent then
+        refresh = true
+    elseif inst:FindFirstChild("Humanoid") and (not PartCacheRefresh[id] or now - PartCacheRefresh[id] >= .25) then
+        refresh = true
     end
 
     if refresh then
@@ -573,14 +565,14 @@ local function BuildItemRenderInfo(id, inst, now)
             Parts = Parts,
             Torso = torsoPart,
             Color = color,
-            Text = name or "Minion",
+            Text = info.Display or "Minion",
         }
     elseif Parts then
         ItemRenderCache[id] = {
             Kind = "Part",
             Part = Parts,
             Color = color,
-            Text = name,
+            Text = info.Display,
         }
     else
         ItemRenderCache[id] = nil
@@ -916,12 +908,6 @@ PredictKillerPosition = function(killerKey, killerPos, localPos, multiplier)
     return PredictPosition(killerKey, killerPos, prediction)
 end
 
-local function PredictPosition2(killerKey, killerPos, localPos, multiplier)
-    return PredictKillerPosition(killerKey, killerPos, localPos, multiplier)
-end
-
-
-
 local function IsFakeNoliUnsafe(inst, killerCount)
     if inst.Name ~= "Noli" or not inst.Parent then return false end
 
@@ -937,7 +923,6 @@ local function IsFakeNoliUnsafe(inst, killerCount)
 end
 
 local FakeNoliCache = {}
-local FAKE_NOLI_INTERVAL = .3
 
 local function IsFakeNoli(inst, killerCount)
     if inst.Name ~= "Noli" then return false end
@@ -950,7 +935,7 @@ local function IsFakeNoli(inst, killerCount)
 
     local now = os.clock()
     local cached = FakeNoliCache[id]
-    if cached and now - cached.Time < FAKE_NOLI_INTERVAL then
+    if cached and now - cached.Time < .3 then
         return cached.Value
     end
 
@@ -988,7 +973,7 @@ local function Parry(lchar)
         task.wait(.25)
 
         local lpos, kpos = lroot.Position, kroot.Position
-        local predictedPos = PredictPosition2(kroot, kpos, lpos, 2.25)
+        local predictedPos = PredictKillerPosition(kroot, kpos, lpos, 2.25)
         lroot.CFrame = CFrame.lookAt(lpos, predictedPos)
     end
 end
@@ -1250,7 +1235,7 @@ local KillerAbilities = {
             Check = function(char, root, data)
                 if data then
                     if data.Finished then
-                        return HasSound(root, EntSounds)
+                        return HasSound(root, Sounds.Ent)
                     end
                     if data.TrackedObject then
                         return true
@@ -1259,7 +1244,7 @@ local KillerAbilities = {
                         return true
                     end
                 end
-                return HasSound(root, EntSounds)
+                return HasSound(root, Sounds.Ent)
             end,
             Start = function(data)
                 data.KnownObjects = SnapshotObjects()
@@ -1287,14 +1272,14 @@ local KillerAbilities = {
             Name = "Mass Infection",
             Length = 630,
             Check = function(char, root, data)
-                if HasSound(root, MartyrSounds) then
-                    RejuvSuppressUntil[char] = os.clock() + REJUV_LINGER
+                if HasSound(root, Sounds.Martyr) then
+                    RejuvSuppressUntil[char] = os.clock() + 1.4
                     return false
                 end
                 if os.clock() < (RejuvSuppressUntil[char] or 0) then
                     return false
                 end
-                local active = HasSound(root, MassInfSounds) and not HasSound(root, RejuvSounds)
+                local active = HasSound(root, Sounds.MassInf) and not HasSound(root, Sounds.Rejuv)
                 if data then
                     if data.Finished then
                         return active
@@ -1338,7 +1323,7 @@ local KillerAbilities = {
             Duration = 3.5,
             TriggerOnce = true,
             Check = function(char, root)
-                if HasSound(root, CorruptSounds) then
+                if HasSound(root, Sounds.Corrupt) then
                     return true
                 end
             end,
@@ -1552,23 +1537,40 @@ local SurvivorAbilities = {
     },
 }
 
+local function ReadRootPose(root)
+    return root.Position, root.LookVector, root.RightVector, root.UpVector
+end
+
+local function NewLineData(ability, char, pos, lv, rv, uv)
+    return {
+        Ability = ability,
+        Character = char,
+        IsLocal = char == LocalPlayer.Character,
+        Name = ability.Name,
+        Length = ability.Length,
+        Duration = ability.Duration,
+        Origin = pos,
+        Rootlv = lv,
+        Rootrv = rv,
+        Rootuv = uv,
+        Started = os.clock(),
+    }
+end
+
 local function UpdateAbilityFolder(folder, abilitiesTable)
     for _, char in folder:GetChildren() do
         local root = char:FindFirstChild("HumanoidRootPart")
         local abilities = abilitiesTable[char.Name]
 
         if not root or not abilities then continue end
-        local lines = ActiveLines[root]
 
+        local lines = ActiveLines[root]
         if not lines then
             lines = {}
             ActiveLines[root] = lines
         end
 
-        local rootPos = root.Position
-        local rootlv = root.LookVector
-        local rootrv = root.RightVector
-        local rootuv = root.UpVector
+        local pos, lv, rv, uv
 
         for _, ability in abilities do
             local data
@@ -1587,19 +1589,8 @@ local function UpdateAbilityFolder(folder, abilitiesTable)
                 local wasActive = ability.ActiveStates[char] == true
 
                 if checked and not wasActive and not data then
-                    data = {
-                        Ability = ability,
-                        Character = char,
-                        IsLocal = char == LocalPlayer.Character,
-                        Name = ability.Name,
-                        Length = ability.Length,
-                        Duration = ability.Duration,
-                        Origin = rootPos,
-                        Rootlv = rootlv,
-                        Rootrv = rootrv,
-                        Rootuv = rootuv,
-                        Started = os.clock(),
-                    }
+                    if not pos then pos, lv, rv, uv = ReadRootPose(root) end
+                    data = NewLineData(ability, char, pos, lv, rv, uv)
 
                     if ability.Start then
                         ability.Start(data, char)
@@ -1620,40 +1611,30 @@ local function UpdateAbilityFolder(folder, abilitiesTable)
                     end
                 end
             elseif checked and not data then
-                data = {
-                    Ability = ability,
-                    Character = char,
-                    IsLocal = char == LocalPlayer.Character,
-                    Name = ability.Name,
-                    Length = ability.Length,
-                    Duration = ability.Duration,
-                    Origin = rootPos,
-                    Rootlv = rootlv,
-                    Rootrv = rootrv,
-                    Rootuv = rootuv,
-                    Started = os.clock(),
-                }
+                if not pos then pos, lv, rv, uv = ReadRootPose(root) end
+                data = NewLineData(ability, char, pos, lv, rv, uv)
 
                 if ability.Start then
                     ability.Start(data, char)
                 end
+
                 lines[#lines + 1] = data
             end
 
             if data and not data.LineDone then
-                data.CurrentPosition = rootPos
-                data.CurrentLookVector = rootlv
-                data.CurrentRightVector = rootrv
-                data.CurrentUpVector = rootuv
+                if not pos then pos, lv, rv, uv = ReadRootPose(root) end
+                data.CurrentPosition = pos
+                data.CurrentLookVector = lv
+                data.CurrentRightVector = rv
+                data.CurrentUpVector = uv
 
                 if ability.Update then
                     ability.Update(char, root, data)
+                    checked = ability.Check(char, root, data)
                 end
 
-                if not data.Duration then
-                    if not ability.Check(char, root, data) then
-                        data.LineDone = true
-                    end
+                if not data.Duration and not checked then
+                    data.LineDone = true
                 end
             end
         end
@@ -1737,7 +1718,7 @@ local function ChanceAim(f, lroot, kroot)
             task.wait(.1)
 
             local lpos, kpos = lroot.Position, kroot.Position
-            lroot.CFrame = CFrame.lookAt(lpos, PredictPosition2(kroot, kpos, lpos))
+            lroot.CFrame = CFrame.lookAt(lpos, PredictKillerPosition(kroot, kpos, lpos))
         end
     elseif tempstunning then
         tempstunning = false
@@ -2270,93 +2251,83 @@ local function BackstabHandler(lroot, kroot, lrootp, krootp, krootlv)
     end
 end
 
-local PerfSeg = function(name) end
-local NextCameraSync = 0
-local NextAutoGenScan = 0
-local NextBindTry = 0
-local NextViewportCheck = 0
 
 local function PreLocal()
-    local nowPL = os.clock()
+    local now = os.clock()
 
-    if nowPL >= NextCameraSync then
-        NextCameraSync = nowPL + .5
+    if now >= Timers.Camera then
+        Timers.Camera = now + .5
         local cam = workspace.CurrentCamera
         if cam then
             Camera = cam
             if h.SetCamera then h.SetCamera(cam) end
         end
     end
-    PerfSeg("PL.camera")
 
-    if bAutoGen and bInUI and nowPL >= NextAutoGenScan then
-        if not TempAutoGen then
-            NextAutoGenScan = nowPL + .2
-            local s, grid = pcall(function()
-                return LocalPlayer.PlayerGui.PuzzleUI.Container.GridHolder.Grid
-            end)
-            if s and grid then
-                local glist = grid:GetChildren()
-                local returntable = {}
-                for _, inst in glist do
-                    local kirkle = inst:FindFirstChild("Circle")
-                    if kirkle then
-                        local index = kirkle:FindFirstChild("Number")
-                        if index then
-                            local inum = memory.readstring(index, offset)
-                            local split = inst.Name:split("-")
-                            local xv = tonumber(split[1])
-                            local yv = tonumber(split[2])
+    if bAutoGen and bInUI and not TempAutoGen and now >= Timers.AutoGen then
+        Timers.AutoGen = now + .2
 
-                            returntable[inum] = returntable[inum] or {}
-                            table.insert(returntable[inum], {
-                                x = xv,
-                                y = yv,
-                            })
-                        else
-                            print("no number son")
-                            TempAutoGen = false
-                            break
-                        end
+        local s, grid = pcall(function()
+            return LocalPlayer.PlayerGui.PuzzleUI.Container.GridHolder.Grid
+        end)
+
+        if s and grid then
+            local returntable = {}
+
+            for _, inst in grid:GetChildren() do
+                local kirkle = inst:FindFirstChild("Circle")
+                if kirkle then
+                    local index = kirkle:FindFirstChild("Number")
+                    if index then
+                        local inum = memory.readstring(index, offset)
+                        local split = inst.Name:split("-")
+
+                        returntable[inum] = returntable[inum] or {}
+                        table.insert(returntable[inum], {
+                            x = tonumber(split[1]),
+                            y = tonumber(split[2]),
+                        })
+                    else
+                        print("no number son")
+                        break
                     end
                 end
-
-                local signatureParts = {}
-                for id, points in returntable do
-                    for _, point in points do
-                        signatureParts[#signatureParts + 1] =
-                            tostring(id) .. ":" .. tostring(point.x) .. "," .. tostring(point.y)
-                    end
-                end
-                table.sort(signatureParts)
-                local signature = table.concat(signatureParts, "|")
-                if signature ~= LastPuzzleSignature then
-                    local solved = SolveWires(returntable, 7)
-                
-                    if solved and grid then
-                        LastPuzzleSignature = signature
-                        TempAutoGen = true
-                        task.spawn(Solver, grid, solved)
-                    end
-                end
-            else
-                print("no grid son")
             end
+
+            local signatureParts = {}
+            for id, points in returntable do
+                for _, point in points do
+                    signatureParts[#signatureParts + 1] = tostring(id) .. ":" .. tostring(point.x) .. "," .. tostring(point.y)
+                end
+            end
+            table.sort(signatureParts)
+            local signature = table.concat(signatureParts, "|")
+
+            if signature ~= LastPuzzleSignature then
+                local solved = SolveWires(returntable, 7)
+
+                if solved then
+                    LastPuzzleSignature = signature
+                    TempAutoGen = true
+                    task.spawn(Solver, grid, solved)
+                end
+            end
+        else
+            print("no grid son")
         end
     end
+
     if not bInUI then
         TempAutoGen = false
         LastPuzzleSignature = nil
     end
-    PerfSeg("PL.autogen")
 
-    lchar = LocalPlayer.Character
-    lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
+    local lchar = LocalPlayer.Character
 
-    if (not BLOCK_KEY or not PARRY_KEY or not SPRINT_KEY) and nowPL >= NextBindTry then
-        NextBindTry = nowPL + 2
+    if (not BLOCK_KEY or not PARRY_KEY or not SPRINT_KEY) and now >= Timers.Bind then
+        Timers.Bind = now + 2
+
         local s, e1, e2, e3 = pcall(GetBinds)
-
         if s then
             BLOCK_KEY = GetKeycode(e1)
             PARRY_KEY = GetKeycode(e2)
@@ -2367,64 +2338,33 @@ local function PreLocal()
     if bStopStam then
         local s, stam = pcall(GetStam)
 
-        if s and stam then
-            local stamina = stam:split("/")[1]
-
-            if stamina == "1" then
-                keyrelease(SPRINT_KEY)
-            end
+        if s and stam and stam:split("/")[1] == "1" then
+            keyrelease(SPRINT_KEY)
         end
     end
 
-    PerfSeg("PL.binds")
+    local okName, lname = pcall(ReadName, lchar)
+    if not okName then lname = nil end
 
-    local tempisguest
+    local tempisguest = lname == "Guest1337" or lname == "007n7"
 
-    local suc, bool, lchar = pcall(function()
-        return LocalPlayer.Character.Name, LocalPlayer.Character
-    end)
+    if bChanceAimbot and lname == "Chance" then
+        local f = lchar:FindFirstChild("SpeedMultipliers")
+        local chanceRoot = lchar:FindFirstChild("HumanoidRootPart")
+        local targetk = Killers:FindFirstChildOfClass("Model")
+        local kroot = targetk and targetk:FindFirstChild("HumanoidRootPart")
 
-    if suc and (bool == "Guest1337" or bool == "007n7") then
-        tempisguest = true
-    else
-        tempisguest = false
-    end
-
-    if bChanceAimbot and suc and bool and lchar then
-        if bool == "Chance" then
-            local f = lchar:FindFirstChild("SpeedMultipliers")
-            local lroot = lchar:FindFirstChild("HumanoidRootPart")
-            local targetk = Killers:FindFirstChildOfClass("Model")
-            if f and lroot and targetk then
-                local kroot = targetk:FindFirstChild("HumanoidRootPart")
-                if kroot then
-                    task.spawn(ChanceAim, f, lroot, kroot)
-                end
-            end
+        if f and chanceRoot and kroot then
+            task.spawn(ChanceAim, f, chanceRoot, kroot)
         end
     end
-
-    PerfSeg("PL.guest")
 
     if tempisguest ~= isguest then
         isguest = tempisguest
-
-        if isguest then
-            bt.Color = Color3.fromRGB(248,131,121)
-            bt.Text = "AUTO BLOCK"
-            length = bt.TextBounds.x
-            height = bt.TextBounds.y
-            bt.Position = Vector2.new(viewport.x / 2 - length / 2, (viewport.y - viewport.y / 4) - height)
-        else
-            bt.Color = Color3.fromRGB(109,129,150)
-            bt.Text = "AUTO BLOCK (inactive)"
-            length = bt.TextBounds.x
-            height = bt.TextBounds.y
-            bt.Position = Vector2.new(viewport.x / 2 - length / 2, (viewport.y - viewport.y / 4) - height)
-        end
+        bt.Text = isguest and "AUTO BLOCK" or "AUTO BLOCK (inactive)"
+        bt.Color = isguest and Color3.fromRGB(248,131,121) or Color3.fromRGB(109,129,150)
+        LayoutLabels()
     end
-
-    PerfSeg("PL.botlabel")
 
     if bShowTimer then
         local ctimer = game.ReplicatedStorage.RoundTimer:GetAttribute("TimeLeft")
@@ -2440,45 +2380,25 @@ local function PreLocal()
         end)
 
         if s67 and atime and texttimer and texttimer ~= atime then
-            if not TimerMismatchStart then
-                TimerMismatchStart = os.clock()
-            end
-
-            bt3.Visible = os.clock() - TimerMismatchStart >= .4
+            Timers.Mismatch = Timers.Mismatch or now
+            bt3.Visible = now - Timers.Mismatch >= .4
         else
-            TimerMismatchStart = nil
+            Timers.Mismatch = nil
             bt3.Visible = false
         end
     else
-        TimerMismatchStart = nil
+        Timers.Mismatch = nil
         bt3.Visible = false
     end
 
-    PerfSeg("PL.timer")
+    if now >= Timers.Viewport then
+        Timers.Viewport = now + .5
 
-    local viewportChanged = false
-    if nowPL >= NextViewportCheck then
-        NextViewportCheck = nowPL + .5
-        viewportChanged = Camera.ViewportSize ~= viewport
+        if Camera.ViewportSize ~= viewport then
+            viewport = Camera.ViewportSize
+            LayoutLabels()
+        end
     end
-
-    if viewportChanged then
-        viewport = Camera.ViewportSize
-
-        length = bt.TextBounds.x
-        height = bt.TextBounds.y
-        bt.Position = Vector2.new(viewport.x / 2 - length / 2, (viewport.y - viewport.y / 4) - height)
-
-        length2 = bt2.TextBounds.x
-        height2 = bt2.TextBounds.y
-        bt2.Position = Vector2.new(viewport.x / 2 - length2 / 2, (viewport.y - viewport.y / 4) - height2)
-
-        length3 = bt3.TextBounds.x
-        height3 = bt3.TextBounds.y
-        bt3.Position = Vector2.new(viewport.x / 2 - length3 / 2, (viewport.y - viewport.y / 4) - height3)
-    end
-
-    PerfSeg("PL.viewport")
 
     local pressed = false
 
@@ -2507,36 +2427,37 @@ local function PreLocal()
     end
 
     if bt2.Visible then
-        local center = Vector2.new(viewport.x / 2 - length2 / 2, viewport.y / 2 - height2 / 2)
-        bt2.Position = Vector2.new(center.x + math.random(-5, 5), center.y + math.random(-5, 5))
+        local bounds = bt2.TextBounds
+        bt2.Position = Vector2.new(viewport.x / 2 - bounds.x / 2 + math.random(-5, 5), viewport.y / 2 - bounds.y / 2 + math.random(-5, 5))
     end
 
-    PerfSeg("PL.keys")
-
-    local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
-    LocalRoot = lroot
-    LocalPos = lroot and lroot.Position
-
-    if lroot and LocalPos then UpdatePrediction(lroot, LocalPos) end
-
-    if bShowBlock and lchar then
-        local hitbox = GetQueryHitbox(lchar)
-        LocalHitboxSize = hitbox and hitbox.Size
-    else
-        LocalHitboxSize = nil
-    end
-
-    PerfSeg("PL.local")
-
-    local killerChildren = Killers:GetChildren()
-    local killerCount = #killerChildren
     local newSnapshot = {}
+    local lroot
 
-    for _, inst in killerChildren do
-        local id = InstId(inst)
-        if id then
-            local kroot = inst:FindFirstChild("HumanoidRootPart")
+    if active or bShowBlock or bAutoStab or bAutoParry or bChanceAimbot then
+        lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
+        LocalRoot = lroot
+        LocalPos = lroot and lroot.Position
+
+        if lroot and LocalPos then UpdatePrediction(lroot, LocalPos) end
+
+        if bShowBlock and lchar then
+            local hitbox = GetQueryHitbox(lchar)
+            LocalHitboxSize = hitbox and hitbox.Size
+        else
+            LocalHitboxSize = nil
+        end
+
+        local killerChildren = Killers:GetChildren()
+        local killerCount = #killerChildren
+
+        for _, inst in killerChildren do
+            local id = InstId(inst)
+            if not id then continue end
+
             if IsFakeNoli(inst, killerCount) then continue end
+
+            local kroot = inst:FindFirstChild("HumanoidRootPart")
 
             if kroot then
                 local krootPos = kroot.Position
@@ -2550,59 +2471,61 @@ local function PreLocal()
                 }
             end
 
-            local AbTime = tonumber(inst:GetAttribute("AbilityLastUsed") or 0)
-            if not AbTime then continue end
+            if active then
+                local AbTime = tonumber(inst:GetAttribute("AbilityLastUsed") or 0)
 
-            if not KillerAbTime[id] or not KillerAb[id] then
-                local Ab = tonumber(inst:GetAttribute("AbilitiesUsed") or 0)
-                if not Ab then continue end
-                KillerAbTime[id] = AbTime
-                KillerAb[id] = Ab
-            elseif KillerAbTime[id] ~= AbTime then
-                local Ab = tonumber(inst:GetAttribute("AbilitiesUsed") or 0)
-                if not Ab then continue end
+                if AbTime then
+                    if not KillerAbTime[id] or not KillerAb[id] then
+                        local Ab = tonumber(inst:GetAttribute("AbilitiesUsed") or 0)
+                        if Ab then
+                            KillerAbTime[id] = AbTime
+                            KillerAb[id] = Ab
+                        end
+                    elseif KillerAbTime[id] ~= AbTime then
+                        local Ab = tonumber(inst:GetAttribute("AbilitiesUsed") or 0)
 
-                if KillerAb[id] == Ab then
-                    KillerAb[id] = Ab
-                    KillerAbTime[id] = AbTime
-                    if kroot and LocalRoot then
-                        if active then
-                            local config = KillerData[inst.Name] or KillerData.Default
-                            local attackData = {
-                                Config = config,
-                            }
-                            ActiveAttacks[kroot] = attackData
-                            AttackVisUntil[kroot] = os.clock() + (config.WINDUP or 0) + (config.LINGER or 0)
-                            task.spawn(BlockChecker, kroot, inst, attackData)
+                        if Ab and KillerAb[id] == Ab then
+                            KillerAb[id] = Ab
+                            KillerAbTime[id] = AbTime
+
+                            if kroot and LocalRoot then
+                                local config = KillerData[inst.Name] or KillerData.Default
+                                local attackData = {Config = config}
+                                ActiveAttacks[kroot] = attackData
+                                AttackVisUntil[kroot] = os.clock() + (config.WINDUP or 0) + (config.LINGER or 0)
+                                task.spawn(BlockChecker, kroot, inst, attackData)
+                            end
+                        elseif Ab and KillerAb[id] < Ab then
+                            KillerAb[id] = Ab
+                            KillerAbTime[id] = AbTime
                         end
                     end
-                elseif tonumber(KillerAb[id]) < tonumber(Ab) then
-                    KillerAb[id] = Ab
-                    KillerAbTime[id] = AbTime
                 end
             end
 
-            if bAutoStab and bool == "TwoTime" and lchar then
-                if lroot and kroot and not IsKillerAbilityActive(kroot, AutoStabBlacklist) and not kroot:FindFirstChild("InvincibleFX") then
-                    local s69, lrootp, krootp, krootlv = pcall(function()
-                        return lroot.Position, kroot.Position, kroot.LookVector
-                    end)
-                    if s69 then
-                        local StabPredictedLocal = PredictPosition(lroot, lrootp, .185)
-                        local StabPredictedKiller = PredictPosition(kroot, krootp, .185)
-                        task.spawn(BackstabHandler, lroot, kroot, StabPredictedLocal, StabPredictedKiller, krootlv)
-                    end
+            if bAutoStab and lname == "TwoTime" and lroot and kroot and not IsKillerAbilityActive(kroot, AutoStabBlacklist) and not kroot:FindFirstChild("InvincibleFX") then
+                local s69, lrootp, krootp, krootlv = pcall(function()
+                    return lroot.Position, kroot.Position, kroot.LookVector
+                end)
+
+                if s69 then
+                    local StabPredictedLocal = PredictPosition(lroot, lrootp, .185)
+                    local StabPredictedKiller = PredictPosition(kroot, krootp, .185)
+                    task.spawn(BackstabHandler, lroot, kroot, StabPredictedLocal, StabPredictedKiller, krootlv)
                 end
             end
         end
+    else
+        LocalRoot = nil
+        LocalPos = nil
+        LocalHitboxSize = nil
     end
 
     KillerSnapshot = newSnapshot
-    PerfSeg("PL.killers")
 
-    if bAutoParry and isguest then
-        local lchar = LocalPlayer.Character
+    if bAutoParry and isguest and lchar then
         local state = lchar:FindFirstChild("SpeedMultipliers")
+
         if state then
             if state:FindFirstChild("SpeedStatus") and state:FindFirstChild("GuestBlocking") then
                 if not bTempParry then
@@ -2614,214 +2537,184 @@ local function PreLocal()
             end
         end
     end
-    PerfSeg("PL.parry")
+end
+
+
+local function RegisterPlayers()
+    for _, player in Players:GetChildren() do
+        local Char = player.Character
+
+        if Char and Char:FindFirstChild("Humanoid") and not ESP.IsTracked(Char) then
+            local label = AddSpaces(Char.Name)
+            local nextCheck = 0
+            local shown
+
+            ESP.AddPlayer(Char, {
+                Player = player,
+                TeamType = "Parent",
+                CustomParts = Char.Name == "Sixer" and SixerRig or nil,
+                GetTool = function(data)
+                    local t = os.clock()
+                    if t >= nextCheck then
+                        nextCheck = t + .25
+
+                        local char = data.Character
+                        local parent = char and char.Parent
+                        local parentName = parent and parent.Name
+                        shown = (parentName == "Survivors" or parentName == "Killers") and label or nil
+                    end
+
+                    return shown
+                end,
+            })
+        end
+    end
+end
+
+local function RefreshLocalState()
+    local char = LocalPlayer.Character
+    local parent = char and char.Parent
+
+    if parent then
+        local name = parent.Name
+        bSurv = name == "Survivors"
+        bKill = name == "Killers"
+    end
+
+    local gui = LocalPlayer:FindFirstChild("PlayerGui")
+    bInUI = gui ~= nil and gui:FindFirstChild("PuzzleUI") ~= nil
+end
+
+local function RefreshItemRenderInfo(now)
+    local queue = ItemQueue
+
+    if queue.Pos > #queue.List and now - queue.Built >= .1 then
+        queue.Built = now
+        queue.List = {}
+        for id in ItemCache do
+            queue.List[#queue.List + 1] = id
+        end
+        queue.Pos = 1
+    end
+
+    local started = os.clock()
+    while queue.Pos <= #queue.List do
+        local id = queue.List[queue.Pos]
+        queue.Pos += 1
+
+        local inst = ItemCache[id]
+        if inst and now >= (queue.Next[id] or 0) and not pcall(BuildItemRenderInfo, id, inst, now) then
+            RemoveCachedItem(id)
+        end
+
+        if os.clock() - started >= .002 then break end
+    end
+end
+
+local function ScanItems()
+    local ingameChildren = Ingame:GetChildren()
+
+    for _, inst in ingameChildren do
+        local id = InstId(inst)
+        if not id or ItemCache[id] then continue end
+
+        local info = GetNameInfo(inst.Name)
+
+        if info.IsItem or inst:FindFirstChild("Humanoid") then
+            ItemCache[id] = inst
+        elseif bSurv and info.IsTrailFolder then
+            for _, part in inst:GetChildren() do
+                local partId = InstId(part)
+                if partId and not ItemCache[partId] then
+                    ItemCache[partId] = part
+                end
+            end
+        end
+    end
+
+    local killers = Killers:GetChildren()
+    local killerCount = #killers
+
+    for _, inst in killers do
+        if inst.Name == "Noli" then
+            local id = InstId(inst)
+            if id and not ItemCache[id] and IsFakeNoli(inst, killerCount) then
+                ItemCache[id] = inst
+            end
+        end
+    end
+
+    local azure = Map:FindFirstChild("Azure")
+    local azureId = azure and InstId(azure)
+    if azureId and not ItemCache[azureId] then
+        ItemCache[azureId] = azure
+    end
+
+    for _, inst in workspace:GetChildren() do
+        local name = inst.Name
+        if name == "BloxyCola" or name == "Medkit" then
+            local id = InstId(inst)
+            if id and not ItemCache[id] then
+                ItemCache[id] = inst
+            end
+        end
+    end
+
+    local mapFolder = Ingame:FindFirstChild("Map")
+    if not mapFolder then return end
+
+    for _, inst in mapFolder:GetChildren() do
+        local name = inst.Name
+
+        if name == "Generator" then
+            local id = InstId(inst)
+            if id and not ItemCache[id] and inst:FindFirstChild("Progress") then
+                local ok, progress = pcall(function() return inst.Progress.Value end)
+                if ok and progress ~= 100 then
+                    ItemCache[id] = inst
+                end
+            end
+        elseif name == "FakeGenerator" or name == "BloxyCola" or name == "Medkit" then
+            local id = InstId(inst)
+            if id and not ItemCache[id] then
+                ItemCache[id] = inst
+            end
+        end
+    end
 end
 
 local function PreData()
-    if FocusTimer ~= 0 and FocusTimer + .5 < os.clock() then
-        ItemCache = {}
-        PartCache = {}
-        GeneratorCache = {}
-        ItemRenderCache = {}
-        ItemQueue = {}
-        ItemQueuePos = 1
-        ItemQueueBuilt = 0
+    local now = os.clock()
+
+    if FocusTimer ~= 0 and FocusTimer + .5 < now then
+        ClearItems()
         FakeNoliCache = {}
         _G.ESPList = {}
         _G.ESPHealths = {}
         _G.ESPData = {}
         clear_model_data()
     end
-    FocusTimer = os.clock()
+    FocusTimer = now
 
-    for _, inst in Players:GetChildren() do
-        if not inst or not inst.Parent then continue end
-
-        local Char = inst.Character
-        if not Char then continue end
-        if not Char:FindFirstChild("Humanoid") then continue end
-
-        if not ESP.IsTracked(Char) then
-            ESP.AddPlayer(Char, {
-                Player = inst,
-                TeamType = "Parent",
-                CustomParts = Char.Name == "Sixer" and SixerRig or nil,
-                GetTool = function(data)
-                    local char = data.Character
-                    if char then
-                        if char.Parent then
-                            local pname = char.Parent.Name
-                            if pname == "Survivors" or pname == "Killers" then
-                                return AddSpaces(char.Name)
-                            end
-                        end
-                    end
-                end
-            })
-        end
+    if now >= Timers.Players then
+        Timers.Players = now + .1
+        RegisterPlayers()
+        RefreshLocalState()
     end
 
-    local now = os.clock()
-    if now - LastAttackScan >= .03 then
+    if (bShowLine or bAutoStab) and now - LastAttackScan >= .03 then
         LastAttackScan = now
         UpdateActiveLines()
     end
 
     if not bESP then return end
 
-    if LocalPlayer.Character then
-        if LocalPlayer.Character.Parent then
-            local Name = LocalPlayer.Character.Parent.Name
-            if Name == "Survivors" then
-                bSurv = true
-                bKill = false
-            elseif Name == "Killers" then
-                bSurv = false
-                bKill = true
-            else
-                bSurv = false
-                bKill = false
-            end
-        end
-    end
-
-    if LocalPlayer:FindFirstChild("PlayerGui") then
-        if LocalPlayer.PlayerGui:FindFirstChild("PuzzleUI") then
-            bInUI = true
-        else
-            bInUI = false
-        end
-    else
-        bInUI = false
-    end
-
-    if ItemQueuePos > #ItemQueue and now - ItemQueueBuilt >= ITEM_CYCLE then
-        ItemQueueBuilt = now
-        ItemQueue = {}
-        for id in ItemCache do
-            ItemQueue[#ItemQueue + 1] = id
-        end
-        ItemQueuePos = 1
-    end
-
-    local refreshStart = os.clock()
-    while ItemQueuePos <= #ItemQueue do
-        local id = ItemQueue[ItemQueuePos]
-        ItemQueuePos += 1
-
-        local inst = ItemCache[id]
-        if inst then
-            local ok = pcall(BuildItemRenderInfo, id, inst, now)
-            if not ok then
-                RemoveCachedItem(id)
-            end
-        end
-
-        if os.clock() - refreshStart >= ITEM_BUDGET then break end
-    end
+    RefreshItemRenderInfo(now)
 
     if now - LastItemScan < .1 then return end
     LastItemScan = now
 
-    local IngameChildren = Ingame:GetChildren()
-
-    for _, inst in IngameChildren do
-        local id = InstId(inst)
-        if not id then continue end
-        if ItemCache[id] then continue end
-
-        local Name = inst.Name
-        if table.find(Names, Name) then
-            ItemCache[id] = inst
-            continue
-        end
-
-        for _, name in PNames do
-            if string.find(Name, name) then
-                ItemCache[id] = inst
-                continue
-            end
-        end
-
-        if inst:FindFirstChild("Humanoid") then
-            ItemCache[id] = inst
-            continue
-        end
-    end
-
-    for _, inst in Killers:GetChildren() do
-        if inst.Name == "Noli" and not ItemCache[InstId(inst)] then
-            local usern = inst:GetAttribute("Username")
-            if usern or noliname then
-                if usern then
-                    noliname = usern
-                end
-                if Players:FindFirstChild(noliname) then
-                    if Players[noliname].Character ~= inst and InstId(inst) and #Killers:GetChildren() > 1 then
-                        ItemCache[InstId(inst)] = inst
-                        continue
-                    end
-                end
-            end
-        end
-    end
-
-    if Map:FindFirstChild("Azure") then
-        local Azure = Map.Azure
-        local id = InstId(Azure)
-        if id and not ItemCache[id] then
-            ItemCache[id] = Azure
-        end
-    end
-
-    for _, inst in workspace:GetChildren() do
-        local id = InstId(inst)
-        if not id then continue end
-        if ItemCache[id] then continue end
-
-        local Name = inst.Name
-        if Name == "BloxyCola" then
-            ItemCache[id] = inst
-        elseif Name == "Medkit" then
-            ItemCache[id] = inst
-        end
-    end
-
-    for _, inst in IngameChildren do
-        local Name = inst.Name
-        if type(Name) ~= "string" then continue end
-        if bSurv and (string.find(Name, "JohnDoeTrail") or string.find(Name, "Shadows")) then
-            for _, part in inst:GetChildren() do
-                local id = InstId(part)
-                if not id then continue end
-                if ItemCache[id] then continue end
-
-                ItemCache[id] = part
-            end
-        end
-    end
-
-    local MapFolder = Ingame:FindFirstChild("Map")
-    if MapFolder then
-        for _, inst in MapFolder:GetChildren() do
-            local id = InstId(inst)
-            if not id then continue end
-            if ItemCache[id] then continue end
-
-            local Name = inst.Name
-            if Name == "Generator" and inst:FindFirstChild("Progress") then
-                local s, r = pcall(function()
-                    return inst.Progress.Value
-                end)
-                if s and r ~= 100 then
-                    ItemCache[id] = inst
-                end
-            elseif Name == "FakeGenerator" or Name == "BloxyCola" or Name == "Medkit" then
-                ItemCache[id] = inst
-            end
-        end
-    end
-
+    ScanItems()
 end
 
 local function Render()
@@ -2877,15 +2770,17 @@ window:registerkey("AutoBlockKeybind", KEYBIND, function(val)
     if keybindlabel then keybindlabel.Txt.Text = "Current keybind: " .. val end
 end)
 
-local tabSurvivor = window:createtab("Survivor")
-local tabKiller = window:createtab("Killer")
-local tabVisual = window:createtab("Visual")
-local tabMisc = window:createtab("Misc")
-local tabColors = window:createtab("Colors")
 
-window:createlabel(tabSurvivor, "After enabling, you need to press your keybind", 1)
+local Tabs = {}
+Tabs.Survivor = window:createtab("Survivor")
+Tabs.Killer = window:createtab("Killer")
+Tabs.Visual = window:createtab("Visual")
+Tabs.Misc = window:createtab("Misc")
+Tabs.Colors = window:createtab("Colors")
 
-window:createtoggle(tabSurvivor, {
+window:createlabel(Tabs.Survivor, "After enabling, you need to press your keybind", 1)
+
+window:createtoggle(Tabs.Survivor, {
     Name = "Enable Auto block",
     Col = 1,
     Default = false,
@@ -2902,7 +2797,7 @@ window:createtoggle(tabSurvivor, {
 	end
 })
 
-window:createdropdown(tabSurvivor, {
+window:createdropdown(Tabs.Survivor, {
     Name = "Auto block mode",
     StateKey = "AutoBlockMode",
     Col = 1,
@@ -2913,7 +2808,7 @@ window:createdropdown(tabSurvivor, {
     end
 })
 
-window:createtoggle(tabSurvivor, {
+window:createtoggle(Tabs.Survivor, {
     Name = "Block when the killer is stun immune",
     Col = 1,
     Default = false,
@@ -2922,7 +2817,7 @@ window:createtoggle(tabSurvivor, {
 	end
 })
 
-window:createtoggle(tabSurvivor, {
+window:createtoggle(Tabs.Survivor, {
     Name = "Show Auto block range",
     Col = 1,
     Default = false,
@@ -2931,10 +2826,10 @@ window:createtoggle(tabSurvivor, {
 	end
 })
 
-keybindlabel = window:createlabel(tabSurvivor, "Current keybind: " .. KEYBIND, 1)
+keybindlabel = window:createlabel(Tabs.Survivor, "Current keybind: " .. KEYBIND, 1)
 
 local keybindbtn
-keybindbtn = window:createbutton(tabSurvivor, {
+keybindbtn = window:createbutton(Tabs.Survivor, {
     Name = "Change keybind",
     Col = 1,
     Callback = function()
@@ -2964,9 +2859,9 @@ keybindbtn = window:createbutton(tabSurvivor, {
     end
 })
 
-window:createlabel(tabSurvivor, "Auto aim for survivor sentinel stuns", 2)
+window:createlabel(Tabs.Survivor, "Auto aim for survivor sentinel stuns", 2)
 
-window:createtoggle(tabSurvivor, {
+window:createtoggle(Tabs.Survivor, {
     Name = "Guest 1337 auto parry",
     Col = 2,
     Default = false,
@@ -2975,7 +2870,7 @@ window:createtoggle(tabSurvivor, {
 	end
 })
 
-window:createslider(tabSurvivor, {
+window:createslider(Tabs.Survivor, {
     Name = "Auto parry delay",
     Col = 2, 
     Min = 0, Max = .6, Default = 0,
@@ -2985,9 +2880,9 @@ window:createslider(tabSurvivor, {
     end
 })
 
-window:createseparator(tabSurvivor, 2)
+window:createseparator(Tabs.Survivor, 2)
 
-window:createtoggle(tabSurvivor, {
+window:createtoggle(Tabs.Survivor, {
     Name = "Chance aimbot",
     Col = 2,
     Default = false,
@@ -2996,9 +2891,9 @@ window:createtoggle(tabSurvivor, {
 	end
 })
 
-window:createseparator(tabSurvivor, 2)
+window:createseparator(Tabs.Survivor, 2)
 
-window:createtoggle(tabSurvivor, {
+window:createtoggle(Tabs.Survivor, {
     Name = "Two time auto backstab",
     Col = 2,
     Default = false,
@@ -3007,11 +2902,11 @@ window:createtoggle(tabSurvivor, {
 	end
 })
 
-window:createlabel(tabKiller, "Nothing yet!", 1)
+window:createlabel(Tabs.Killer, "Nothing yet!", 1)
 
-window:createlabel(tabVisual, "ESP settings (AKA Highlighter)", 1)
+window:createlabel(Tabs.Visual, "ESP settings (AKA Highlighter)", 1)
 
-window:createtoggle(tabVisual, {
+window:createtoggle(Tabs.Visual, {
     Name = "Enable ESP",
     Col = 1,
     Default = true,
@@ -3019,15 +2914,11 @@ window:createtoggle(tabVisual, {
 		if bESP == val then return end
 
         bESP = val
-        if not bESP then
-            ItemCache = {}
-            PartCache = {}
-            GeneratorCache = {}
-        end
+        if not bESP then ClearItems() end
 	end
 })
 
-window:createtoggle(tabVisual, {
+window:createtoggle(Tabs.Visual, {
     Name = "Highlight part",
     Col = 1,
     Default = true,
@@ -3036,7 +2927,7 @@ window:createtoggle(tabVisual, {
 	end
 })
 
-window:createtoggle(tabVisual, {
+window:createtoggle(Tabs.Visual, {
     Name = "Show object name",
     Col = 1,
     Default = true,
@@ -3045,9 +2936,9 @@ window:createtoggle(tabVisual, {
 	end
 })
 
-window:createlabel(tabVisual, "Shows killer attack abilty paths", 2)
+window:createlabel(Tabs.Visual, "Shows killer attack abilty paths", 2)
 
-window:createtoggle(tabVisual, {
+window:createtoggle(Tabs.Visual, {
     Name = "Show attack path",
     Col = 2,
     Default = false,
@@ -3056,7 +2947,7 @@ window:createtoggle(tabVisual, {
 	end
 })
 
-window:createtoggle(tabVisual, {
+window:createtoggle(Tabs.Visual, {
     Name = "Show path when you're killer",
     Col = 2,
     Default = false,
@@ -3065,7 +2956,7 @@ window:createtoggle(tabVisual, {
 	end
 })
 
-window:createtoggle(tabMisc, {
+window:createtoggle(Tabs.Misc, {
     Name = "Auto complete generators",
     Col = 1,
     Default = false,
@@ -3074,7 +2965,7 @@ window:createtoggle(tabMisc, {
 	end
 })
 
-window:createslider(tabMisc, {
+window:createslider(Tabs.Misc, {
     Name = "Delay before starting puzzle (seconds)",
     Col = 1,
     Min = .3, Max = 3, Default = 1.75,
@@ -3084,7 +2975,7 @@ window:createslider(tabMisc, {
     end
 })
 
-window:createslider(tabMisc, {
+window:createslider(Tabs.Misc, {
     Name = "Randomize time by (seconds)",
     Col = 1,
     Min = 0, Max = 2, Default = .5,
@@ -3094,9 +2985,9 @@ window:createslider(tabMisc, {
     end
 })
 
-window:createseparator(tabMisc, 1)
+window:createseparator(Tabs.Misc, 1)
 
-window:createtoggle(tabMisc, {
+window:createtoggle(Tabs.Misc, {
     Name = "Show round timer when hallucinating",
     Col = 1,
     Default = false,
@@ -3105,9 +2996,9 @@ window:createtoggle(tabMisc, {
 	end
 })
 
-window:createlabel(tabMisc, "Stops sprinting right before hitting 0 stamina", 2)
+window:createlabel(Tabs.Misc, "Stops sprinting right before hitting 0 stamina", 2)
 
-window:createtoggle(tabMisc, {
+window:createtoggle(Tabs.Misc, {
     Name = "Safe sprint",
     Col = 2,
     Default = false,
@@ -3116,9 +3007,9 @@ window:createtoggle(tabMisc, {
 	end
 })
 
-window:createseparator(tabMisc, 2)
+window:createseparator(Tabs.Misc, 2)
 
-window:createbutton(tabMisc, {
+window:createbutton(Tabs.Misc, {
     Name = "Unhide playtime of all players",
     Col = 2,
     Callback = function(val)
@@ -3130,7 +3021,7 @@ window:createbutton(tabMisc, {
 	end
 })
 
-window:createbutton(tabMisc, {
+window:createbutton(Tabs.Misc, {
     Name = "Unhide killer and survivor wins of all players",
     Col = 2,
     Callback = function(val)
@@ -3143,7 +3034,7 @@ window:createbutton(tabMisc, {
 	end
 })
 
-window:createcolorpicker(tabColors, {
+window:createcolorpicker(Tabs.Colors, {
     Name = "Projectile color",
     Col = 1,
     Default = c.danger,
@@ -3152,7 +3043,7 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-window:createcolorpicker(tabColors, {
+window:createcolorpicker(Tabs.Colors, {
     Name = "Trap color",
     Col = 1,
     Default = c.trap,
@@ -3161,7 +3052,7 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-window:createcolorpicker(tabColors, {
+window:createcolorpicker(Tabs.Colors, {
     Name = "Passive trap color",
     Col = 1,
     Default = c.slightdanger,
@@ -3170,7 +3061,7 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-window:createcolorpicker(tabColors, {
+window:createcolorpicker(Tabs.Colors, {
     Name = "Clone color",
     Col = 1,
     Default = c.neutral,
@@ -3179,7 +3070,7 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-window:createcolorpicker(tabColors, {
+window:createcolorpicker(Tabs.Colors, {
     Name = "Azure ability color",
     Col = 1,
     Default = c.azure,
@@ -3188,7 +3079,7 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-window:createcolorpicker(tabColors, {
+window:createcolorpicker(Tabs.Colors, {
     Name = "Show projectile line color",
     Col = 1,
     Default = c.lineprim,
@@ -3197,7 +3088,7 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-window:createcolorpicker(tabColors, {
+window:createcolorpicker(Tabs.Colors, {
     Name = "Auto block visual color",
     Col = 2,
     Default = c.autoblock,
@@ -3206,7 +3097,7 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-window:createcolorpicker(tabColors, {
+window:createcolorpicker(Tabs.Colors, {
     Name = "Auto block visual attack color",
     Col = 2,
     Default = c.autoblockattack,
@@ -3215,7 +3106,7 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-window:createcolorpicker(tabColors, {
+window:createcolorpicker(Tabs.Colors, {
     Name = "Minion color",
     Col = 2,
     Default = c.yellow,
@@ -3224,7 +3115,7 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-window:createcolorpicker(tabColors, {
+window:createcolorpicker(Tabs.Colors, {
     Name = "Generator color",
     Col = 2,
     Default = c.generator,
@@ -3233,7 +3124,7 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-window:createcolorpicker(tabColors, {
+window:createcolorpicker(Tabs.Colors, {
     Name = "Medkit color",
     Col = 2,
     Default = c.medkit,
@@ -3242,7 +3133,7 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-window:createcolorpicker(tabColors, {
+window:createcolorpicker(Tabs.Colors, {
     Name = "Bloxy cola color",
     Col = 2,
     Default = c.cola,
@@ -3251,7 +3142,7 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-window:createcolorpicker(tabColors, {
+window:createcolorpicker(Tabs.Colors, {
     Name = "Show projectile text color",
     Col = 2,
     Default = c.linesec,
@@ -3260,105 +3151,9 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-local Perf = {Window = {}, LastRender = 0, LastSpike = {}, SegStart = 0}
-local PERF_HITCH_GAP = .04
-local PERF_SPIKE = .008
-
-local function PerfRecord(name, took)
-    Perf.Window[name] = (Perf.Window[name] or 0) + took
-
-    if took >= PERF_SPIKE then
-        local now = os.clock()
-        if now - (Perf.LastSpike[name] or 0) >= .25 then
-            Perf.LastSpike[name] = now
-            print(string.format("[Spike] %s took %.1fms", name, took * 1000))
-        end
-    end
-end
-
-local function PerfWrap(name, fn)
-    return function(...)
-        local started = os.clock()
-        local a, b, c, d = fn(...)
-        PerfRecord(name, os.clock() - started)
-        return a, b, c, d
-    end
-end
-
-local PerfCallbacks = {PreLocal = true, PreData = true, Render = true}
-
-local function PerfHitch(gap)
-    local inCallbacks = 0
-    local sections = {}
-
-    for name, took in Perf.Window do
-        if PerfCallbacks[name] then
-            inCallbacks += took
-        else
-            sections[#sections + 1] = {Name = name, Took = took}
-        end
-    end
-
-    table.sort(sections, function(x, y) return x.Took > y.Took end)
-
-    local top = {}
-    for i = 1, math.min(#sections, 4) do
-        top[#top + 1] = string.format("%s %.1fms", sections[i].Name, sections[i].Took * 1000)
-    end
-
-    local items = 0
-    for _ in ItemRenderCache do items += 1 end
-
-    print(string.format(
-        "[Hitch] %.0fms gap | PreLocal %.1f PreData %.1f Render %.1f | outside script %.1f | top: %s | items=%d killers=%d",
-        gap * 1000,
-        (Perf.Window.PreLocal or 0) * 1000,
-        (Perf.Window.PreData or 0) * 1000,
-        (Perf.Window.Render or 0) * 1000,
-        math.max(gap - inCallbacks, 0) * 1000,
-        #top > 0 and table.concat(top, ", ") or "none",
-        items,
-        #KillerSnapshot
-    ))
-end
-
-UpdateActiveLines = PerfWrap("UpdateActiveLines", UpdateActiveLines)
-RenderActiveLines = PerfWrap("RenderActiveLines", RenderActiveLines)
-
-PerfSeg = function(name)
-    local now = os.clock()
-    PerfRecord(name, now - Perf.SegStart)
-    Perf.SegStart = now
-end
-
-local BasePreLocal = PreLocal
-PreLocal = function(...)
-    local started = os.clock()
-    Perf.SegStart = started
-    BasePreLocal(...)
-    PerfRecord("PreLocal", os.clock() - started)
-end
-PreData = PerfWrap("PreData", PreData)
-
-local BaseRender = Render
-Render = function(...)
-    local now = os.clock()
-    local gap = now - Perf.LastRender
-
-    if Perf.LastRender ~= 0 and gap >= PERF_HITCH_GAP and gap < 1 then
-        PerfHitch(gap)
-    end
-
-    Perf.LastRender = now
-    Perf.Window = {}
-
-    BaseRender(...)
-    PerfRecord("Render", os.clock() - now)
-end
-
-RunService.PreLocal:Connect(function(...) return PreLocal(...) end)
-RunService.PreData:Connect(function(...) return PreData(...) end)
-RunService.Render:Connect(function(...) return Render(...) end)
+RunService.PreLocal:Connect(PreLocal)
+RunService.PreData:Connect(PreData)
+RunService.Render:Connect(Render)
 
 clear_model_data()
 
