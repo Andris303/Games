@@ -12,22 +12,19 @@ local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 local RunService = game:GetService("RunService")
-local HighlightColor = Color3.fromRGB(70,130,180)
-local TextColor = Color3.fromRGB(70,130,180)
-local PlayerList
-local viewmodels = workspace:FindFirstChild("Viewmodels")
+local AccentColor = Color3.fromRGB(70,130,180)
+local LocalName = LocalPlayer.Name
 local PlayerCache = {}
 local RenderCache = {}
 local ModelRetry = {}
 local LastGadgetScan = 0
-local ModList = {"_1"}
-local BodyParts = {"head", "torso", "shoulder1", "arm1", "shoulder2", "arm2", "hip1", "hip2", "leg1", "leg2",}
+local ModsShown = {}
+local BodyPartNames = {head = true, torso = true, shoulder1 = true, arm1 = true, shoulder2 = true, arm2 = true, hip1 = true, hip2 = true, leg1 = true, leg2 = true}
 local Mods = {"lustin2800", "mmmmmonster", "RazvanWar28", "Fastesfern", "poipser", "Slender", "PandoraSkywalk2r", "AimDynamics", "Bunlawgs", "turner22", "Blazzy_Blaz",}
-local GadgetWhitelist = {"Defuser", "ImpactGrenade", "DeployableShield", "BreachCharge", "Drone", "FragGrenade", "SmokeGrenade", "StunGrenade", "ShockBattery", "EMPGrenade", "RemoteC4", "IncendiaryGrenade", "ToxicCharge", "StickyCamera", "ProximityAlarm", "HardBreachCharge", "Claymore", "BarbedWire", "BulletproofCamera", "ThermiteCharge", "SignalDisruptor", "NeedleMine"}
-local volumec = {
-    MaxVolume = Color3.fromRGB(220,0,0),
-    MinVolume = Color3.fromRGB(255,255,190),
-}
+local ShotColor = Color3.fromRGB(220,0,0)
+local QuietColor = Color3.fromRGB(255,255,190)
+local NearGunColor = QuietColor:Lerp(ShotColor, .625)
+local StepColor = QuietColor:Lerp(ShotColor, .125)
 local c = {
 	red = Color3.fromRGB(250,80,83),
 	yellow = Color3.fromRGB(255,222,33),
@@ -70,32 +67,14 @@ local Highlight = HLib.Highlight
 
 local Text = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Text.lua"))()
 
-local function GetColor(vol)
-    local clamp = math.clamp(vol, .1, .9)
-    local alpha = (clamp - .1) / .8
-
-    return volumec.MinVolume:Lerp(volumec.MaxVolume, alpha)
-end
-
-local function BuildHighlightData(part)
-    local ok, data = pcall(function()
-        return {
-            Position = part.Position,
-            RightVector = part.RightVector,
-            UpVector = part.UpVector,
-            LookVector = part.LookVector,
-            PartSize = part.Size,
-            Parent = part.Parent,
-        }
-    end)
-
-    if ok and data.Parent then return data end
-    return nil
-end
-
-local SoundRenderCache = {}
 local GadgetRenderCache = {}
 local CameraRenderCache = {}
+local NextValidate = 0
+local NextCameraSync = 0
+
+local function ReadPosition(part)
+    return part.Position
+end
 
 _G.CustomParts = {
     RigType = "R15",
@@ -122,39 +101,10 @@ local function InstId(inst)
     return tostring(tonumber(inst.Data))
 end
 
-local function AddSpaces(string)
-    local result = ""
-
-    for i = 1, #string do
-        local char = string:sub(i, i)
-        local prev = string:sub(i - 1, i - 1)
-        local prevPrev = string:sub(i - 2, i - 2)
-        local nextChar = string:sub(i + 1, i + 1)
-
-        local isUpper = char:match("%u")
-        local prevIsUpper = prev:match("%u")
-        local prevPrevIsUpper = prevPrev:match("%u")
-        local prevIsLower = prev:match("%l")
-        local nextIsLower = nextChar:match("%l")
-
-        local shouldAddSpace = false
-
-        if isUpper and i > 1 then
-            if prevIsLower then
-                shouldAddSpace = true
-            elseif prevIsUpper and prevPrevIsUpper and nextIsLower then
-                shouldAddSpace = true
-            end
-        end
-
-        if shouldAddSpace then
-            result ..= " "
-        end
-
-        result ..= char
-    end
-
-    return result
+local function AddSpaces(text)
+    text = text:gsub("(%l)(%u)", "%1 %2")
+    text = text:gsub("(%u%u)(%u%l)", "%1 %2")
+    return text
 end
 
 local SOUND_INTERVAL = .05
@@ -168,11 +118,6 @@ local MAX_MODEL_LOOKUPS_PER_TICK = 2
 
 local function RetryDelay(base)
     return base + math.random() * base * .5
-end
-
-local GadgetSet = {}
-for _, name in GadgetWhitelist do
-    GadgetSet[name] = true
 end
 
 local SolidClasses = {Part = true, MeshPart = true, UnionOperation = true}
@@ -203,9 +148,10 @@ end
 local function ResetCaches()
     PlayerCache = {}
     RenderCache = {}
-    SoundRenderCache = {}
     GadgetRenderCache = {}
     CameraRenderCache = {}
+    NextValidate = 0
+    NextCameraSync = 0
     ModelRetry = {}
     SoundRetry = {}
     GadgetTargets = {}
@@ -327,7 +273,7 @@ local function ModelToPlayer(inst, scan)
     local isLocalModel = inst.Name == "LocalViewmodel"
 
     for _, candidate in candidates do
-        if (candidate.Char.Name == LocalPlayer.Name) ~= isLocalModel then continue end
+        if (candidate.Char.Name == LocalName) ~= isLocalModel then continue end
 
         local Desync = math.floor(vector.magnitude(ModelPos - candidate.Position) * 100) / 100
 
@@ -346,18 +292,13 @@ local function ModelToPlayer(inst, scan)
     return Player, bestChar
 end
 
-local BodyPartSet = {}
-for _, name in BodyParts do
-    BodyPartSet[name] = true
-end
-
 local function GetBodyParts(model)
     local parts = {}
     local found = {}
 
     for _, child in model:GetChildren() do
         local name = child.Name
-        if BodyPartSet[name] and not found[name] and SolidClasses[child.ClassName] then
+        if BodyPartNames[name] and not found[name] and SolidClasses[child.ClassName] then
             found[name] = true
             parts[#parts + 1] = child
         end
@@ -389,12 +330,12 @@ local function GunSoundColor(gun, rootPos)
 
         local distance = vector.magnitude(rootPos - parent.Position)
         if sound.Name == "Shoot" then
-            if distance > 105 then break end
-            return volumec.MaxVolume
+            if distance > 105 then continue end
+            return ShotColor
         end
 
-        if distance > 30 then break end
-        color = GetColor(.6)
+        if distance > 30 then continue end
+        color = NearGunColor
     end
 
     return color
@@ -403,22 +344,24 @@ end
 local function UpdateSoundEntry(id, entry, rootPos, now, viewmodelsId)
     local Char = entry.Char
     local model = entry.Model
-    local player = entry.Player
-
-    if not player.Parent then return false end
-    if InstId(player.Character) ~= id then return false end
-    if not InstId(model) or InstId(model.Parent) ~= viewmodelsId then return false end
-
-    local head = model:FindFirstChild("head")
-    if head and head:FindFirstChild("Username") then return false, true end
-
-    local Humanoid = Char:FindFirstChild("Humanoid")
-    if not Humanoid or Humanoid.Health <= 0 then return false end
 
     if now >= entry.NextScan then
         entry.NextScan = now + .25
+
+        if not entry.Player.Parent then return false end
+        if InstId(entry.Player.Character) ~= id then return false end
+        if not InstId(model) or InstId(model.Parent) ~= viewmodelsId then return false end
+
+        local head = model:FindFirstChild("head")
+        if head and head:FindFirstChild("Username") then return false, true end
+
+        local Humanoid = Char:FindFirstChild("Humanoid")
+        if not Humanoid or Humanoid.Health <= 0 then return false end
+
         entry.Gun = FindGun(model)
         entry.Parts = GetBodyParts(model)
+        entry.Legs = Char:FindFirstChild("legs")
+        entry.Collision = Char:FindFirstChild("collision")
     end
 
     local gun = entry.Gun
@@ -433,11 +376,11 @@ local function UpdateSoundEntry(id, entry, rootPos, now, viewmodelsId)
         return true
     end
 
-    local legs = Char:FindFirstChild("legs")
+    local legs = entry.Legs
     if legs then
         if legs:FindFirstChildOfClass("Sound") then
             entry.Hold = now + .5
-            entry.Color = GetColor(.2)
+            entry.Color = StepColor
         end
 
         if now < entry.Hold then
@@ -450,7 +393,7 @@ local function UpdateSoundEntry(id, entry, rootPos, now, viewmodelsId)
         end
     end
 
-    local collision = Char:FindFirstChild("collision")
+    local collision = entry.Collision
     if collision then
         for _, part in collision:GetChildren() do
             if part.ClassName == "Sound" and not IgnoredSounds[part.Name] then
@@ -458,7 +401,7 @@ local function UpdateSoundEntry(id, entry, rootPos, now, viewmodelsId)
                     RenderCache[id] = nil
                 else
                     entry.Hold = now + .5
-                    RenderCache[id] = {Parts = entry.Parts, Color = GetColor(.2)}
+                    RenderCache[id] = {Parts = entry.Parts, Color = StepColor}
                 end
                 return true
             end
@@ -518,22 +461,16 @@ end
 
 local function UpdateGadgets(now)
     if now - LastGadgetScan < GADGET_INTERVAL then return end
-    if not HeavyReady() then return end
+    if not HeavyReady() and now - LastGadgetScan < GADGET_INTERVAL * 3 then return end
     LastGadgetScan = now
 
     local state = {Targets = {}, Cameras = {}, SeenCameras = {}}
 
     pcall(function()
-        local found = {}
         for _, inst in workspace:GetChildren() do
-            if GadgetSet[inst.Name] and inst.ClassName == "Model" then
-                local id = InstId(inst)
-                if id then found[id] = inst end
+            if GadgetColors[inst.Name] and inst.ClassName == "Model" and InstId(inst) then
+                pcall(ScanGadget, inst, state)
             end
-        end
-
-        for _, inst in found do
-            pcall(ScanGadget, inst, state)
         end
     end)
 
@@ -550,7 +487,7 @@ local function PreLocal()
     if now < NextSoundTick then return end
     NextSoundTick = now + SOUND_INTERVAL
 
-    pcall(UpdateGadgets, now)
+    local viewmodels = workspace:FindFirstChild("Viewmodels")
 
     local LocalChar = LocalPlayer.Character
     local root
@@ -576,7 +513,7 @@ local function PreLocal()
     local lookups = 0
 
     for _, player in Players:GetChildren() do
-        if player.Name == LocalPlayer.Name then continue end
+        if player.Name == LocalName then continue end
 
         local Char = player.Character
         local id = InstId(Char)
@@ -600,7 +537,7 @@ local function PreLocal()
                 Model = model,
                 Player = player,
                 Hold = 0,
-                Color = volumec.MinVolume,
+                Color = QuietColor,
                 NextScan = 0,
                 Gun = nil,
                 Parts = {},
@@ -629,27 +566,24 @@ local function ScanModerators()
 
     for _, player in Players:GetChildren() do
         local name = player.Name
-        current[name] = true
+        if table.find(Mods, name) then
+            current[name] = true
 
-        if PlayerList and not PlayerList[name] and table.find(Mods, name) then
-            table.insert(ModList, name)
-            Text.Add(name, "Moderator \"" .. name .. "\" ingame.", Color3.fromRGB(255, 255, 255))
-            send_notification("Moderator \"" .. name .. "\" joined.", "warning")
-        end
-    end
-
-    for i = #ModList, 1, -1 do
-        local name = ModList[i]
-        if not current[name] then
-            if name ~= "_1" then
-                Text.Remove(name)
-                send_notification("Moderator \"" .. name .. "\" left.", "warning")
+            if not ModsShown[name] then
+                ModsShown[name] = true
+                Text.Add(name, "Moderator \"" .. name .. "\" ingame.", Color3.fromRGB(255, 255, 255))
+                send_notification("Moderator \"" .. name .. "\" joined.", "warning")
             end
-            table.remove(ModList, i)
         end
     end
 
-    PlayerList = current
+    for name in ModsShown do
+        if not current[name] then
+            ModsShown[name] = nil
+            Text.Remove(name)
+            send_notification("Moderator \"" .. name .. "\" left.", "warning")
+        end
+    end
 end
 
 local function TrackViewmodel(inst, scan, now)
@@ -819,29 +753,15 @@ local function RunPost()
     ScanCursor = 0
 end
 
-local function UpdateRenderCaches()
-    local newSound = {}
-
-    if SoundESP then
-        for id, render in RenderCache do
-            local list = {}
-            for _, part in render.Parts do
-                local data = BuildHighlightData(part)
-                if data then list[#list + 1] = data end
-            end
-            if #list > 0 then
-                newSound[id] = {Parts = list, Color = render.Color}
-            end
-        end
-    end
-
-    SoundRenderCache = newSound
-
+local function UpdateRenderCaches(now)
     if not GadgetESP then
         GadgetRenderCache = {}
         CameraRenderCache = {}
         return
     end
+
+    if now < NextValidate then return end
+    NextValidate = now + .1
 
     local newCameras = {}
     local newGadgets = {}
@@ -853,10 +773,7 @@ local function UpdateRenderCaches()
             continue
         end
 
-        local data = BuildHighlightData(cam)
-        if data then
-            newCameras[#newCameras + 1] = {Data = data, Color = TextColor, Label = "Hacked Camera"}
-        end
+        newCameras[#newCameras + 1] = {Part = cam, Color = AccentColor, Label = "Hacked Camera"}
     end
 
     for index = #GadgetTargets, 1, -1 do
@@ -866,10 +783,7 @@ local function UpdateRenderCaches()
             continue
         end
 
-        local data = BuildHighlightData(target.Part)
-        if data then
-            newGadgets[#newGadgets + 1] = {Data = data, Color = target.Color, Label = target.Label}
-        end
+        newGadgets[#newGadgets + 1] = {Part = target.Part, Color = target.Color, Label = target.Label}
     end
 
     CameraRenderCache = newCameras
@@ -885,32 +799,38 @@ local function PostLocal()
 
     local now = Heartbeat()
 
-    local cam = workspace.CurrentCamera
-    if cam then
-        Camera = cam
-        HLib.SetCamera(cam)
+    if now >= NextCameraSync then
+        NextCameraSync = now + .5
+        local cam = workspace.CurrentCamera
+        if cam then
+            Camera = cam
+            if HLib.SetCamera then HLib.SetCamera(cam) end
+        end
     end
 
     if GadgetESP then
         pcall(UpdateGadgets, now)
     end
 
-    UpdateRenderCaches()
+    UpdateRenderCaches(now)
 end
 
-local function DrawLabel(data)
-    local Position, Visible = Camera:WorldToScreenPoint(data.Data.Position)
+local function DrawLabel(entry)
+    local ok, position = pcall(ReadPosition, entry.Part)
+    if not ok then return end
+
+    local Position, Visible = Camera:WorldToScreenPoint(position)
     if Visible then
         local NewPos = Vector2.new(Position.x, Position.y - 6.5)
-        DrawingImmediate.OutlinedText(NewPos, 13, data.Color, 1, data.Label, true)
+        DrawingImmediate.OutlinedText(NewPos, 13, entry.Color, 1, entry.Label, true)
     end
 end
 
 local function Render()
     if SoundESP then
-        for _, render in SoundRenderCache do
-            for _, data in render.Parts do
-                pcall(Highlight, data, render.Color, .23, .6, .7)
+        for _, render in RenderCache do
+            for _, part in render.Parts do
+                pcall(Highlight, part, render.Color, .23, .6, .7)
             end
         end
     end
@@ -918,12 +838,12 @@ local function Render()
     if not GadgetESP then return end
 
     for _, entry in CameraRenderCache do
-        pcall(Highlight, entry.Data, HighlightColor, .2, .8, .6)
+        pcall(Highlight, entry.Part, AccentColor, .2, .8, .6)
         DrawLabel(entry)
     end
 
     for _, entry in GadgetRenderCache do
-        pcall(Highlight, entry.Data, entry.Color, .2, .8, 1)
+        pcall(Highlight, entry.Part, entry.Color, .2, .8, 1)
         DrawLabel(entry)
     end
 end
