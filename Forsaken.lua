@@ -423,39 +423,10 @@ local function ReadName(inst)
     return inst.Name
 end
 
-local function BuildHighlightData(part)
-    local ok, data = pcall(function()
-        return {
-            Position = part.Position,
-            RightVector = part.RightVector,
-            UpVector = part.UpVector,
-            LookVector = part.LookVector,
-            PartSize = part.Size,
-            Parent = part.Parent,
-        }
-    end)
+local function Highlight(part, color)
+    if not part then return end
 
-    if ok and data.Parent then return data end
-    return nil
-end
-
-local function BuildHighlightGroupData(parts)
-    local list = {}
-
-    for _, part in parts do
-        local data = BuildHighlightData(part)
-        if data then
-            list[#list + 1] = data
-        end
-    end
-
-    return list
-end
-
-local function Highlight(data, color)
-    if not data then return end
-
-    pcall(h.Highlight, data, color, .18, .7, .7)
+    pcall(h.Highlight, part, color, .18, .7, .7)
 end
 
 local function BuildItemRenderInfo(id, inst, now)
@@ -496,7 +467,7 @@ local function BuildItemRenderInfo(id, inst, now)
             return
         end
 
-        local okPos, pos = pcall(ReadPosition, Main)
+        local okPos = pcall(ReadPosition, Main)
         if not okPos then
             ItemRenderCache[id] = nil
             return
@@ -504,8 +475,7 @@ local function BuildItemRenderInfo(id, inst, now)
 
         ItemRenderCache[id] = {
             Kind = "Generator",
-            Pos = pos,
-            HighlightData = BuildHighlightData(Main),
+            Main = Main,
             Color = c.generator,
             Text = GetGenPer(val),
         }
@@ -598,25 +568,17 @@ local function BuildItemRenderInfo(id, inst, now)
             end
         end
 
-        local torsoPos
-        if torsoPart then
-            local okTorso, tp = pcall(ReadPosition, torsoPart)
-            if okTorso then torsoPos = tp end
-        end
-
         ItemRenderCache[id] = {
             Kind = "Body",
-            TorsoPos = torsoPos,
-            HighlightParts = BuildHighlightGroupData(Parts),
+            Parts = Parts,
+            Torso = torsoPart,
             Color = color,
             Text = name or "Minion",
         }
     elseif Parts then
-        local okPos, pos = pcall(ReadPosition, Parts)
         ItemRenderCache[id] = {
             Kind = "Part",
-            Pos = okPos and pos or nil,
-            HighlightData = BuildHighlightData(Parts),
+            Part = Parts,
             Color = color,
             Text = name,
         }
@@ -894,6 +856,11 @@ local function DrawTextAt(pos, text, color, size)
 end
 
 local PredictionData = {}
+
+local function DrawPartText(part, text, color)
+    local ok, pos = pcall(ReadPosition, part)
+    if ok then DrawTextAt(pos, text, color) end
+end
 
 local function UpdatePrediction(key, pos)
     local now = os.clock()
@@ -2303,15 +2270,28 @@ local function BackstabHandler(lroot, kroot, lrootp, krootp, krootlv)
     end
 end
 
-local function PreLocal()
-    local cam = workspace.CurrentCamera
-    if cam then
-        Camera = cam
-        if h.SetCamera then h.SetCamera(cam) end
-    end
+local PerfSeg = function(name) end
+local NextCameraSync = 0
+local NextAutoGenScan = 0
+local NextBindTry = 0
+local NextViewportCheck = 0
 
-    if bAutoGen and bInUI then
+local function PreLocal()
+    local nowPL = os.clock()
+
+    if nowPL >= NextCameraSync then
+        NextCameraSync = nowPL + .5
+        local cam = workspace.CurrentCamera
+        if cam then
+            Camera = cam
+            if h.SetCamera then h.SetCamera(cam) end
+        end
+    end
+    PerfSeg("PL.camera")
+
+    if bAutoGen and bInUI and nowPL >= NextAutoGenScan then
         if not TempAutoGen then
+            NextAutoGenScan = nowPL + .2
             local s, grid = pcall(function()
                 return LocalPlayer.PlayerGui.PuzzleUI.Container.GridHolder.Grid
             end)
@@ -2368,11 +2348,13 @@ local function PreLocal()
         TempAutoGen = false
         LastPuzzleSignature = nil
     end
+    PerfSeg("PL.autogen")
 
     lchar = LocalPlayer.Character
     lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
 
-    if not BLOCK_KEY or not PARRY_KEY or not SPRINT_KEY then
+    if (not BLOCK_KEY or not PARRY_KEY or not SPRINT_KEY) and nowPL >= NextBindTry then
+        NextBindTry = nowPL + 2
         local s, e1, e2, e3 = pcall(GetBinds)
 
         if s then
@@ -2393,6 +2375,8 @@ local function PreLocal()
             end
         end
     end
+
+    PerfSeg("PL.binds")
 
     local tempisguest
 
@@ -2420,6 +2404,8 @@ local function PreLocal()
         end
     end
 
+    PerfSeg("PL.guest")
+
     if tempisguest ~= isguest then
         isguest = tempisguest
 
@@ -2437,6 +2423,8 @@ local function PreLocal()
             bt.Position = Vector2.new(viewport.x / 2 - length / 2, (viewport.y - viewport.y / 4) - height)
         end
     end
+
+    PerfSeg("PL.botlabel")
 
     if bShowTimer then
         local ctimer = game.ReplicatedStorage.RoundTimer:GetAttribute("TimeLeft")
@@ -2466,7 +2454,15 @@ local function PreLocal()
         bt3.Visible = false
     end
 
-    if Camera.ViewportSize ~= viewport then
+    PerfSeg("PL.timer")
+
+    local viewportChanged = false
+    if nowPL >= NextViewportCheck then
+        NextViewportCheck = nowPL + .5
+        viewportChanged = Camera.ViewportSize ~= viewport
+    end
+
+    if viewportChanged then
         viewport = Camera.ViewportSize
 
         length = bt.TextBounds.x
@@ -2481,6 +2477,8 @@ local function PreLocal()
         height3 = bt3.TextBounds.y
         bt3.Position = Vector2.new(viewport.x / 2 - length3 / 2, (viewport.y - viewport.y / 4) - height3)
     end
+
+    PerfSeg("PL.viewport")
 
     local pressed = false
 
@@ -2513,6 +2511,8 @@ local function PreLocal()
         bt2.Position = Vector2.new(center.x + math.random(-5, 5), center.y + math.random(-5, 5))
     end
 
+    PerfSeg("PL.keys")
+
     local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
     LocalRoot = lroot
     LocalPos = lroot and lroot.Position
@@ -2525,6 +2525,8 @@ local function PreLocal()
     else
         LocalHitboxSize = nil
     end
+
+    PerfSeg("PL.local")
 
     local killerChildren = Killers:GetChildren()
     local killerCount = #killerChildren
@@ -2549,28 +2551,35 @@ local function PreLocal()
             end
 
             local AbTime = tonumber(inst:GetAttribute("AbilityLastUsed") or 0)
-            local Ab = tonumber(inst:GetAttribute("AbilitiesUsed") or 0)
-            if not AbTime or not Ab then continue end
+            if not AbTime then continue end
+
             if not KillerAbTime[id] or not KillerAb[id] then
+                local Ab = tonumber(inst:GetAttribute("AbilitiesUsed") or 0)
+                if not Ab then continue end
                 KillerAbTime[id] = AbTime
                 KillerAb[id] = Ab
-            elseif KillerAbTime[id] ~= AbTime and KillerAb[id] == Ab then
-                KillerAb[id] = Ab
-                KillerAbTime[id] = AbTime
-                if kroot and LocalRoot then
-                    if active then
-                        local config = KillerData[inst.Name] or KillerData.Default
-                        local attackData = {
-                            Config = config,
-                        }
-                        ActiveAttacks[kroot] = attackData
-                        AttackVisUntil[kroot] = os.clock() + (config.WINDUP or 0) + (config.LINGER or 0)
-                        task.spawn(BlockChecker, kroot, inst, attackData)
+            elseif KillerAbTime[id] ~= AbTime then
+                local Ab = tonumber(inst:GetAttribute("AbilitiesUsed") or 0)
+                if not Ab then continue end
+
+                if KillerAb[id] == Ab then
+                    KillerAb[id] = Ab
+                    KillerAbTime[id] = AbTime
+                    if kroot and LocalRoot then
+                        if active then
+                            local config = KillerData[inst.Name] or KillerData.Default
+                            local attackData = {
+                                Config = config,
+                            }
+                            ActiveAttacks[kroot] = attackData
+                            AttackVisUntil[kroot] = os.clock() + (config.WINDUP or 0) + (config.LINGER or 0)
+                            task.spawn(BlockChecker, kroot, inst, attackData)
+                        end
                     end
+                elseif tonumber(KillerAb[id]) < tonumber(Ab) then
+                    KillerAb[id] = Ab
+                    KillerAbTime[id] = AbTime
                 end
-            elseif KillerAbTime[id] ~= AbTime and tonumber(KillerAb[id]) < tonumber(Ab) then
-                KillerAb[id] = Ab
-                KillerAbTime[id] = AbTime
             end
 
             if bAutoStab and bool == "TwoTime" and lchar then
@@ -2589,6 +2598,7 @@ local function PreLocal()
     end
 
     KillerSnapshot = newSnapshot
+    PerfSeg("PL.killers")
 
     if bAutoParry and isguest then
         local lchar = LocalPlayer.Character
@@ -2604,6 +2614,7 @@ local function PreLocal()
             end
         end
     end
+    PerfSeg("PL.parry")
 end
 
 local function PreData()
@@ -2824,21 +2835,21 @@ local function Render()
 
     for id, info in ItemRenderCache do
         if info.Kind == "Generator" then
-            if bHighlight then Highlight(info.HighlightData, info.Color) end
-            if bTextName then DrawTextAt(info.Pos, info.Text, info.Color) end
+            if bHighlight then Highlight(info.Main, info.Color) end
+            if bTextName then DrawPartText(info.Main, info.Text, info.Color) end
         elseif info.Kind == "Body" then
-            if bHighlight and info.HighlightParts then
-                pcall(h.HighlightGroup, info.HighlightParts, info.Color, .18, .7, .7, 1.25)
+            if bHighlight then
+                pcall(h.HighlightGroup, info.Parts, info.Color, .18, .7, .7, 1.25)
             end
-            if info.TorsoPos and bTextName then
-                DrawTextAt(info.TorsoPos, info.Text, info.Color)
+            if info.Torso and bTextName then
+                DrawPartText(info.Torso, info.Text, info.Color)
             end
         elseif info.Kind == "Part" then
-            if info.Text and info.Pos and bTextName then
-                DrawTextAt(info.Pos, info.Text, info.Color)
+            if info.Text and bTextName then
+                DrawPartText(info.Part, info.Text, info.Color)
             end
             if bHighlight then
-                Highlight(info.HighlightData, info.Color)
+                Highlight(info.Part, info.Color)
             end
         end
     end
@@ -3249,26 +3260,105 @@ window:createcolorpicker(tabColors, {
     end
 })
 
-local function Timed(name, fn)
-    return function(...)
-        local started = os.clock()
-        fn(...)
-        local took = os.clock() - started
-        if took >= .008 then
-            print(string.format("[Perf] %s took %.1fms", name, took * 1000))
+local Perf = {Window = {}, LastRender = 0, LastSpike = {}, SegStart = 0}
+local PERF_HITCH_GAP = .04
+local PERF_SPIKE = .008
+
+local function PerfRecord(name, took)
+    Perf.Window[name] = (Perf.Window[name] or 0) + took
+
+    if took >= PERF_SPIKE then
+        local now = os.clock()
+        if now - (Perf.LastSpike[name] or 0) >= .25 then
+            Perf.LastSpike[name] = now
+            print(string.format("[Spike] %s took %.1fms", name, took * 1000))
         end
     end
 end
 
-if _G.ForsakenPerf then
-    RunService.PreLocal:Connect(Timed("PreLocal", PreLocal))
-    RunService.PreData:Connect(Timed("PreData", PreData))
-    RunService.Render:Connect(Timed("Render", Render))
-else
-    RunService.PreLocal:Connect(PreLocal)
-    RunService.PreData:Connect(PreData)
-    RunService.Render:Connect(Render)
+local function PerfWrap(name, fn)
+    return function(...)
+        local started = os.clock()
+        local a, b, c, d = fn(...)
+        PerfRecord(name, os.clock() - started)
+        return a, b, c, d
+    end
 end
+
+local PerfCallbacks = {PreLocal = true, PreData = true, Render = true}
+
+local function PerfHitch(gap)
+    local inCallbacks = 0
+    local sections = {}
+
+    for name, took in Perf.Window do
+        if PerfCallbacks[name] then
+            inCallbacks += took
+        else
+            sections[#sections + 1] = {Name = name, Took = took}
+        end
+    end
+
+    table.sort(sections, function(x, y) return x.Took > y.Took end)
+
+    local top = {}
+    for i = 1, math.min(#sections, 4) do
+        top[#top + 1] = string.format("%s %.1fms", sections[i].Name, sections[i].Took * 1000)
+    end
+
+    local items = 0
+    for _ in ItemRenderCache do items += 1 end
+
+    print(string.format(
+        "[Hitch] %.0fms gap | PreLocal %.1f PreData %.1f Render %.1f | outside script %.1f | top: %s | items=%d killers=%d",
+        gap * 1000,
+        (Perf.Window.PreLocal or 0) * 1000,
+        (Perf.Window.PreData or 0) * 1000,
+        (Perf.Window.Render or 0) * 1000,
+        math.max(gap - inCallbacks, 0) * 1000,
+        #top > 0 and table.concat(top, ", ") or "none",
+        items,
+        #KillerSnapshot
+    ))
+end
+
+UpdateActiveLines = PerfWrap("UpdateActiveLines", UpdateActiveLines)
+RenderActiveLines = PerfWrap("RenderActiveLines", RenderActiveLines)
+
+PerfSeg = function(name)
+    local now = os.clock()
+    PerfRecord(name, now - Perf.SegStart)
+    Perf.SegStart = now
+end
+
+local BasePreLocal = PreLocal
+PreLocal = function(...)
+    local started = os.clock()
+    Perf.SegStart = started
+    BasePreLocal(...)
+    PerfRecord("PreLocal", os.clock() - started)
+end
+PreData = PerfWrap("PreData", PreData)
+
+local BaseRender = Render
+Render = function(...)
+    local now = os.clock()
+    local gap = now - Perf.LastRender
+
+    if Perf.LastRender ~= 0 and gap >= PERF_HITCH_GAP and gap < 1 then
+        PerfHitch(gap)
+    end
+
+    Perf.LastRender = now
+    Perf.Window = {}
+
+    BaseRender(...)
+    PerfRecord("Render", os.clock() - now)
+end
+
+RunService.PreLocal:Connect(function(...) return PreLocal(...) end)
+RunService.PreData:Connect(function(...) return PreData(...) end)
+RunService.Render:Connect(function(...) return Render(...) end)
 
 clear_model_data()
 
