@@ -15,6 +15,7 @@ local RunService = game:GetService("RunService")
 local HighlightColor = Color3.fromRGB(70,130,180)
 local TextColor = Color3.fromRGB(70,130,180)
 local PlayerList
+local viewmodels = workspace:FindFirstChild("Viewmodels")
 local PlayerCache = {}
 local RenderCache = {}
 local ModelRetry = {}
@@ -63,7 +64,10 @@ _G.PixelOffset = 5
 _G.Outline = true
 
 local ESP = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/ESP.lua"))()
+
 local HLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))()
+local Highlight = HLib.Highlight
+
 local Text = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Text.lua"))()
 
 local function GetColor(vol)
@@ -73,10 +77,25 @@ local function GetColor(vol)
     return volumec.MinVolume:Lerp(volumec.MaxVolume, alpha)
 end
 
-local function Highlight(inst, color, opacityFill, opacityOutline, thickness)
-    return (pcall(HLib.Highlight, inst, color, opacityFill or .23, opacityOutline or .6, thickness or .7))
+local function BuildHighlightData(part)
+    local ok, data = pcall(function()
+        return {
+            Position = part.Position,
+            RightVector = part.RightVector,
+            UpVector = part.UpVector,
+            LookVector = part.LookVector,
+            PartSize = part.Size,
+            Parent = part.Parent,
+        }
+    end)
+
+    if ok and data.Parent then return data end
+    return nil
 end
 
+local SoundRenderCache = {}
+local GadgetRenderCache = {}
+local CameraRenderCache = {}
 
 _G.CustomParts = {
     RigType = "R15",
@@ -184,6 +203,9 @@ end
 local function ResetCaches()
     PlayerCache = {}
     RenderCache = {}
+    SoundRenderCache = {}
+    GadgetRenderCache = {}
+    CameraRenderCache = {}
     ModelRetry = {}
     SoundRetry = {}
     GadgetTargets = {}
@@ -447,6 +469,80 @@ local function UpdateSoundEntry(id, entry, rootPos, now, viewmodelsId)
     return true
 end
 
+local function ScanGadget(inst, state)
+    local Map = inst:FindFirstChildOfClass("Folder")
+    if Map then
+        if state.Gamemode == nil then
+            state.Gamemode = workspace:GetAttribute("Gamemode") or false
+        end
+
+        local defaults = state.Gamemode and Map:FindFirstChild("DefaultCameras")
+        local children = defaults and defaults:GetChildren()
+        if type(children) == "table" then
+            for _, part in children do
+                local cam = part:FindFirstChild("Cam")
+                if not cam or part:GetAttribute("Disabled") ~= "false" then continue end
+                if part:FindFirstChild("Owner") and not TeamGadgetESP then continue end
+
+                local camId = InstId(cam)
+                if camId and not state.SeenCameras[camId] then
+                    state.SeenCameras[camId] = true
+                    state.Cameras[#state.Cameras + 1] = cam
+                end
+            end
+        end
+    end
+
+    if not inst:FindFirstChild("StateObject") then return end
+
+    local iname = inst.Name
+    local PPart = inst.PrimaryPart
+    if iname == "Claymore" then
+        PPart = inst:FindFirstChild("Root") or PPart
+    end
+    if not PPart or not SolidClasses[PPart.ClassName] then return end
+
+    local maybeowner = inst:FindFirstChild("Owner")
+    if maybeowner and not TeamGadgetESP and maybeowner.ClassName == "BillboardGui" then return end
+
+    if iname == "Defuser" and PPart:FindFirstChild("DefuserFlag") then return end
+
+    local label = LabelCache[iname]
+    if not label then
+        label = AddSpaces(iname)
+        LabelCache[iname] = label
+    end
+
+    state.Targets[#state.Targets + 1] = {Model = inst, Id = InstId(inst), Part = PPart, Color = GadgetColors[iname], Label = label}
+end
+
+local function UpdateGadgets(now)
+    if now - LastGadgetScan < GADGET_INTERVAL then return end
+    if not HeavyReady() then return end
+    LastGadgetScan = now
+
+    local state = {Targets = {}, Cameras = {}, SeenCameras = {}}
+
+    pcall(function()
+        local found = {}
+        for _, inst in workspace:GetChildren() do
+            if GadgetSet[inst.Name] and inst.ClassName == "Model" then
+                local id = InstId(inst)
+                if id then found[id] = inst end
+            end
+        end
+
+        for _, inst in found do
+            pcall(ScanGadget, inst, state)
+        end
+    end)
+
+    GadgetTargets = state.Targets
+    CameraTargets = state.Cameras
+
+    MarkHeavy()
+end
+
 local function PreLocal()
     local now = Heartbeat()
 
@@ -454,13 +550,14 @@ local function PreLocal()
     if now < NextSoundTick then return end
     NextSoundTick = now + SOUND_INTERVAL
 
+    pcall(UpdateGadgets, now)
+
     local LocalChar = LocalPlayer.Character
     local root
     if LocalChar then
         root = LocalChar:FindFirstChild("HumanoidRootPart")
     end
 
-    local viewmodels = workspace:FindFirstChild("Viewmodels")
     if not root or not viewmodels then
         PlayerCache = {}
         RenderCache = {}
@@ -722,111 +819,32 @@ local function RunPost()
     ScanCursor = 0
 end
 
-local function PostLocal()
-    local before = NextPostTick
-    RunPost()
-    if NextPostTick ~= before then
-        MarkHeavy()
-    end
-end
-
-local function ScanGadget(inst, state)
-    local Map = inst:FindFirstChildOfClass("Folder")
-    if Map then
-        if state.Gamemode == nil then
-            state.Gamemode = workspace:GetAttribute("Gamemode") or false
-        end
-
-        local defaults = state.Gamemode and Map:FindFirstChild("DefaultCameras")
-        local children = defaults and defaults:GetChildren()
-        if type(children) == "table" then
-            for _, part in children do
-                local cam = part:FindFirstChild("Cam")
-                if not cam or part:GetAttribute("Disabled") ~= "false" then continue end
-                if part:FindFirstChild("Owner") and not TeamGadgetESP then continue end
-
-                local camId = InstId(cam)
-                if camId and not state.SeenCameras[camId] then
-                    state.SeenCameras[camId] = true
-                    state.Cameras[#state.Cameras + 1] = cam
-                end
-            end
-        end
-    end
-
-    if not inst:FindFirstChild("StateObject") then return end
-
-    local iname = inst.Name
-    local PPart = inst.PrimaryPart
-    if iname == "Claymore" then
-        PPart = inst:FindFirstChild("Root") or PPart
-    end
-    if not PPart or not SolidClasses[PPart.ClassName] then return end
-
-    local maybeowner = inst:FindFirstChild("Owner")
-    if maybeowner and not TeamGadgetESP and maybeowner.ClassName == "BillboardGui" then return end
-
-    if iname == "Defuser" and PPart:FindFirstChild("DefuserFlag") then return end
-
-    local label = LabelCache[iname]
-    if not label then
-        label = AddSpaces(iname)
-        LabelCache[iname] = label
-    end
-
-    state.Targets[#state.Targets + 1] = {Model = inst, Id = InstId(inst), Part = PPart, Color = GadgetColors[iname], Label = label}
-end
-
-local function UpdateGadgets(now)
-    if now - LastGadgetScan < GADGET_INTERVAL then return end
-    if not HeavyReady() then return end
-    LastGadgetScan = now
-
-    local state = {Targets = {}, Cameras = {}, SeenCameras = {}}
-
-    pcall(function()
-        local found = {}
-        for _, inst in workspace:GetChildren() do
-            if GadgetSet[inst.Name] and inst.ClassName == "Model" then
-                local id = InstId(inst)
-                if id then found[id] = inst end
-            end
-        end
-
-        for _, inst in found do
-            pcall(ScanGadget, inst, state)
-        end
-    end)
-
-    GadgetTargets = state.Targets
-    CameraTargets = state.Cameras
-
-    MarkHeavy()
-end
-
-local function ScreenPoint(part)
-    local ok, position, visible = pcall(function()
-        return Camera:WorldToScreenPoint(part.Position)
-    end)
-
-    if ok then return position, visible end
-    return nil, false
-end
-
-local function Render()
-    local now = Heartbeat()
+local function UpdateRenderCaches()
+    local newSound = {}
 
     if SoundESP then
-        for _, render in RenderCache do
+        for id, render in RenderCache do
+            local list = {}
             for _, part in render.Parts do
-                Highlight(part, render.Color)
+                local data = BuildHighlightData(part)
+                if data then list[#list + 1] = data end
+            end
+            if #list > 0 then
+                newSound[id] = {Parts = list, Color = render.Color}
             end
         end
     end
 
-    if not GadgetESP then return end
+    SoundRenderCache = newSound
 
-    pcall(UpdateGadgets, now)
+    if not GadgetESP then
+        GadgetRenderCache = {}
+        CameraRenderCache = {}
+        return
+    end
+
+    local newCameras = {}
+    local newGadgets = {}
 
     for index = #CameraTargets, 1, -1 do
         local cam = CameraTargets[index]
@@ -835,12 +853,9 @@ local function Render()
             continue
         end
 
-        if not Highlight(cam, HighlightColor, .2, .8, .6) then continue end
-
-        local Position, Visible = ScreenPoint(cam)
-        if Visible then
-            local NewPos = Vector2.new(Position.x, Position.y - 6.5)
-            DrawingImmediate.OutlinedText(NewPos, 13, TextColor, 1, "Hacked Camera", true)
+        local data = BuildHighlightData(cam)
+        if data then
+            newCameras[#newCameras + 1] = {Data = data, Color = TextColor, Label = "Hacked Camera"}
         end
     end
 
@@ -851,17 +866,69 @@ local function Render()
             continue
         end
 
-        if not Highlight(target.Part, target.Color, .2, .8, 1) then continue end
-
-        local Position, Visible = ScreenPoint(target.Part)
-        if Visible then
-            local NewPos = Vector2.new(Position.x, Position.y - 6.5)
-            DrawingImmediate.OutlinedText(NewPos, 13, target.Color, 1, target.Label, true)
+        local data = BuildHighlightData(target.Part)
+        if data then
+            newGadgets[#newGadgets + 1] = {Data = data, Color = target.Color, Label = target.Label}
         end
+    end
+
+    CameraRenderCache = newCameras
+    GadgetRenderCache = newGadgets
+end
+
+local function PostLocal()
+    local before = NextPostTick
+    RunPost()
+    if NextPostTick ~= before then
+        MarkHeavy()
+    end
+
+    local now = Heartbeat()
+
+    local cam = workspace.CurrentCamera
+    if cam then
+        Camera = cam
+        HLib.SetCamera(cam)
+    end
+
+    if GadgetESP then
+        pcall(UpdateGadgets, now)
+    end
+
+    UpdateRenderCaches()
+end
+
+local function DrawLabel(data)
+    local Position, Visible = Camera:WorldToScreenPoint(data.Data.Position)
+    if Visible then
+        local NewPos = Vector2.new(Position.x, Position.y - 6.5)
+        DrawingImmediate.OutlinedText(NewPos, 13, data.Color, 1, data.Label, true)
     end
 end
 
-local UI = loadstring(game:HttpGet("https://raw.githubusercontent.com/okdude42/ui-lib/refs/heads/main/SevereLib.lua"))()
+local function Render()
+    if SoundESP then
+        for _, render in SoundRenderCache do
+            for _, data in render.Parts do
+                pcall(Highlight, data, render.Color, .23, .6, .7)
+            end
+        end
+    end
+
+    if not GadgetESP then return end
+
+    for _, entry in CameraRenderCache do
+        pcall(Highlight, entry.Data, HighlightColor, .2, .8, .6)
+        DrawLabel(entry)
+    end
+
+    for _, entry in GadgetRenderCache do
+        pcall(Highlight, entry.Data, entry.Color, .2, .8, 1)
+        DrawLabel(entry)
+    end
+end
+
+local UI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/UI.lua"))()
 
 local window = UI:createwindow({
     Title = "Operation One | Andris",
