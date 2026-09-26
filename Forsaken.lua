@@ -1040,28 +1040,23 @@ local function DrawAbilityName(data)
     DrawTextAt(pos, data.Name or data.Ability.Name, c.linesec, 25)
 end
 
-local function GetTrackedPosition(obj)
-    if not obj or not obj.Parent then
-        return nil
-    end
+local function ReadPrimaryPosition(obj)
+    return obj.PrimaryPart.Position
+end
 
-    local s, pos = pcall(function()
-        return obj.Position
-    end)
+local function LiveTrackedPosition(obj)
+    local ok, pos = pcall(ReadPosition, obj)
+    if ok and pos then return pos end
 
-    if s and pos then
-        return pos
-    end
-
-    local s2, primary = pcall(function()
-        return obj.PrimaryPart.Position
-    end)
-
-    if s2 and primary then
-        return primary
-    end
+    local okPrimary, primary = pcall(ReadPrimaryPosition, obj)
+    if okPrimary and primary then return primary end
 
     return nil
+end
+
+local function GetTrackedPosition(obj)
+    if not obj or not obj.Parent then return nil end
+    return LiveTrackedPosition(obj)
 end
 
 local function HasSound(root, sounds)
@@ -1148,7 +1143,6 @@ local function UpdateTrackedObject(data)
 
     if data.ObjectDestination then
         data.TrackedFrom = currentPos
-        data.TrackedTo = Vector3.new(data.ObjectDestination.X, currentPos.Y, data.ObjectDestination.Z)
         data.HasTrackedLine = true
     else
         data.HasTrackedLine = false
@@ -1156,9 +1150,11 @@ local function UpdateTrackedObject(data)
 end
 
 local function DrawTrackedObject(data)
-    if data.HasTrackedLine then
-        DrawWorldLine(data.TrackedFrom, data.TrackedTo)
-    end
+    if not data.HasTrackedLine then return end
+
+    local pos = LiveTrackedPosition(data.TrackedObject) or data.TrackedFrom
+    local destination = data.ObjectDestination
+    DrawWorldLine(pos, Vector3.new(destination.X, pos.Y, destination.Z))
 end
 
 local function IsStandingStill(data, root)
@@ -1541,10 +1537,11 @@ local function ReadRootPose(root)
     return root.Position, root.LookVector, root.RightVector, root.UpVector
 end
 
-local function NewLineData(ability, char, pos, lv, rv, uv)
+local function NewLineData(ability, char, root, pos, lv, rv, uv)
     return {
         Ability = ability,
         Character = char,
+        Root = root,
         IsLocal = char == LocalPlayer.Character,
         Name = ability.Name,
         Length = ability.Length,
@@ -1553,6 +1550,10 @@ local function NewLineData(ability, char, pos, lv, rv, uv)
         Rootlv = lv,
         Rootrv = rv,
         Rootuv = uv,
+        CurrentPosition = pos,
+        CurrentLookVector = lv,
+        CurrentRightVector = rv,
+        CurrentUpVector = uv,
         Started = os.clock(),
     }
 end
@@ -1590,7 +1591,7 @@ local function UpdateAbilityFolder(folder, abilitiesTable)
 
                 if checked and not wasActive and not data then
                     if not pos then pos, lv, rv, uv = ReadRootPose(root) end
-                    data = NewLineData(ability, char, pos, lv, rv, uv)
+                    data = NewLineData(ability, char, root, pos, lv, rv, uv)
 
                     if ability.Start then
                         ability.Start(data, char)
@@ -1612,7 +1613,7 @@ local function UpdateAbilityFolder(folder, abilitiesTable)
                 end
             elseif checked and not data then
                 if not pos then pos, lv, rv, uv = ReadRootPose(root) end
-                data = NewLineData(ability, char, pos, lv, rv, uv)
+                data = NewLineData(ability, char, root, pos, lv, rv, uv)
 
                 if ability.Start then
                     ability.Start(data, char)
@@ -1622,12 +1623,6 @@ local function UpdateAbilityFolder(folder, abilitiesTable)
             end
 
             if data and not data.LineDone then
-                if not pos then pos, lv, rv, uv = ReadRootPose(root) end
-                data.CurrentPosition = pos
-                data.CurrentLookVector = lv
-                data.CurrentRightVector = rv
-                data.CurrentUpVector = uv
-
                 if ability.Update then
                     ability.Update(char, root, data)
                     checked = ability.Check(char, root, data)
@@ -1685,6 +1680,14 @@ local function RenderActiveLines()
             end
 
             local ability = data.Ability
+
+            local ok, pos, lv, rv, uv = pcall(ReadRootPose, data.Root)
+            if ok then
+                data.CurrentPosition = pos
+                data.CurrentLookVector = lv
+                data.CurrentRightVector = rv
+                data.CurrentUpVector = uv
+            end
 
             if ability.Draw then
                 ability.Draw(data)
@@ -2094,35 +2097,98 @@ local function SolveWires(Endpoints, Size)
     return nil, "No solution found"
 end
 
+local CELL_SIZE = 75
+local GUI_INSET_Y = 0
+
+local function MouseNow()
+    if type(getmouseposition) == "function" then
+        local ok, pos = pcall(getmouseposition)
+        if ok and pos then return pos.x, pos.y end
+    end
+
+    local pos = UserInputService:GetMouseLocation()
+    return pos.X, pos.Y
+end
+
+local MoveOffset = {X = 0, Y = 0}
+
+local function MoveMouse(x, y)
+    mousemoveabs(x + MoveOffset.X, y + MoveOffset.Y)
+end
+
+local function CalibrateMouse()
+    MoveOffset.X, MoveOffset.Y = 0, 0
+
+    local sx, sy = MouseNow()
+    mousemoveabs(sx, sy)
+    task.wait()
+    task.wait()
+
+    local ax, ay = MouseNow()
+    MoveOffset.X = math.floor(sx - ax + .5)
+    MoveOffset.Y = math.floor(sy - ay + .5)
+
+    MoveMouse(sx, sy)
+    task.wait()
+end
+
 local function GetCenter(gui)
     local px = memory.readf32(gui, abspos)
     local py = memory.readf32(gui, abspos + 4)
-    local sx = memory.readf32(gui, abssize)
-    local sy = memory.readf32(gui, abssize + 4)
 
-    return px + sx / 2, py + sy / 2
+    return px + CELL_SIZE / 2, py + CELL_SIZE / 2 + GUI_INSET_Y
 end
 
-local function TweenMouse(s, x, y)
-    local mouse = UserInputService:GetMouseLocation()
-    local sx = mouse.X
-    local sy = mouse.Y
-    local start = os.clock()
+local DRAG_CELLS_PER_SECOND = 20
+local TRAVEL_SPEED = 4000
+local MAX_DRAG_STEP = CELL_SIZE * .45
 
-    while true do
-        local alpha = (os.clock() - start) / s
-        if alpha >= 1 then
-            break
+local function MoveAlong(points, speed, maxStep)
+    local lengths = {}
+    local total = 0
+
+    for i = 2, #points do
+        local dx = points[i].x - points[i - 1].x
+        local dy = points[i].y - points[i - 1].y
+        lengths[i] = math.sqrt(dx * dx + dy * dy)
+        total += lengths[i]
+    end
+
+    local last = points[#points]
+    if total <= 0 then
+        MoveMouse(last.x, last.y)
+        return
+    end
+
+    local duration = math.max(total / speed, .07)
+    local start = os.clock()
+    local traveled = 0
+    local segment = 2
+    local segmentStart = 0
+
+    while traveled < total do
+        local alpha = math.min((os.clock() - start) / duration, 1)
+        local target = alpha * alpha * (3 - 2 * alpha) * total
+        traveled = math.min(target, traveled + maxStep)
+
+        while segment < #points and segmentStart + lengths[segment] < traveled do
+            segmentStart += lengths[segment]
+            segment += 1
         end
 
-        local eased = alpha * alpha * (3 - 2 * alpha)
-        local px = sx + (x - sx) * eased
-        local py = sy + (y - sy) * eased
-        mousemoveabs(px, py)
+        local a, b = points[segment - 1], points[segment]
+        local f = lengths[segment] > 0 and math.clamp((traveled - segmentStart) / lengths[segment], 0, 1) or 1
+        MoveMouse(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f)
+
+        if traveled >= total then break end
         task.wait()
     end
 
-    mousemoveabs(x, y)
+    MoveMouse(last.x, last.y)
+end
+
+local function SpeedJitter()
+    return .9 + math.random() * .2
 end
 
 local function SimplifyPath(path)
@@ -2157,6 +2223,9 @@ local function Solver(grid, solution)
     local time = math.floor(math.max(AutoGenTime + (math.random() * 2 - 1) * AutoGenRandom, .2) * 100) / 100
     task.wait(time)
 
+    CalibrateMouse()
+    print(string.format("[AutoGen] mouse offset %d, %d", MoveOffset.X, MoveOffset.Y))
+
     for _, path in solution do
         if #path < 2 then continue end
 
@@ -2164,15 +2233,13 @@ local function Solver(grid, solution)
         local firstCell = grid:FindFirstChild(tostring(first.x) .. "-" .. tostring(first.y))
         if not firstCell then continue end
         local fx, fy = GetCenter(firstCell)
-        local mouse = UserInputService:GetMouseLocation()
-        local distance = vector.magnitude(Vector2.new(fx, fy) - mouse)
-        local maxDistance = vector.magnitude(Vector2.new(viewport.x, viewport.y))
-        local distanceAlpha = math.clamp(distance / maxDistance, 0, 1)
+        local mx, my = MouseNow()
 
-        TweenMouse(.04 + .03 * distanceAlpha, fx, fy)
-        task.wait(.07)
+        MoveAlong({{x = mx, y = my}, {x = fx, y = fy}}, TRAVEL_SPEED * SpeedJitter(), math.huge)
+        task.wait(.03)
         mouse1press()
 
+        local points = {{x = fx, y = fy}}
         local simplePath = SimplifyPath(path)
         for i = 2, #simplePath do
             local point = simplePath[i]
@@ -2180,12 +2247,11 @@ local function Solver(grid, solution)
             if not cell then break end
 
             local px, py = GetCenter(cell)
-
-            local previous = simplePath[i - 1]
-            local distance = math.abs(point.x - previous.x) + math.abs(point.y - previous.y)
-            TweenMouse(.04 + .03 * distance, px, py)
+            points[#points + 1] = {x = px, y = py}
         end
 
+        MoveAlong(points, CELL_SIZE * DRAG_CELLS_PER_SECOND * SpeedJitter(), MAX_DRAG_STEP)
+        task.wait()
         mouse1release()
     end
 
