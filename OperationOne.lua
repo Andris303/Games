@@ -76,7 +76,9 @@ local function ReadPosition(part)
     return part.Position
 end
 
-_G.CustomParts = {
+_G.CustomParts = nil
+
+local ViewmodelRig = {
     RigType = "R15",
     HumanoidRootPart = "torso",
     Head = "head",
@@ -459,6 +461,40 @@ local function ScanGadget(inst, state)
     state.Targets[#state.Targets + 1] = {Model = inst, Id = InstId(inst), Part = PPart, Color = GadgetColors[iname], Label = label}
 end
 
+local PlayerLikeGadgets = {Drone = "Drone"}
+
+local function TrackGadgetModel(target, label)
+    local model = target.Model
+    if ESP.IsTracked(model) then return end
+
+    local partName = target.Part.Name
+    local owner = model:FindFirstChild("Owner")
+    local friendly = owner ~= nil and owner.ClassName == "BillboardGui"
+
+    ESP.AddPlayer(model, {
+        Username = label,
+        DisplayName = label,
+        UserId = 0,
+        NoHuman = true,
+        TeamType = "Manual",
+        TeamName = friendly and "Friendly" or "Enemies",
+        LocalTeamName = "Friendly",
+        CustomParts = {
+            RigType = "R6",
+            HumanoidRootPart = partName,
+            Head = partName,
+            Torso = partName,
+            ["Left Arm"] = partName,
+            ["Right Arm"] = partName,
+            ["Left Leg"] = partName,
+            ["Right Leg"] = partName,
+        },
+        ShouldShow = function()
+            return GadgetESP and (not friendly or TeamGadgetESP)
+        end,
+    })
+end
+
 local function UpdateGadgets(now)
     if now - LastGadgetScan < GADGET_INTERVAL then return end
     if not HeavyReady() and now - LastGadgetScan < GADGET_INTERVAL * 3 then return end
@@ -475,6 +511,14 @@ local function UpdateGadgets(now)
     end)
 
     GadgetTargets = state.Targets
+
+    for _, target in state.Targets do
+        local label = PlayerLikeGadgets[target.Model.Name]
+        if label then
+            target.EspOnly = true
+            pcall(TrackGadgetModel, target, label)
+        end
+    end
     CameraTargets = state.Cameras
 
     MarkHeavy()
@@ -619,6 +663,7 @@ local function TrackViewmodel(inst, scan, now)
         HealthSource = Human,
         IsLocal = inst.Name == "LocalViewmodel",
         NoHuman = true,
+        CustomParts = ViewmodelRig,
         GetTeam = function(data)
             local t = os.clock()
             if t >= teamCache.Next then
@@ -783,7 +828,9 @@ local function UpdateRenderCaches(now)
             continue
         end
 
-        newGadgets[#newGadgets + 1] = {Part = target.Part, Color = target.Color, Label = target.Label}
+        if not target.EspOnly then
+            newGadgets[#newGadgets + 1] = {Part = target.Part, Color = target.Color, Label = target.Label}
+        end
     end
 
     CameraRenderCache = newCameras
