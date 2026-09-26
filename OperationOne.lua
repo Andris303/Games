@@ -864,7 +864,7 @@ local window = UI:createwindow({
     DefaultAccent = Color3.fromRGB(208, 188, 255),
     DefaultSnowfall = true,
     DefaultScale = 1.0,
-    DefaultFont = 0,
+    DefaultFont = "Nunito",
 })
 
 local tabMain = window:createtab("Main")
