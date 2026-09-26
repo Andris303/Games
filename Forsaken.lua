@@ -89,20 +89,20 @@ do
 end
 
 bt.Size = 30
-bt.Font = 0
+bt.Font = "Nunito"
 bt.Outline = true
 bt.Visible = false
 
 bt2.Text = "BLOCK"
 bt2.Size = 35
-bt2.Font = 0
+bt2.Font = "Nunito"
 bt2.Color = Color3.fromRGB(255,25,25)
 bt2.Outline = true
 bt2.Visible = false
 
 bt3.Text = "Real timer: 0:00"
 bt3.Size = 30
-bt3.Font = 0
+bt3.Font = "Nunito"
 bt3.Color = Color3.fromRGB(214,181,136)
 bt3.Outline = true
 bt3.Visible = false
@@ -2224,7 +2224,6 @@ local function Solver(grid, solution)
     task.wait(time)
 
     CalibrateMouse()
-    print(string.format("[AutoGen] mouse offset %d, %d", MoveOffset.X, MoveOffset.Y))
 
     for _, path in solution do
         if #path < 2 then continue end
@@ -2828,7 +2827,7 @@ window = UI:createwindow({
     DefaultAccent = Color3.fromRGB(208, 188, 255),
     DefaultSnowfall = true,
     DefaultScale = _G.DPIScale or 1.0,
-    DefaultFont = 0,
+    DefaultFont = "Nunito",
 })
 
 window:registerkey("AutoBlockKeybind", KEYBIND, function(val)
