@@ -57,7 +57,7 @@ local PartCache = {}
 local PartCacheRefresh = {}
 local ItemRenderCache = {}
 local ItemQueue = {List = {}, Pos = 1, Built = 0, Next = {}}
-local Timers = {Camera = 0, AutoGen = 0, Bind = 0, Viewport = 0, Players = 0}
+local Timers = {Camera = 0, AutoGen = 0, Bind = 0, Viewport = 0, Players = 0, QueryHitbox = 0}
 local KillerSnapshot = {}
 local LocalRoot
 local LocalPos
@@ -70,7 +70,7 @@ local bt3 = Drawing.new("Text")
 local viewport = Camera.ViewportSize
 local isguest = false
 local FocusTimer = 0
-local bBlockOnInv = false
+local bParryOnInv = false
 local noliname
 local window
 local keybindlabel
@@ -90,12 +90,14 @@ end
 
 bt.Size = 30
 bt.Font = "Nunito"
+bt.Center = true
 bt.Outline = true
 bt.Visible = false
 
 bt2.Text = "BLOCK"
 bt2.Size = 35
 bt2.Font = "Nunito"
+bt2.Center = true
 bt2.Color = Color3.fromRGB(255,25,25)
 bt2.Outline = true
 bt2.Visible = false
@@ -103,13 +105,27 @@ bt2.Visible = false
 bt3.Text = "Real timer: 0:00"
 bt3.Size = 30
 bt3.Font = "Nunito"
+bt3.Center = true
 bt3.Color = Color3.fromRGB(214,181,136)
 bt3.Outline = true
 bt3.Visible = false
 
 local function LayoutLabels()
-    bt.Position = Vector2.new(viewport.x / 2 - bt.TextBounds.x / 2, (viewport.y - viewport.y / 4) - bt.TextBounds.y)
-    bt3.Position = Vector2.new(viewport.x / 2 - bt3.TextBounds.x / 2, viewport.y / 10 - bt3.TextBounds.y / 2)
+    bt.Position = Vector2.new(viewport.x / 2, viewport.y * .75 - bt.Size)
+    bt3.Position = Vector2.new(viewport.x / 2, viewport.y / 10 - bt3.Size / 2)
+end
+
+local function ApplyLabelFont()
+    local font = "Nunito"
+    if window then
+        font = window.getfont and window:getfont() or window:getvalue("UIFont") or font
+    end
+
+    pcall(function()
+        bt.Font = font
+        bt2.Font = font
+        bt3.Font = font
+    end)
 end
 
 LayoutLabels()
@@ -155,6 +171,7 @@ do
     end
 end
 local PARRY_DELAY = 0
+local BLOCK_DELAY = 0
 local START_WIDTH = 7.5
 
 local RejuvSuppressUntil = {}
@@ -721,10 +738,17 @@ local CachedQueryHitbox
 local CachedQueryHitboxChar
 
 local function GetQueryHitbox(lchar)
-    if CachedQueryHitboxChar == lchar and CachedQueryHitbox and CachedQueryHitbox.Parent then
-        return CachedQueryHitbox
+    if CachedQueryHitboxChar == lchar then
+        if CachedQueryHitbox and CachedQueryHitbox.Parent then
+            return CachedQueryHitbox
+        end
+
+        if os.clock() < Timers.QueryHitbox then
+            return nil
+        end
     end
 
+    Timers.QueryHitbox = os.clock() + .5
     CachedQueryHitbox = lchar:FindFirstChild("QueryHitbox", true)
     CachedQueryHitboxChar = lchar
 
@@ -796,7 +820,7 @@ local function BlockChecker(KRoot, inst, attackData)
     local linger = config.LINGER or 0
     local started = os.clock()
     local ping = game:GetPing() / 1000
-    local blockStartDelay = math.max(0, windup - ping - BLOCK_SAFETY)
+    local blockStartDelay = math.max(0, windup + BLOCK_DELAY - ping - BLOCK_SAFETY)
     local blockEndDelay = math.max(0, windup + linger - ping - BLOCK_SAFETY - .05)
 
     if blockStartDelay > 0 then
@@ -804,7 +828,7 @@ local function BlockChecker(KRoot, inst, attackData)
     end
 
     while os.clock() - started < blockEndDelay do
-        if not active or not bAutoBlock then break end
+        if not active or not bAutoBlock or ActiveAttacks[KRoot] ~= attackData then break end
 
         local lchar = LocalPlayer.Character
         local queryHitbox = lchar and GetQueryHitbox(lchar)
@@ -813,11 +837,6 @@ local function BlockChecker(KRoot, inst, attackData)
         end)
 
         if queryHitbox and okPoll and killerPos and ShouldBlock(KRoot, killerPos, killerLook, inst.Name, queryHitbox, localPos) then
-            if not bBlockOnInv and (inst:GetAttribute("Invincible") or inst:GetAttribute("StunnedDisabled")) then
-                task.wait(.01)
-                continue
-            end
-
             if ActiveAttacks[KRoot] == attackData then ActiveAttacks[KRoot] = nil end
 
             if isguest then
@@ -966,6 +985,13 @@ local function Parry(lchar)
             task.wait(PARRY_DELAY)
         end
 
+        if not bParryOnInv then
+            local ok, immune = pcall(function()
+                return killer:GetAttribute("Invincible") or killer:GetAttribute("StunnedDisabled")
+            end)
+            if ok and immune then return end
+        end
+
         keypress(PARRY_KEY)
         task.wait(.1)
         keyrelease(PARRY_KEY)
@@ -974,7 +1000,7 @@ local function Parry(lchar)
 
         local lpos, kpos = lroot.Position, kroot.Position
         local predictedPos = PredictKillerPosition(kroot, kpos, lpos, 2.25)
-        lroot.CFrame = CFrame.lookAt(lpos, predictedPos)
+        lroot.CFrame = CFrame.lookAt(lpos, Vector3.new(predictedPos.X, lpos.Y, predictedPos.Z))
     end
 end
 
@@ -1093,16 +1119,16 @@ end
 
 local function DrawMovementFromOrigin(data)
     local currentPos = data.CurrentPosition
-    local movement = Vector3.new(currentPos.X - data.Origin.X, currentPos.Y - data.Origin.Y, currentPos.Z - data.Origin.Z)
+    local movement = Vector3.new(currentPos.X - data.Origin.X, 0, currentPos.Z - data.Origin.Z)
     local traveled = vector.magnitude(movement)
 
-    if traveled <= .2 then
+    if traveled <= 2 then
         DrawLookLine(currentPos, data.CurrentLookVector, data.CurrentRightVector, data.CurrentUpVector, data.Length)
         return
     end
 
     local direction = movement / traveled
-    local destination = Vector3.new(data.Origin.X + direction.X * data.Length, data.Origin.Y + direction.Y * data.Length, data.Origin.Z + direction.Z * data.Length)
+    local destination = Vector3.new(data.Origin.X + direction.X * data.Length, currentPos.Y, data.Origin.Z + direction.Z * data.Length)
 
     if traveled < data.Length then
         DrawWorldLine(currentPos, destination)
@@ -2492,8 +2518,7 @@ local function PreLocal()
     end
 
     if bt2.Visible then
-        local bounds = bt2.TextBounds
-        bt2.Position = Vector2.new(viewport.x / 2 - bounds.x / 2 + math.random(-5, 5), viewport.y / 2 - bounds.y / 2 + math.random(-5, 5))
+        bt2.Position = Vector2.new(viewport.x / 2 + math.random(-5, 5), viewport.y / 2 - bt2.Size / 2 + math.random(-5, 5))
     end
 
     local newSnapshot = {}
@@ -2553,9 +2578,10 @@ local function PreLocal()
                             KillerAb[id] = Ab
                             KillerAbTime[id] = AbTime
 
-                            if kroot and LocalRoot then
+                            local previous = kroot and ActiveAttacks[kroot]
+                            if kroot and LocalRoot and not (previous and now - previous.Started < .2) then
                                 local config = KillerData[inst.Name] or KillerData.Default
-                                local attackData = {Config = config}
+                                local attackData = {Config = config, Started = now}
                                 ActiveAttacks[kroot] = attackData
                                 AttackVisUntil[kroot] = os.clock() + (config.WINDUP or 0) + (config.LINGER or 0)
                                 task.spawn(BlockChecker, kroot, inst, attackData)
@@ -2605,14 +2631,46 @@ local function PreLocal()
 end
 
 
+local ItemLabels = {BloxyCola = "COLA"}
+
+local function GetCarriedItems(player, char)
+    local items = {}
+
+    for _, container in {char, player:FindFirstChild("Backpack")} do
+        if container then
+            for _, child in container:GetChildren() do
+                if child.ClassName == "Tool" then
+                    items[#items + 1] = ItemLabels[child.Name] or string.upper(AddSpaces(child.Name))
+                end
+            end
+        end
+    end
+
+    if #items == 0 then return nil end
+    return table.concat(items, ", ")
+end
+
+local function GetOblation(player, char)
+    local value = char:GetAttribute("Oblation")
+    if type(value) ~= "number" then
+        value = player:GetAttribute("Oblation")
+    end
+    if type(value) ~= "number" then return nil end
+
+    return tostring(math.floor(math.clamp(value / 15, 0, 1) * 100 + .5)) .. "%"
+end
+
 local function RegisterPlayers()
     for _, player in Players:GetChildren() do
         local Char = player.Character
 
         if Char and Char:FindFirstChild("Humanoid") and not ESP.IsTracked(Char) then
             local label = AddSpaces(Char.Name)
+            local isAzure = Char.Name == "Azure"
             local nextCheck = 0
-            local shown
+            local nextExtra = 0
+            local inRound = false
+            local extra
 
             ESP.AddPlayer(Char, {
                 Player = player,
@@ -2620,16 +2678,31 @@ local function RegisterPlayers()
                 CustomParts = Char.Name == "Sixer" and SixerRig or nil,
                 GetTool = function(data)
                     local t = os.clock()
+                    local char = data.Character
+
                     if t >= nextCheck then
                         nextCheck = t + .25
 
-                        local char = data.Character
                         local parent = char and char.Parent
                         local parentName = parent and parent.Name
-                        shown = (parentName == "Survivors" or parentName == "Killers") and label or nil
+                        inRound = parentName == "Survivors" or parentName == "Killers"
                     end
 
-                    return shown
+                    if not inRound then return nil end
+
+                    if t >= nextExtra then
+                        nextExtra = t + 1
+
+                        local ok, result = pcall(function()
+                            if isAzure then
+                                return GetOblation(player, char)
+                            end
+                            return GetCarriedItems(player, char)
+                        end)
+                        extra = ok and result or nil
+                    end
+
+                    return extra and (label .. ": " .. extra) or label
                 end,
             })
         end
@@ -2783,6 +2856,7 @@ local function PreData()
 end
 
 local function Render()
+    ApplyLabelFont()
     RenderActiveLines()
 
     if bShowBlock and active and LocalHitboxSize then
@@ -2873,13 +2947,14 @@ window:createdropdown(Tabs.Survivor, {
     end
 })
 
-window:createtoggle(Tabs.Survivor, {
-    Name = "Block when the killer is stun immune",
+window:createslider(Tabs.Survivor, {
+    Name = "Auto block delay",
     Col = 1,
-    Default = false,
+    Min = 0, Max = .5, Default = 0,
+    Step = .01,
     Callback = function(val)
-		bBlockOnInv = val
-	end
+        BLOCK_DELAY = val
+    end
 })
 
 window:createtoggle(Tabs.Survivor, {
@@ -2942,6 +3017,15 @@ window:createslider(Tabs.Survivor, {
     Step = .05,
     Callback = function(val)
         PARRY_DELAY = val
+    end
+})
+
+window:createtoggle(Tabs.Survivor, {
+    Name = "Parry when the killer is stun immune",
+    Col = 2,
+    Default = false,
+    Callback = function(val)
+        bParryOnInv = val
     end
 })
 
@@ -3053,7 +3137,7 @@ window:createslider(Tabs.Misc, {
 window:createseparator(Tabs.Misc, 1)
 
 window:createtoggle(Tabs.Misc, {
-    Name = "Show round timer when hallucinating",
+    Name = "Show round timer on bloodhunt",
     Col = 1,
     Default = false,
     Callback = function(val)
