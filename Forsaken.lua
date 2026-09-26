@@ -64,9 +64,9 @@ local LocalPos
 local LocalHitboxSize
 local tempactive = false
 local active = false
-local bt = Drawing.new("Text")
-local bt2 = Drawing.new("Text")
-local bt3 = Drawing.new("Text")
+local bt = {Text = "AUTO BLOCK (inactive)", Size = 30, Color = Color3.fromRGB(109,129,150), Position = Vector2.new(0, 0), Visible = false}
+local bt2 = {Text = "BLOCK", Size = 35, Color = Color3.fromRGB(255,25,25), Position = Vector2.new(0, 0), Visible = false}
+local bt3 = {Text = "Real timer: 0:00", Size = 30, Color = Color3.fromRGB(214,181,136), Position = Vector2.new(0, 0), Visible = false}
 local viewport = Camera.ViewportSize
 local isguest = false
 local FocusTimer = 0
@@ -88,44 +88,34 @@ do
     bt.Color = isguest and Color3.fromRGB(248,131,121) or Color3.fromRGB(109,129,150)
 end
 
-bt.Size = 30
-bt.Font = "Nunito"
-bt.Center = true
-bt.Outline = true
-bt.Visible = false
-
-bt2.Text = "BLOCK"
-bt2.Size = 35
-bt2.Font = "Nunito"
-bt2.Center = true
-bt2.Color = Color3.fromRGB(255,25,25)
-bt2.Outline = true
-bt2.Visible = false
-
-bt3.Text = "Real timer: 0:00"
-bt3.Size = 30
-bt3.Font = "Nunito"
-bt3.Center = true
-bt3.Color = Color3.fromRGB(214,181,136)
-bt3.Outline = true
-bt3.Visible = false
-
 local function LayoutLabels()
     bt.Position = Vector2.new(viewport.x / 2, viewport.y * .75 - bt.Size)
     bt3.Position = Vector2.new(viewport.x / 2, viewport.y / 10 - bt3.Size / 2)
 end
 
-local function ApplyLabelFont()
-    local font = "Nunito"
-    if window then
-        font = window.getfont and window:getfont() or window:getvalue("UIFont") or font
-    end
+local Labels = {bt, bt2, bt3}
+local TextFont = {Name = "Nunito", Valid = {}}
 
-    pcall(function()
-        bt.Font = font
-        bt2.Font = font
-        bt3.Font = font
+for _, name in {"SanFransico", "Tamzen", "LilitaOne", "Jersey", "Viga", "Moonstar", "Proggy", "Pixel", "Astronix", "Mario", "Beige", "Watte", "Nunito", "Proxyma_Condensed", "Avenir", "Brandon", "Avant", "Poppins", "Interum", "Hojlund", "Never_Surrender", "Corperate", "Galileo"} do
+    TextFont.Valid[name] = true
+end
+
+local function RefreshTextFont()
+    if not window then return end
+
+    local ok, name = pcall(function()
+        return window.getfont and window:getfont() or window:getvalue("UIFont")
     end)
+
+    TextFont.Name = ok and TextFont.Valid[name] and name or "Nunito"
+end
+
+local function DrawLabels()
+    for _, label in Labels do
+        if label.Visible then
+            DrawingImmediate.OutlinedText(label.Position, label.Size, label.Color, 1, label.Text, true, TextFont.Name)
+        end
+    end
 end
 
 LayoutLabels()
@@ -171,6 +161,12 @@ do
     end
 end
 local PARRY_DELAY = 0
+local PARRY_LOOKUP_TIME = .6
+local PARRY_UP_ANGLE = 75
+local PARRY_HIT_RANGE = 11
+local PARRY_TILT_START = .25
+local PARRY_TILT_REACH = 4
+local PARRY_TILT_SPEED = 100
 local BLOCK_DELAY = 0
 local START_WIDTH = 7.5
 
@@ -862,7 +858,7 @@ local function DrawTextAt(pos, text, color, size)
     local p, v = Camera:WorldToScreenPoint(pos)
     if v then
         local NewPos = Vector2.new(p.x, p.y - 6.5)
-        DrawingImmediate.OutlinedText(NewPos, nsize, color, 1, text, true)
+        DrawingImmediate.OutlinedText(NewPos, nsize, color, 1, text, true, TextFont.Name)
     end
 end
 
@@ -992,15 +988,135 @@ local function Parry(lchar)
             if ok and immune then return end
         end
 
+        local aimTime = .35
+        local approachEnd = 1.1
+        local tiltEnabled = PARRY_UP_ANGLE > 0
+        local up = vector.create(0, 1, 0)
+        local pitch = math.rad(PARRY_UP_ANGLE)
+        local cosPitch, sinPitch = math.cos(pitch), math.sin(pitch)
+        local released, aimed = false, false
+        local forward, pitchAt, hitAt
+        local killerParts, oldHits = {}, {}
+
+        local function SetKillerCollision(enabled)
+            for _, part in killerParts do
+                pcall(function()
+                    part.CanCollide = enabled
+                end)
+            end
+        end
+
+        local function FindHits(onHit)
+            local fov = lchar:FindFirstChild("FOVMultipliers")
+            if not fov then return end
+            for _, child in fov:GetChildren() do
+                if child.Name == "HitRegistered" then
+                    local id = InstId(child)
+                    if id then onHit(id) end
+                end
+            end
+        end
+
+        FindHits(function(id)
+            oldHits[id] = true
+        end)
+
         keypress(PARRY_KEY)
-        task.wait(.1)
-        keyrelease(PARRY_KEY)
+        local start = os.clock()
+        local lastNow = start
 
-        task.wait(.25)
+        while lroot.Parent and kroot.Parent do
+            local now = os.clock()
+            local elapsed = now - start
 
-        local lpos, kpos = lroot.Position, kroot.Position
-        local predictedPos = PredictKillerPosition(kroot, kpos, lpos, 2.25)
-        lroot.CFrame = CFrame.lookAt(lpos, Vector3.new(predictedPos.X, lpos.Y, predictedPos.Z))
+            if pitchAt then
+                FindHits(function(id)
+                    if not oldHits[id] then
+                        hitAt = elapsed
+                    end
+                end)
+            end
+
+            if hitAt then
+                break
+            elseif pitchAt then
+                if now >= pitchAt + PARRY_LOOKUP_TIME then
+                    break
+                end
+            elseif aimed or elapsed >= approachEnd then
+                break
+            end
+
+            if not released and elapsed >= .1 then
+                keyrelease(PARRY_KEY)
+                released = true
+            end
+
+            local lpos, kpos = lroot.Position, kroot.Position
+
+            local frameDt = math.min(now - lastNow, .05)
+            lastNow = now
+
+            local flat = vector.create(kpos.X - lpos.X, 0, kpos.Z - lpos.Z)
+            local dist = vector.magnitude(flat)
+
+            if not pitchAt and elapsed >= PARRY_TILT_START then
+                if tiltEnabled and dist <= PARRY_HIT_RANGE then
+                    pitchAt = now
+
+                    pcall(function()
+                        for _, part in killer:GetDescendants() do
+                            if (part.ClassName == "Part" or part.ClassName == "MeshPart") and part.CanCollide then
+                                killerParts[#killerParts + 1] = part
+                            end
+                        end
+                    end)
+                elseif elapsed >= aimTime then
+                    local predictedPos = PredictKillerPosition(kroot, kpos, lpos, 2.25)
+                    local predictOffset = predictedPos - kpos
+                    local predictLen = vector.magnitude(predictOffset)
+                    local maxOffset = dist * .5
+                    if predictLen > maxOffset then
+                        predictedPos = kpos + predictOffset * (maxOffset / predictLen)
+                    end
+                    local aimPos = vector.create(predictedPos.X, lpos.Y, predictedPos.Z)
+                    if vector.magnitude(aimPos - lpos) > .01 then
+                        lroot.CFrame = CFrame.lookAt(lpos, aimPos)
+                    end
+                    aimed = true
+                end
+            end
+
+            if pitchAt then
+                if dist > .01 then
+                    forward = flat / dist
+                end
+                forward = forward or vector.create(0, 0, -1)
+
+                SetKillerCollision(false)
+
+                local pos = lpos
+                local step = math.min(PARRY_TILT_SPEED * frameDt, dist - PARRY_TILT_REACH)
+                if step > 0 then
+                    pos = lpos + forward * step
+                end
+
+                local look = forward * cosPitch + up * sinPitch
+                local lookUp = up * cosPitch - forward * sinPitch
+                lroot.CFrame = CFrame.lookAt(pos, pos + look, lookUp)
+            end
+            task.wait()
+        end
+
+        if not released then
+            keyrelease(PARRY_KEY)
+        end
+
+        if forward and lroot.Parent then
+            local lpos = lroot.Position
+            lroot.CFrame = CFrame.lookAt(lpos, lpos + forward)
+        end
+        SetKillerCollision(true)
     end
 end
 
@@ -1593,12 +1709,72 @@ local function NewLineData(ability, char, root, pos, lv, rv, uv)
     }
 end
 
+local function UpdateAbility(ability, char, root, lines, pose)
+    local data
+
+    for _, existing in lines do
+        if existing.Ability == ability then
+            data = existing
+            break
+        end
+    end
+
+    local triggered = ability.Check(char, root)
+
+    local function Create()
+        if not pose.Position then
+            pose.Position, pose.Look, pose.Right, pose.Up = ReadRootPose(root)
+        end
+
+        data = NewLineData(ability, char, root, pose.Position, pose.Look, pose.Right, pose.Up)
+
+        if ability.Start then
+            ability.Start(data, char)
+        end
+
+        lines[#lines + 1] = data
+    end
+
+    if ability.TriggerOnce then
+        ability.ActiveStates = ability.ActiveStates or {}
+        ability.InactiveSince = ability.InactiveSince or {}
+
+        if triggered and not ability.ActiveStates[char] and not data then
+            Create()
+        end
+
+        if triggered then
+            ability.ActiveStates[char] = true
+            ability.InactiveSince[char] = nil
+        else
+            ability.InactiveSince[char] = ability.InactiveSince[char] or os.clock()
+            if os.clock() - ability.InactiveSince[char] >= .2 then
+                ability.ActiveStates[char] = false
+                ability.InactiveSince[char] = nil
+            end
+        end
+    elseif triggered and not data then
+        Create()
+    end
+
+    if data and not data.LineDone then
+        if ability.Update then
+            ability.Update(char, root, data)
+        end
+
+        if not data.Duration and not ability.Check(char, root, data) then
+            data.LineDone = true
+        end
+    end
+end
+
 local function UpdateAbilityFolder(folder, abilitiesTable)
     for _, char in folder:GetChildren() do
-        local root = char:FindFirstChild("HumanoidRootPart")
         local abilities = abilitiesTable[char.Name]
+        if not abilities then continue end
 
-        if not root or not abilities then continue end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then continue end
 
         local lines = ActiveLines[root]
         if not lines then
@@ -1606,67 +1782,10 @@ local function UpdateAbilityFolder(folder, abilitiesTable)
             ActiveLines[root] = lines
         end
 
-        local pos, lv, rv, uv
+        local pose = {}
 
         for _, ability in abilities do
-            local data
-
-            for _, existing in lines do
-                if existing.Ability == ability then
-                    data = existing
-                    break
-                end
-            end
-
-            local checked = ability.Check(char, root, data)
-
-            if ability.TriggerOnce then
-                ability.ActiveStates = ability.ActiveStates or {}
-                local wasActive = ability.ActiveStates[char] == true
-
-                if checked and not wasActive and not data then
-                    if not pos then pos, lv, rv, uv = ReadRootPose(root) end
-                    data = NewLineData(ability, char, root, pos, lv, rv, uv)
-
-                    if ability.Start then
-                        ability.Start(data, char)
-                    end
-
-                    lines[#lines + 1] = data
-                end
-
-                ability.InactiveSince = ability.InactiveSince or {}
-                if checked then
-                    ability.ActiveStates[char] = true
-                    ability.InactiveSince[char] = nil
-                else
-                    ability.InactiveSince[char] = ability.InactiveSince[char] or os.clock()
-                    if os.clock() - ability.InactiveSince[char] >= .2 then
-                        ability.ActiveStates[char] = false
-                        ability.InactiveSince[char] = nil
-                    end
-                end
-            elseif checked and not data then
-                if not pos then pos, lv, rv, uv = ReadRootPose(root) end
-                data = NewLineData(ability, char, root, pos, lv, rv, uv)
-
-                if ability.Start then
-                    ability.Start(data, char)
-                end
-
-                lines[#lines + 1] = data
-            end
-
-            if data and not data.LineDone then
-                if ability.Update then
-                    ability.Update(char, root, data)
-                    checked = ability.Check(char, root, data)
-                end
-
-                if not data.Duration and not checked then
-                    data.LineDone = true
-                end
-            end
+            pcall(UpdateAbility, ability, char, root, lines, pose)
         end
     end
 end
@@ -1725,11 +1844,11 @@ local function RenderActiveLines()
             end
 
             if ability.Draw then
-                ability.Draw(data)
+                pcall(ability.Draw, data)
             end
 
             if ability.ShowName ~= false then
-                DrawAbilityName(data)
+                pcall(DrawAbilityName, data)
             end
         end
 
@@ -2329,25 +2448,30 @@ local function CanBackstab(localPos, killerPos, killerLook, range)
     return dot <= -.55
 end
 
-local function BackstabHandler(lroot, kroot, lrootp, krootp, krootlv)
+local function BackstabHandler(killer, lroot, kroot, lrootp, krootp, krootlv)
+    if not CanBackstab(lrootp, krootp, krootlv, 6) then return end
+
+    local okImmune, immune = pcall(function()
+        return killer:GetAttribute("Invincible") or killer:GetAttribute("StunnedDisabled")
+    end)
+    if not okImmune or immune then return end
+
     local s, b = pcall(function()
         local time = LocalPlayer.PlayerGui.MainUI.AbilityContainer.Dagger.CooldownTime
         return memory.readstring(time, offset)
     end)
-    if s and b == "" then
-        if CanBackstab(lrootp, krootp, krootlv, 6) then
-            keypress(BLOCK_KEY)
-            task.wait(.05)
-            keyrelease(BLOCK_KEY)
-            task.wait(.1695)
+    if not s or b ~= "" then return end
 
-            local s10, p10, kp10 = pcall(function()
-                return lroot.Position, kroot.Position
-            end)
-            if s10 then
-                lroot.CFrame = CFrame.lookAt(p10, Vector3.new(kp10.X, p10.Y, kp10.Z))
-            end
-        end
+    keypress(BLOCK_KEY)
+    task.wait(.05)
+    keyrelease(BLOCK_KEY)
+    task.wait(.1695)
+
+    local s10, p10, kp10 = pcall(function()
+        return lroot.Position, kroot.Position
+    end)
+    if s10 then
+        lroot.CFrame = CFrame.lookAt(p10, Vector3.new(kp10.X, p10.Y, kp10.Z))
     end
 end
 
@@ -2611,7 +2735,7 @@ local function PreLocal()
                 if s69 then
                     local StabPredictedLocal = PredictPosition(lroot, lrootp, .185)
                     local StabPredictedKiller = PredictPosition(kroot, krootp, .185)
-                    task.spawn(BackstabHandler, lroot, kroot, StabPredictedLocal, StabPredictedKiller, krootlv)
+                    task.spawn(BackstabHandler, inst, lroot, kroot, StabPredictedLocal, StabPredictedKiller, krootlv)
                 end
             end
         end
@@ -2851,7 +2975,7 @@ local function PreData()
 
     if (bShowLine or bAutoStab) and now - LastAttackScan >= .03 then
         LastAttackScan = now
-        UpdateActiveLines()
+        pcall(UpdateActiveLines)
     end
 
     if not bESP then return end
@@ -2865,7 +2989,8 @@ local function PreData()
 end
 
 local function Render()
-    ApplyLabelFont()
+    RefreshTextFont()
+    DrawLabels()
     RenderActiveLines()
 
     if bShowBlock and active and LocalHitboxSize then
@@ -3026,6 +3151,16 @@ window:createslider(Tabs.Survivor, {
     Step = .05,
     Callback = function(val)
         PARRY_DELAY = val
+    end
+})
+
+window:createslider(Tabs.Survivor, {
+    Name = "Auto parry upwards angle (fling killer, blatant)",
+    Col = 2,
+    Min = 0, Max = 90, Default = 0,
+    Step = 5,
+    Callback = function(val)
+        PARRY_UP_ANGLE = val
     end
 })
 
