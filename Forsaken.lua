@@ -1183,6 +1183,20 @@ local function DrawTrackedObject(data)
     DrawWorldLine(pos, Vector3.new(destination.X, pos.Y, destination.Z))
 end
 
+local function HasLeftOrigin(data, root)
+    if data.LeftOrigin then return true end
+
+    local pos = root.Position
+    local dx, dz = pos.X - data.Origin.X, pos.Z - data.Origin.Z
+    if dx * dx + dz * dz > 4 then
+        data.LeftOrigin = true
+        data.StillPosition = nil
+        data.StillSince = nil
+    end
+
+    return data.LeftOrigin == true
+end
+
 local function IsStandingStill(data, root)
     local pos = root.Position
     local now = os.clock()
@@ -1227,15 +1241,9 @@ local KillerAbilities = {
                 return true
             end,
             Update = function(char, root, data)
-                local elapsed = os.clock() - data.Started
-                if elapsed < .6 then return end
+                if os.clock() - data.Started < .6 then return end
 
-                if not data.WSOCheckStarted then
-                    data.WSOCheckStarted = true
-                    data.StillPosition = nil
-                    data.StillSince = nil
-                end
-                if IsStandingStill(data, root) then
+                if HasLeftOrigin(data, root) and IsStandingStill(data, root) then
                     data.Finished = true
                 end
             end,
@@ -1405,7 +1413,7 @@ local KillerAbilities = {
                 if not start and not pursuit then
                     return false
                 end
-                if data and not start and pursuit and IsStandingStill(data, root) then
+                if data and not start and pursuit and data.LeftOrigin and IsStandingStill(data, root) then
                     return false
                 end
                 return true
@@ -1413,6 +1421,7 @@ local KillerAbilities = {
             Update = function(char, root, data)
                 local state = char:FindFirstChild("SpeedMultipliers")
                 data.Pursuing = state and state:FindFirstChild("666Pursuit") ~= nil
+                if data.Pursuing then HasLeftOrigin(data, root) end
             end,
             Draw = function(data)
                 if data.Pursuing then
