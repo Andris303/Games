@@ -74,14 +74,14 @@ local teamCheckMode = "Player team"
 local parryLength = 7.5
 local parryWidth = 7.5
 local parryDelay = 0
-local parryWindup = .2
+local parryWindup = 0
 local parryAttackTime = .25
 local activeAttacks = {}
 local attackVisUntil = {}
 local predictionData = {}
 local predictionSize = 0
 local parrySnapshot = {}
-local localPos, localSize
+local localRoot, localPos, localSize
 local viewport = Camera.ViewportSize
 local viewportTimer = 0
 
@@ -298,6 +298,7 @@ local function ToggleSaved(animation)
 end
 
 local modifierCodes = {
+    Space = 0x20,
     LeftShift = 0xa0,
     RightShift = 0xa1,
     LeftCtrl = 0xa2,
@@ -311,6 +312,31 @@ local function GetKeycode(name)
         return string.byte(string.upper(name))
     end
     return modifierCodes[name]
+end
+
+local mouseButtons = {
+    LeftMouse = {Press = mouse1press, Release = mouse1release},
+    RightMouse = {Press = mouse2press, Release = mouse2release},
+}
+
+local function CanPress(name)
+    return mouseButtons[name] ~= nil or GetKeycode(name) ~= nil
+end
+
+local function PressKey(name)
+    local button = mouseButtons[name]
+    if button then
+        pcall(button.Press)
+        task.wait(.1)
+        pcall(button.Release)
+        return
+    end
+
+    local keycode = GetKeycode(name)
+    if not keycode then return end
+    pcall(keypress, keycode)
+    task.wait(.1)
+    pcall(keyrelease, keycode)
 end
 
 local function IsSaved(animation)
@@ -331,7 +357,7 @@ window = UI:createwindow({
     Version = "VX",
     Keybind = "RightShift",
     ConfigFolder = "AndrisAnimationWatcher",
-    CustomResolution = Vector2.new(580, 360),
+    CustomResolution = Vector2.new(580, 375),
     DPIScale = _G.DPIScale or 1.0,
     CompactSettings = false,
     DefaultTab = "Watcher",
@@ -347,16 +373,29 @@ local keybindLabel
 local watchKeybindLabel
 local parryKeyLabel
 
-local function PickKey(button, idleText, apply)
+local function IsPressed(name)
+    for _, key in getpressedkeys() do
+        if key == name then return true end
+    end
+    return false
+end
+
+local function PickKey(button, idleText, apply, bAllowMouse)
     if bPickingKey then return end
     bPickingKey = true
 
     task.spawn(function()
         button.Txt.Text = "Press any key.."
+        if bAllowMouse then
+            while IsPressed("LeftMouse") do
+                task.wait(.01)
+            end
+        end
+
         while true do
             local picked
             for _, key in getpressedkeys() do
-                if key ~= "LeftMouse" then
+                if bAllowMouse or key ~= "LeftMouse" then
                     picked = key
                     break
                 end
@@ -517,13 +556,13 @@ parryKeyButton = window:createbutton(tabParry, {
     Col = 2,
     Callback = function()
         PickKey(parryKeyButton, "Change parry key", function(key)
-            if not GetKeycode(key) then
-                pcall(send_notification, key .. " cannot be pressed, pick a letter or a modifier key", "error")
+            if not CanPress(key) then
+                pcall(send_notification, key .. " cannot be pressed, pick a letter, Space, a modifier key or a mouse button", "error")
                 return
             end
             window:setvalue("ParryKey", key)
             pcall(send_notification, "Parry key set to: " .. key, "info")
-        end)
+        end, true)
     end
 })
 
@@ -586,7 +625,7 @@ window:createslider(tabSettings, {
 window:createslider(tabSettings, {
     Name = "Auto parry windup",
     Col = 2,
-    Min = 0, Max = 2, Default = .2,
+    Min = 0, Max = 2, Default = 0,
     Step = .01,
     Callback = function(val)
         parryWindup = val
@@ -1038,11 +1077,8 @@ local function ParryChecker(key, root, attackData)
         if okPoll and attackerPos and localParts.Size and ShouldParry(key, attackerPos, attackerLook, localParts.Size, localPosition) then
             if activeAttacks[key] == attackData then activeAttacks[key] = nil end
 
-            local parryKey = GetKeycode(parryKeyName)
             parryLabel.Visible = true
-            pcall(keypress, parryKey)
-            task.wait(.1)
-            pcall(keyrelease, parryKey)
+            PressKey(parryKeyName)
             task.wait(.9)
             parryLabel.Visible = false
 
@@ -1098,7 +1134,7 @@ local function ParryStep()
 
     if not bAutoParry or not active or not offsets then
         parrySnapshot = {}
-        localPos, localSize = nil, nil
+        localRoot, localPos, localSize = nil, nil, nil
         if next(trackStates) then table.clear(trackStates) end
         return
     end
@@ -1107,12 +1143,12 @@ local function ParryStep()
     local localParts = localChar and IsModel(localChar) and CharacterParts(localChar, LocalPlayer)
     if not localParts or not localParts.Root then
         parrySnapshot = {}
-        localPos, localSize = nil, nil
+        localRoot, localPos, localSize = nil, nil, nil
         return
     end
 
     local myPosition = localParts.Root.Position
-    localPos, localSize = myPosition, localParts.Size
+    localRoot, localPos, localSize = localParts.Root, myPosition, localParts.Size
 
     local watchSaved = #savedOrder > 0
     local seenTracks = {}
@@ -1138,7 +1174,7 @@ local function ParryStep()
 
         UpdatePrediction(parts.Id, rootPosition)
 
-        snapshot[#snapshot + 1] = {Key = parts.Id, Position = rootPosition, LookVector = rootLook}
+        snapshot[#snapshot + 1] = {Key = parts.Id, Root = root, Position = rootPosition, LookVector = rootLook}
 
         if not watchSaved or not parts.Animator then continue end
 
@@ -1199,9 +1235,30 @@ RunService.Render:Connect(function()
     end
 
     if bShowParry and active and localSize then
+        if localRoot then
+            local ok, pos = pcall(function()
+                return localRoot.Position
+            end)
+            if ok and pos then localPos = pos end
+        end
+
         for _, snapshot in parrySnapshot do
+            local ok, pos, look = pcall(function()
+                return snapshot.Root.Position, snapshot.Root.LookVector
+            end)
+            if ok and pos and look then
+                snapshot.Position = pos
+                snapshot.LookVector = look
+            end
             RenderParryShape(snapshot)
         end
+    end
+
+    if targetRoot and targetPosition then
+        local ok, pos = pcall(function()
+            return targetRoot.Position
+        end)
+        if ok and pos then targetPosition = pos end
     end
 
     if not targetPosition then return end
