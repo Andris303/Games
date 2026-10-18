@@ -149,26 +149,26 @@ do
     end
 end
 
-local KEYBIND = "V"
-local BLOCK_KEY, PARRY_KEY, SPRINT_KEY
+local keybind = "V"
+local blockKey, parryKey, sprintKey
 
 do
     local s, blockkeystr, parrykeystr, sprintkeystr = pcall(GetBinds)
     if s then
-        BLOCK_KEY = GetKeycode(blockkeystr)
-        PARRY_KEY = GetKeycode(parrykeystr)
-        SPRINT_KEY = GetKeycode(sprintkeystr)
+        blockKey = GetKeycode(blockkeystr)
+        parryKey = GetKeycode(parrykeystr)
+        sprintKey = GetKeycode(sprintkeystr)
     end
 end
-local PARRY_DELAY = 0
-local PARRY_LOOKUP_TIME = .6
-local PARRY_UP_ANGLE = 75
-local PARRY_HIT_RANGE = 11
-local PARRY_TILT_START = .25
-local PARRY_TILT_REACH = 4
-local PARRY_TILT_SPEED = 100
-local BLOCK_DELAY = 0
-local START_WIDTH = 7.5
+local parryDelay = 0
+local parryLookupTime = .6
+local parryUpAngle = 75
+local parryHitRange = 11
+local parryTiltStart = .25
+local parryTiltReach = 4
+local parryTiltSpeed = 100
+local blockDelay = 0
+local startWidth = 7.5
 
 local RejuvSuppressUntil = {}
 local Sounds = {
@@ -201,66 +201,66 @@ local SixerRig = {
 
 local KillerData = {
     ["Default"] = {
-        WINDUP = .2,
-        LINGER = .25,
-        ATTACK_LENGTH = 7.5,
-        HEIGHT = 7,
+        windup = .2,
+        linger = .25,
+        attackLength = 7.5,
+        height = 7,
     },
     ["c00lkidd"] = {
-        WINDUP = .1,
-        LINGER = .3,
-        ATTACK_LENGTH = 6,
-        HEIGHT = 7,
-        BACKWARD_RANGE = 2,
+        windup = .1,
+        linger = .3,
+        attackLength = 6,
+        height = 7,
+        backwardRange = 2,
     },
     ["Slasher"] = {
-        WINDUP = .2,
-        LINGER = .25,
-        ATTACK_LENGTH = 7.5,
-        HEIGHT = 7,
-        BACKWARD_RANGE = 3,
+        windup = .2,
+        linger = .25,
+        attackLength = 7.5,
+        height = 7,
+        backwardRange = 3,
     },
     ["JohnDoe"] = {
-        WINDUP = .4,
-        LINGER = .25,
-        ATTACK_LENGTH = 7.5,
-        HEIGHT = 7,
-        BACKWARD_RANGE = 3,
+        windup = .4,
+        linger = .25,
+        attackLength = 7.5,
+        height = 7,
+        backwardRange = 3,
     },
     ["Noli"] = {
-        WINDUP = .35,
-        LINGER = .25,
-        ATTACK_LENGTH = 8,
-        HEIGHT = 7,
-        BACKWARD_RANGE = 3,
+        windup = .35,
+        linger = .25,
+        attackLength = 8,
+        height = 7,
+        backwardRange = 3,
     },
     ["1x1x1x1"] = {
-        WINDUP = .4,
-        LINGER = .25,
-        ATTACK_LENGTH = 7.5,
-        HEIGHT = 7,
-        BACKWARD_RANGE = 3,
+        windup = .4,
+        linger = .25,
+        attackLength = 7.5,
+        height = 7,
+        backwardRange = 3,
     },
     ["Sixer"] = {
-        WINDUP = .3,
-        LINGER = .25,
-        ATTACK_LENGTH = 8.5,
-        HEIGHT = 8,
-        BACKWARD_RANGE = 2,
+        windup = .3,
+        linger = .25,
+        attackLength = 8.5,
+        height = 8,
+        backwardRange = 2,
     },
     ["Nosferatu"] = {
-        WINDUP = .3,
-        LINGER = .3,
-        ATTACK_LENGTH = 8.5,
-        HEIGHT = 7,
-        BACKWARD_RANGE = 3,
+        windup = .3,
+        linger = .3,
+        attackLength = 8.5,
+        height = 7,
+        backwardRange = 3,
     },
     ["Azure"] = {
-        WINDUP = .2,
-        LINGER = .25,
-        ATTACK_LENGTH = 8.5,
-        HEIGHT = 7,
-        BACKWARD_RANGE = 3.5,
+        windup = .2,
+        linger = .25,
+        attackLength = 8.5,
+        height = 7,
+        backwardRange = 3.5,
     },
 }
 
@@ -282,7 +282,7 @@ local c = {
 
 local Names = {shockwave = true, Shockwave = true, Swords = true, SpikeCollision = true, HumanoidRootProjectile = true, Voidstar = true, Bats = true, Shadow = true, VineModel = true, GroundBulbModel = true, GroundBulb = true, BuildermanDispenser = true, BuildermanSentry = true, ["007n7"] = true, Pizza = true, GraffitiCL = true, CrystalProjectile = true, Medkit = true, BloxyCola = true, MisterBeast = true, Noli = true}
 local SNames = {BuildermanDispenser = true, BuildermanSentry = true, Pizza = true, GraffitiCL = true, CrystalProjectile = true, TaphTripwire = true, SubspaceTripmine = true}
-local KNames = {SpikeCollision = true, Shadow = true, VineModel = true, GroundBulbModel = true, GroundBulb = true, Medkit = true, BloxyCola = true, MisterBeast = true, Noli = true, Puddle = true}
+local KNames = {FakeGenerator = true, SpikeCollision = true, Shadow = true, VineModel = true, GroundBulbModel = true, GroundBulb = true, Medkit = true, BloxyCola = true, MisterBeast = true, Noli = true, Puddle = true}
 local PNames = {"TaphTripwire", "SubspaceTripmine", "Puddle", "Shockwave"}
 
 local NameColors = {
@@ -592,7 +592,7 @@ local function BuildItemRenderInfo(id, inst, now)
     end
 end
 
-local AUTO_BLOCK_MODE = "default"
+local autoBlockMode = "default"
 
 local AutoBlockProfiles = {
     ["very-strict"] = {
@@ -653,13 +653,13 @@ end
 local function BuildBlockTest(killerKey, killerPos, killerLook, killerName, hitboxSize, localPos)
     if not killerKey or not killerPos or not killerLook or not hitboxSize then return end
 
-    local profile = AutoBlockProfiles[AUTO_BLOCK_MODE]
+    local profile = AutoBlockProfiles[autoBlockMode]
     if not profile then return end
 
     local config = KillerData[killerName] or KillerData.Default
-    local attackLength = config.ATTACK_LENGTH or KillerData.Default.ATTACK_LENGTH
-    local attackHeight = config.HEIGHT or KillerData.Default.HEIGHT
-    local backwardRange = config.BACKWARD_RANGE or 0
+    local attackLength = config.attackLength or KillerData.Default.attackLength
+    local attackHeight = config.height or KillerData.Default.height
+    local backwardRange = config.backwardRange or 0
 
     local kp = GetBlockOrigin(killerKey, killerPos, localPos)
     local kl = killerLook
@@ -672,7 +672,7 @@ local function BuildBlockTest(killerKey, killerPos, killerLook, killerName, hitb
     local right = vector.create(-forward.z, 0, forward.x)
     local innerRadius, outerRadius, halfHeight = GetQueryRadii(hitboxSize)
     local queryRadius = profile.RadiusMode == "Outer" and outerRadius or innerRadius
-    local halfWidth = START_WIDTH / 2
+    local halfWidth = startWidth / 2
     local innerCircle = profile.InnerRadius
     local hasInnerCircle = innerCircle ~= nil
 
@@ -756,18 +756,18 @@ local function RenderBlockShape(snapshot, hitboxSize, localPos)
     local Inside, kp, forward, right, maxRadius = BuildBlockTest(KRoot, snapshot.Position, snapshot.LookVector, snapshot.Name, hitboxSize, localPos)
     if not Inside then return end
 
-    local SEGMENTS = 36
-    local SEARCH_STEPS = 6
+    local segments = 36
+    local searchSteps = 6
     local points = {}
 
-    for i = 0, SEGMENTS - 1 do
-        local angle = -math.pi + (i / SEGMENTS) * math.pi * 2
+    for i = 0, segments - 1 do
+        local angle = -math.pi + (i / segments) * math.pi * 2
         local ca = math.cos(angle)
         local sa = math.sin(angle)
         local low = 0
         local high = maxRadius
 
-        for _ = 1, SEARCH_STEPS do
+        for _ = 1, searchSteps do
             local mid = (low + high) / 2
             local point = kp + forward * (mid * ca) + right * (mid * sa)
             local testPoint = vector.create(point.x, kp.y, point.z)
@@ -806,18 +806,18 @@ local function RenderBlockShape(snapshot, hitboxSize, localPos)
     end
 end
 
-local BLOCK_SAFETY = .1
+local blockSafety = .1
 
 local function BlockChecker(KRoot, inst, attackData)
     if ActiveAttacks[KRoot] ~= attackData then return end
 
     local config = attackData.Config or KillerData.Default
-    local windup = config.WINDUP or 0
-    local linger = config.LINGER or 0
+    local windup = config.windup or 0
+    local linger = config.linger or 0
     local started = os.clock()
     local ping = game:GetPing() / 1000
-    local blockStartDelay = math.max(0, windup + BLOCK_DELAY - ping - BLOCK_SAFETY)
-    local blockEndDelay = math.max(0, windup + linger - ping - BLOCK_SAFETY - .05)
+    local blockStartDelay = math.max(0, windup + blockDelay - ping - blockSafety)
+    local blockEndDelay = math.max(0, windup + linger - ping - blockSafety - .05)
 
     if blockStartDelay > 0 then
         task.wait(blockStartDelay)
@@ -837,9 +837,9 @@ local function BlockChecker(KRoot, inst, attackData)
 
             if isguest then
                 bt2.Visible = true
-                keypress(BLOCK_KEY)
+                keypress(blockKey)
                 task.wait(.1)
-                keyrelease(BLOCK_KEY)
+                keyrelease(blockKey)
                 task.wait(.9)
                 bt2.Visible = false
             end
@@ -908,10 +908,10 @@ local function PredictPosition(key, currentPos, future)
 end
 
 local function GetPredictionTime(localPos, killerPos)
-    local MIN_DISTANCE = 0
-    local MAX_DISTANCE = 92
+    local minDistance = 0
+    local maxDistance = 92
     local distance = vector.magnitude(killerPos - localPos)
-    local alpha = math.clamp((distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE), 0, 1)
+    local alpha = math.clamp((distance - minDistance) / (maxDistance - minDistance), 0, 1)
 
     return .2 * (alpha ^ .3)
 end
@@ -977,8 +977,8 @@ local function Parry(lchar)
     local kroot = killer and killer:FindFirstChild("HumanoidRootPart")
 
     if lroot and kroot then
-        if PARRY_DELAY ~= 0 then
-            task.wait(PARRY_DELAY)
+        if parryDelay ~= 0 then
+            task.wait(parryDelay)
         end
 
         if not bParryOnInv then
@@ -990,9 +990,9 @@ local function Parry(lchar)
 
         local aimTime = .35
         local approachEnd = 1.1
-        local tiltEnabled = PARRY_UP_ANGLE > 0
+        local tiltEnabled = parryUpAngle > 0
         local up = vector.create(0, 1, 0)
-        local pitch = math.rad(PARRY_UP_ANGLE)
+        local pitch = math.rad(parryUpAngle)
         local cosPitch, sinPitch = math.cos(pitch), math.sin(pitch)
         local released, aimed = false, false
         local forward, pitchAt, hitAt
@@ -1021,7 +1021,7 @@ local function Parry(lchar)
             oldHits[id] = true
         end)
 
-        keypress(PARRY_KEY)
+        keypress(parryKey)
         local start = os.clock()
         local lastNow = start
 
@@ -1040,7 +1040,7 @@ local function Parry(lchar)
             if hitAt then
                 break
             elseif pitchAt then
-                if now >= pitchAt + PARRY_LOOKUP_TIME then
+                if now >= pitchAt + parryLookupTime then
                     break
                 end
             elseif aimed or elapsed >= approachEnd then
@@ -1048,7 +1048,7 @@ local function Parry(lchar)
             end
 
             if not released and elapsed >= .1 then
-                keyrelease(PARRY_KEY)
+                keyrelease(parryKey)
                 released = true
             end
 
@@ -1060,8 +1060,8 @@ local function Parry(lchar)
             local flat = vector.create(kpos.X - lpos.X, 0, kpos.Z - lpos.Z)
             local dist = vector.magnitude(flat)
 
-            if not pitchAt and elapsed >= PARRY_TILT_START then
-                if tiltEnabled and dist <= PARRY_HIT_RANGE then
+            if not pitchAt and elapsed >= parryTiltStart then
+                if tiltEnabled and dist <= parryHitRange then
                     pitchAt = now
 
                     pcall(function()
@@ -1096,7 +1096,7 @@ local function Parry(lchar)
                 SetKillerCollision(false)
 
                 local pos = lpos
-                local step = math.min(PARRY_TILT_SPEED * frameDt, dist - PARRY_TILT_REACH)
+                local step = math.min(parryTiltSpeed * frameDt, dist - parryTiltReach)
                 if step > 0 then
                     pos = lpos + forward * step
                 end
@@ -1109,7 +1109,7 @@ local function Parry(lchar)
         end
 
         if not released then
-            keyrelease(PARRY_KEY)
+            keyrelease(parryKey)
         end
 
         if forward and lroot.Parent then
@@ -1135,8 +1135,8 @@ local function DrawWorldLine(startPos, endPos)
     end
 
     local direction = offseta / dist
-    local SEGMENT_LENGTH = 5
-    local segments = math.max(1, math.ceil(dist / SEGMENT_LENGTH))
+    local segmentLength = 5
+    local segments = math.max(1, math.ceil(dist / segmentLength))
     local segml = dist / segments
 
     for i = 0, segments - 1 do
@@ -1159,8 +1159,8 @@ local function DrawLookLine(rootpos, rootlv, rootrv, rootuv, dist, right, down)
     local direction = rootlv + rootrv * right - rootuv * down
     direction = direction / vector.magnitude(direction)
 
-    local SEGMENT_LENGTH = 5
-    local segments = math.max(1, math.ceil(dist / SEGMENT_LENGTH))
+    local segmentLength = 5
+    local segments = math.max(1, math.ceil(dist / segmentLength))
     local segml = dist / segments
 
     for i = 0, segments - 1 do
@@ -1336,6 +1336,8 @@ end
 
 local AutoStabBlacklist = {"Walkspeed Override", "Entanglement", "Mass Infection", "Corrupt Energy", "Voidrush", "Demonic Pursuit", "Ascension", "Bloodhook", "Enstrangle"}
 
+local ascensionFeetOffset = 3
+
 local function DrawCurrentLookLine(data, right, down)
     DrawLookLine(data.CurrentPosition, data.CurrentLookVector, data.CurrentRightVector, data.CurrentUpVector, data.Length, right, down)
 end
@@ -1474,10 +1476,10 @@ local KillerAbilities = {
                 end
             end,
             Draw = function(data)
-                local WINDUP = 2
+                local windup = 2
                 local elapsed = os.clock() - data.Started
 
-                if elapsed < WINDUP then
+                if elapsed < windup then
                     DrawCurrentLookLine(data)
                     return
                 end
@@ -1489,7 +1491,7 @@ local KillerAbilities = {
 
                 direction /= magnitude
                 local endPos = data.CurrentPosition + direction * data.Length
-                local alpha = math.clamp((elapsed - WINDUP) / (data.Duration - WINDUP), 0, 2)
+                local alpha = math.clamp((elapsed - windup) / (data.Duration - windup), 0, 2)
                 local startPos = data.CurrentPosition + direction * data.Length * alpha
                 DrawWorldLine(startPos, endPos)
             end,
@@ -1577,7 +1579,23 @@ local KillerAbilities = {
             end,
 
             Draw = function(data)
-                DrawCurrentLookLine(data, 0, 1)
+                local dist = data.Length
+
+                if LocalPos then
+                    local direction = data.CurrentLookVector - data.CurrentUpVector
+                    local magnitude = vector.magnitude(direction)
+                    if magnitude == 0 then return end
+
+                    local dropY = direction.Y / magnitude
+                    local feetY = LocalPos.Y - ascensionFeetOffset
+
+                    if dropY < 0 then
+                        dist = math.min(dist, (feetY - data.CurrentPosition.Y) / dropY)
+                    end
+                end
+
+                if dist <= 0 then return end
+                DrawLookLine(data.CurrentPosition, data.CurrentLookVector, data.CurrentRightVector, data.CurrentUpVector, dist, 0, 1)
             end,
         },
         {
@@ -2251,8 +2269,8 @@ local function SolveWires(Endpoints, Size)
     return nil, "No solution found"
 end
 
-local CELL_SIZE = 75
-local GUI_INSET_Y = 0
+local cellSize = 75
+local guiInsetY = 0
 
 local function MouseNow()
     if type(getmouseposition) == "function" then
@@ -2290,12 +2308,12 @@ local function GetCenter(gui)
     local px = memory.readf32(gui, abspos)
     local py = memory.readf32(gui, abspos + 4)
 
-    return px + CELL_SIZE / 2, py + CELL_SIZE / 2 + GUI_INSET_Y
+    return px + cellSize / 2, py + cellSize / 2 + guiInsetY
 end
 
-local DRAG_CELLS_PER_SECOND = 20
-local TRAVEL_SPEED = 4000
-local MAX_DRAG_STEP = CELL_SIZE * .45
+local dragCellsPerSecond = 20
+local travelSpeed = 4000
+local maxDragStep = cellSize * .45
 
 local function MoveAlong(points, speed, maxStep)
     local lengths = {}
@@ -2388,7 +2406,7 @@ local function Solver(grid, solution)
         local fx, fy = GetCenter(firstCell)
         local mx, my = MouseNow()
 
-        MoveAlong({{x = mx, y = my}, {x = fx, y = fy}}, TRAVEL_SPEED * SpeedJitter(), math.huge)
+        MoveAlong({{x = mx, y = my}, {x = fx, y = fy}}, travelSpeed * SpeedJitter(), math.huge)
         task.wait(.03)
         mouse1press()
 
@@ -2403,7 +2421,7 @@ local function Solver(grid, solution)
             points[#points + 1] = {x = px, y = py}
         end
 
-        MoveAlong(points, CELL_SIZE * DRAG_CELLS_PER_SECOND * SpeedJitter(), MAX_DRAG_STEP)
+        MoveAlong(points, cellSize * dragCellsPerSecond * SpeedJitter(), maxDragStep)
         task.wait()
         mouse1release()
     end
@@ -2462,9 +2480,9 @@ local function BackstabHandler(killer, lroot, kroot, lrootp, krootp, krootlv)
     end)
     if not s or b ~= "" then return end
 
-    keypress(BLOCK_KEY)
+    keypress(blockKey)
     task.wait(.05)
-    keyrelease(BLOCK_KEY)
+    keyrelease(blockKey)
     task.wait(.1695)
 
     local s10, p10, kp10 = pcall(function()
@@ -2548,14 +2566,14 @@ local function PreLocal()
 
     local lchar = LocalPlayer.Character
 
-    if (not BLOCK_KEY or not PARRY_KEY or not SPRINT_KEY) and now >= Timers.Bind then
+    if (not blockKey or not parryKey or not sprintKey) and now >= Timers.Bind then
         Timers.Bind = now + 2
 
         local s, e1, e2, e3 = pcall(GetBinds)
         if s then
-            BLOCK_KEY = GetKeycode(e1)
-            PARRY_KEY = GetKeycode(e2)
-            SPRINT_KEY = GetKeycode(e3)
+            blockKey = GetKeycode(e1)
+            parryKey = GetKeycode(e2)
+            sprintKey = GetKeycode(e3)
         end
     end
 
@@ -2563,7 +2581,7 @@ local function PreLocal()
         local s, stam = pcall(GetStam)
 
         if s and stam and stam:split("/")[1] == "1" then
-            keyrelease(SPRINT_KEY)
+            keyrelease(sprintKey)
         end
     end
 
@@ -2628,7 +2646,7 @@ local function PreLocal()
 
     if bAutoBlock then
         for _, v in getpressedkeys() do
-            if v == KEYBIND then
+            if v == keybind then
                 pressed = true
                 break
             end
@@ -2716,7 +2734,7 @@ local function PreLocal()
                                 local config = KillerData[inst.Name] or KillerData.Default
                                 local attackData = {Config = config, Started = now}
                                 ActiveAttacks[kroot] = attackData
-                                AttackVisUntil[kroot] = os.clock() + (config.WINDUP or 0) + (config.LINGER or 0)
+                                AttackVisUntil[kroot] = os.clock() + (config.windup or 0) + (config.linger or 0)
                                 task.spawn(BlockChecker, kroot, inst, attackData)
                             end
                         elseif Ab and KillerAb[id] < Ab then
@@ -2846,11 +2864,9 @@ local function RefreshLocalState()
     local char = LocalPlayer.Character
     local parent = char and char.Parent
 
-    if parent then
-        local name = parent.Name
-        bSurv = name == "Survivors"
-        bKill = name == "Killers"
-    end
+    local name = parent and parent.Name
+    bSurv = name == "Survivors"
+    bKill = name == "Killers"
 
     local gui = LocalPlayer:FindFirstChild("PlayerGui")
     bInUI = gui ~= nil and gui:FindFirstChild("PuzzleUI") ~= nil
@@ -2893,7 +2909,7 @@ local function ScanItems()
 
         if info.IsItem or inst:FindFirstChild("Humanoid") then
             ItemCache[id] = inst
-        elseif bSurv and info.IsTrailFolder then
+        elseif not bKill and info.IsTrailFolder then
             for _, part in inst:GetChildren() do
                 local partId = InstId(part)
                 if partId and not ItemCache[partId] then
@@ -2991,10 +3007,23 @@ end
 local function Render()
     RefreshTextFont()
     DrawLabels()
+
+    if LocalRoot then
+        local ok, pos = pcall(ReadPosition, LocalRoot)
+        if ok and pos then LocalPos = pos end
+    end
+
     RenderActiveLines()
 
     if bShowBlock and active and LocalHitboxSize then
         for _, snapshot in KillerSnapshot do
+            local ok, pos, look = pcall(function()
+                return snapshot.Root.Position, snapshot.Root.LookVector
+            end)
+            if ok and pos and look then
+                snapshot.Position = pos
+                snapshot.LookVector = look
+            end
             RenderBlockShape(snapshot, LocalHitboxSize, LocalPos)
         end
     end
@@ -3026,7 +3055,7 @@ window = UI:createwindow({
     Version = "VX",
     Keybind = "RightShift",
     ConfigFolder = "AndrisForsaken",
-    CustomResolution = Vector2.new(580, 360),
+    CustomResolution = Vector2.new(580, 370),
     DPIScale = 1.0,
     CompactSettings = false,
     DefaultTab = "Survivor", 
@@ -3038,8 +3067,8 @@ window = UI:createwindow({
     DefaultFont = "Nunito",
 })
 
-window:registerkey("AutoBlockKeybind", KEYBIND, function(val)
-    KEYBIND = val
+window:registerkey("AutoBlockKeybind", keybind, function(val)
+    keybind = val
     if keybindlabel then keybindlabel.Txt.Text = "Current keybind: " .. val end
 end)
 
@@ -3077,7 +3106,7 @@ window:createdropdown(Tabs.Survivor, {
     Options = {"very-strict", "strict", "default", "permissive", "always"},
     Default = "default",
     Callback = function(val)
-        AUTO_BLOCK_MODE = val
+        autoBlockMode = val
     end
 })
 
@@ -3087,7 +3116,7 @@ window:createslider(Tabs.Survivor, {
     Min = 0, Max = .5, Default = 0,
     Step = .01,
     Callback = function(val)
-        BLOCK_DELAY = val
+        blockDelay = val
     end
 })
 
@@ -3100,7 +3129,7 @@ window:createtoggle(Tabs.Survivor, {
 	end
 })
 
-keybindlabel = window:createlabel(Tabs.Survivor, "Current keybind: " .. KEYBIND, 1)
+keybindlabel = window:createlabel(Tabs.Survivor, "Current keybind: " .. keybind, 1)
 
 local keybindbtn
 keybindbtn = window:createbutton(Tabs.Survivor, {
@@ -3121,7 +3150,7 @@ keybindbtn = window:createbutton(Tabs.Survivor, {
                         window:setvalue("AutoBlockKeybind", key[i])
                         keybindbtn.Txt.Text = "Change keybind"
                         bChangingBind = false
-                        send_notification("Keybind set to: " .. KEYBIND, "info")
+                        send_notification("Keybind set to: " .. keybind, "info")
                         loop = false
                         break
                     end
@@ -3150,7 +3179,7 @@ window:createslider(Tabs.Survivor, {
     Min = 0, Max = .6, Default = 0,
     Step = .05,
     Callback = function(val)
-        PARRY_DELAY = val
+        parryDelay = val
     end
 })
 
@@ -3160,7 +3189,7 @@ window:createslider(Tabs.Survivor, {
     Min = 0, Max = 90, Default = 0,
     Step = 5,
     Callback = function(val)
-        PARRY_UP_ANGLE = val
+        parryUpAngle = val
     end
 })
 
@@ -3254,7 +3283,7 @@ window:createtoggle(Tabs.Misc, {
     Col = 1,
     Default = false,
     Callback = function(val)
-		bAutoGen = val
+		-- Disabled
 	end
 })
 
