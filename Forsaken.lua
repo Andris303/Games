@@ -83,12 +83,6 @@ local preLocalConnect
 local preDataConnect
 local renderConnect
 local ReadNumberAttribute
-local Profile = {Totals = {}, Counts = {}, Resets = 0, NextReport = os.clock() + 5, Found = {}}
-
-function Profile.Add(name, started)
-    Profile.Totals[name] = (Profile.Totals[name] or 0) + os.clock() - started
-    Profile.Counts[name] = (Profile.Counts[name] or 0) + 1
-end
 
 local MemoryChildren
 
@@ -1115,14 +1109,12 @@ do
             modes[id] = "Memory"
             KillerAbTime[id] = nil
             KillerAb[id] = nil
-            print("Attribute reader: reading " .. inst.Name .. "'s attributes from memory")
             return memoryValue
         end
 
         mismatches[id] = (mismatches[id] or 0) + 1
         if mismatches[id] >= 5 then
             modes[id] = "Attribute"
-            print(string.format("Attribute reader: memory read failed for %s (memory %s, GetAttribute %s), using GetAttribute", inst.Name, tostring(memoryValue), tostring(value)))
         end
         return value
     end
@@ -3081,18 +3073,6 @@ end
 local function AddItem(id, inst)
     ItemCache[id] = inst
     ItemQueue.Fresh[#ItemQueue.Fresh + 1] = id
-    local name = inst.Name
-    Profile.Found[id] = {Name = name, At = os.clock()}
-    local parent = inst.Parent
-    print(string.format("[ESP] found %s (id %s, parent %s)", tostring(name), id, parent and tostring(parent.Name) or "nil"))
-end
-
-local function ReportDrawn(id)
-    local found = Profile.Found[id]
-    if found and ItemRenderCache[id] then
-        Profile.Found[id] = nil
-        print(string.format("[ESP] drawing %s, %.2fs after it was found", tostring(found.Name), os.clock() - found.At))
-    end
 end
 
 local function RefreshItemRenderInfo(now)
@@ -3105,7 +3085,6 @@ local function RefreshItemRenderInfo(now)
         if inst and not pcall(BuildItemRenderInfo, id, inst, now) then
             RemoveCachedItem(id)
         end
-        ReportDrawn(id)
 
         if os.clock() - started >= .002 then return end
     end
@@ -3127,7 +3106,6 @@ local function RefreshItemRenderInfo(now)
         if inst and now >= (queue.Next[id] or 0) and not pcall(BuildItemRenderInfo, id, inst, now) then
             RemoveCachedItem(id)
         end
-        ReportDrawn(id)
 
         if os.clock() - started >= .002 then break end
     end
@@ -3172,14 +3150,10 @@ local function ScanItems()
                 end
             end
         elseif not info.IsTrailFolder then
-            if not seenAt then
-                print(string.format("[ESP] ignored %s (%s)", tostring(inst.Name), tostring(inst.ClassName)))
-            end
             nonItems[id] = seenAt or now
         end
     end
     NonItems = nonItems
-    Profile.Add("ScanIngame", now)
 
     local killers = Killers:GetChildren()
     local killerCount = #killers
@@ -3196,7 +3170,6 @@ local function ScanItems()
         end
     end
 
-    local started = os.clock()
     local azure = Map:FindFirstChild("Azure")
     local azureId = azure and InstId(azure)
     if azureId then
@@ -3219,9 +3192,6 @@ local function ScanItems()
         end
     end
 
-    Profile.Add("ScanWorkspace", started)
-
-    started = os.clock()
     local mapFolder = Ingame:FindFirstChild("Map")
     if mapFolder then
         for _, inst in MemoryChildren(mapFolder) do
@@ -3247,8 +3217,6 @@ local function ScanItems()
         end
     end
 
-    Profile.Add("ScanMap", started)
-
     for id in ItemCache do
         if not present[id] then
             RemoveCachedItem(id)
@@ -3271,7 +3239,6 @@ local function PreData()
     local now = os.clock()
 
     if FocusTimer ~= 0 and FocusTimer + .5 < now then
-        Profile.Resets += 1
         ClearItems()
         FakeNoliCache = {}
         _G.ESPList = {}
@@ -3283,10 +3250,8 @@ local function PreData()
 
     if now >= Timers.Players then
         Timers.Players = now + .1
-        local started = os.clock()
         RegisterPlayers()
         RefreshLocalState()
-        Profile.Add("Players", started)
 
         local inRound = Ingame:FindFirstChild("Map") ~= nil
         if bInRound and not inRound then
@@ -3298,43 +3263,20 @@ local function PreData()
     if bInRound and (bShowLine or bAutoStab) then
         if now - LastAttackScan >= .03 then
             LastAttackScan = now
-            local started = os.clock()
             pcall(UpdateActiveLines)
-            Profile.Add("AttackLines", started)
         end
     elseif next(ActiveLines) then
         ActiveLines = {}
     end
 
-    if now >= Profile.NextReport then
-        local elapsed = now - Profile.NextReport + 5
-        Profile.NextReport = now + 5
-        local parts = {}
-        for _, name in {"PreLocal", "PreData", "Render", "Players", "AttackLines", "Build", "Scan", "ScanIngame", "ScanWorkspace", "ScanMap"} do
-            local count = Profile.Counts[name] or 0
-            local total = (Profile.Totals[name] or 0) * 1000
-            parts[#parts + 1] = string.format("%s %.0f/s %.2fms avg %.1fms/s", name, count / elapsed, count > 0 and total / count or 0, total / elapsed)
-        end
-        local cached, drawn, queued = 0, 0, #ItemQueue.List - ItemQueue.Pos + 1
-        for _ in ItemCache do cached += 1 end
-        for _ in ItemRenderCache do drawn += 1 end
-        print("[Profile] " .. table.concat(parts, " | "))
-        print(string.format("[Profile] items cached %d, drawn %d, waiting in queue %d, fresh %d, full resets %d", cached, drawn, math.max(queued, 0), #ItemQueue.Fresh, Profile.Resets))
-        Profile.Totals, Profile.Counts, Profile.Resets = {}, {}, 0
-    end
-
     if not bESP then return end
 
-    local started = os.clock()
     RefreshItemRenderInfo(now)
-    Profile.Add("Build", started)
 
     if now - LastItemScan < .1 then return end
     LastItemScan = now
 
-    started = os.clock()
     ScanItems()
-    Profile.Add("Scan", started)
 end
 
 local function Render()
@@ -3594,21 +3536,9 @@ end
 
 window:start()
 
-preLocalConnect = RunService.PreLocal:Connect(function()
-    local started = os.clock()
-    PreLocal()
-    Profile.Add("PreLocal", started)
-end)
-preDataConnect = RunService.PreData:Connect(function()
-    local started = os.clock()
-    PreData()
-    Profile.Add("PreData", started)
-end)
-renderConnect = RunService.Render:Connect(function()
-    local started = os.clock()
-    Render()
-    Profile.Add("Render", started)
-end)
+preLocalConnect = RunService.PreLocal:Connect(PreLocal)
+preDataConnect = RunService.PreData:Connect(PreData)
+renderConnect = RunService.Render:Connect(Render)
 
 clear_model_data()
 
