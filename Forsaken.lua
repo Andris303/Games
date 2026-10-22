@@ -12,7 +12,7 @@ local abssize = O.GuiBase2D.AbsoluteSize
 if game.GameId == 6331902150 then
 
 local ESP = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/ESP.lua"))()
-local UI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/UI.lua"))()
+local UI = loadstring(game:HttpGet("https://gitlab.com/okdude42/severe-scripts/-/raw/main/uilib2/SevereUI.luau?ref_type=heads"))()
 local h = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))()
 
 local Players = game:GetService("Players")
@@ -33,7 +33,6 @@ local bHighlight = true
 local bTextName = true
 local bAutoBlock = false
 local bShowBlock = false
-local bChangingBind = false
 local bAutoParry = false
 local bTempParry = false
 local bShowLine = false
@@ -56,13 +55,14 @@ local ActiveLines = {}
 local PartCache = {}
 local PartCacheRefresh = {}
 local ItemRenderCache = {}
-local ItemQueue = {List = {}, Pos = 1, Built = 0, Next = {}}
-local Timers = {Camera = 0, AutoGen = 0, Bind = 0, Viewport = 0, Players = 0, QueryHitbox = 0}
+local ItemQueue = {List = {}, Pos = 1, Built = 0, Next = {}, Fresh = {}}
+local NonItems = {}
+local RoundTimeLeft = nil
+local Timers = {Camera = 0, AutoGen = 0, Bind = 0, Viewport = 0, Players = 0, QueryHitbox = 0, RoundTimeLeft = 0}
 local KillerSnapshot = {}
 local LocalRoot
 local LocalPos
 local LocalHitboxSize
-local tempactive = false
 local active = false
 local bt = {Text = "AUTO BLOCK (inactive)", Size = 30, Color = Color3.fromRGB(109,129,150), Position = Vector2.new(0, 0), Visible = false}
 local bt2 = {Text = "BLOCK", Size = 35, Color = Color3.fromRGB(255,25,25), Position = Vector2.new(0, 0), Visible = false}
@@ -73,10 +73,54 @@ local FocusTimer = 0
 local bParryOnInv = false
 local noliname
 local window
-local keybindlabel
+local FlagSetters = {}
+local AppliedFlags = {}
 local LastAttackScan = 0
 local LastItemScan = 0
+local bInRound = false
 local tempstunning = false
+local preLocalConnect
+local preDataConnect
+local renderConnect
+local ReadNumberAttribute
+local Profile = {Totals = {}, Counts = {}, Resets = 0, NextReport = os.clock() + 5, Found = {}}
+
+function Profile.Add(name, started)
+    Profile.Totals[name] = (Profile.Totals[name] or 0) + os.clock() - started
+    Profile.Counts[name] = (Profile.Counts[name] or 0) + 1
+end
+
+local MemoryChildren
+
+do
+    local childrenOffset = O.Instance.ChildrenStart
+    local childrenEndOffset = O.Instance.ChildrenEnd
+
+    local function ReadU64(address, offset)
+        local ok, value = pcall(memory.readu64, address, offset)
+        return ok and value or nil
+    end
+
+    function MemoryChildren(folder)
+        local address = tonumber(folder.Data)
+        local list = address and ReadU64(address, childrenOffset)
+        local first = list and ReadU64(list, 0)
+        local last = list and ReadU64(list, childrenEndOffset)
+        if not first or not last or last < first or last - first > 0x10 * 5000 then
+            return folder:GetChildren()
+        end
+
+        local children = {}
+        for pointer = first, last - 0x10, 0x10 do
+            local child = ReadU64(pointer, 0)
+            if child and child ~= 0 then
+                local ok, inst = pcall(pointer_to_userdata, child)
+                if ok and inst then children[#children + 1] = inst end
+            end
+        end
+        return children
+    end
+end
 
 do
     local ok, name = pcall(function()
@@ -94,21 +138,7 @@ local function LayoutLabels()
 end
 
 local Labels = {bt, bt2, bt3}
-local TextFont = {Name = "Nunito", Valid = {}}
-
-for _, name in {"SanFransico", "Tamzen", "LilitaOne", "Jersey", "Viga", "Moonstar", "Proggy", "Pixel", "Astronix", "Mario", "Beige", "Watte", "Nunito", "Proxyma_Condensed", "Avenir", "Brandon", "Avant", "Poppins", "Interum", "Hojlund", "Never_Surrender", "Corperate", "Galileo"} do
-    TextFont.Valid[name] = true
-end
-
-local function RefreshTextFont()
-    if not window then return end
-
-    local ok, name = pcall(function()
-        return window.getfont and window:getfont() or window:getvalue("UIFont")
-    end)
-
-    TextFont.Name = ok and TextFont.Valid[name] and name or "Nunito"
-end
+local TextFont = {Name = "Nunito"}
 
 local function DrawLabels()
     for _, label in Labels do
@@ -149,7 +179,6 @@ do
     end
 end
 
-local keybind = "V"
 local blockKey, parryKey, sprintKey
 
 do
@@ -345,18 +374,21 @@ local function InstId(inst)
     return tostring(tonumber(inst.Data))
 end
 
+local function ValidCharacter(char)
+    if not char then return nil end
+    local ok, className = pcall(function()
+        return memory.rtti(char)
+    end)
+    if ok and type(className) == "string" and string.find(className, "Model") then
+        return char
+    end
+    return nil
+end
+
 local function AddSpaces(text)
     text = text:gsub("(%l)(%u)", "%1 %2")
     text = text:gsub("(%u)(%u%l)", "%1 %2")
     return text
-end
-
-local function GetGenPer(num)
-    if num == 21 then return "20%" end
-    if num == 42 then return "40%" end
-    if num == 63 then return "60%" end
-    if num == 84 then return "80%" end
-    return "0%"
 end
 
 local function GetPart(inst)
@@ -408,6 +440,8 @@ local function ClearItems()
     ItemQueue.Pos = 1
     ItemQueue.Built = 0
     ItemQueue.Next = {}
+    ItemQueue.Fresh = {}
+    NonItems = {}
 end
 
 local function ReadPosition(inst)
@@ -490,19 +524,12 @@ local function BuildItemRenderInfo(id, inst, now)
         end
 
         local Main = inst:FindFirstChild("Main")
-        local Progress = inst:FindFirstChild("Progress")
-        if not Main or not Progress then
+        if not Main then
             RemoveCachedItem(id)
             return
         end
 
-        local okVal, val = pcall(function() return Progress.Value end)
-        if not okVal or val == 100 then
-            RemoveCachedItem(id)
-            return
-        end
-
-        if not pcall(ReadPosition, Main) then
+        if Main:FindFirstChild("generatorActivate") or not pcall(ReadPosition, Main) then
             ItemRenderCache[id] = nil
             return
         end
@@ -511,7 +538,7 @@ local function BuildItemRenderInfo(id, inst, now)
             Kind = "Generator",
             Main = Main,
             Color = c.generator,
-            Text = GetGenPer(val),
+            Text = "Generator",
         }
         return
     end
@@ -526,6 +553,12 @@ local function BuildItemRenderInfo(id, inst, now)
 
     local info = GetNameInfo(Name)
     if info.Hidden or (bSurv and info.SurvHidden) or (bKill and info.KillHidden) then
+        ItemRenderCache[id] = nil
+        return
+    end
+
+    local humanoid = inst:FindFirstChild("Humanoid")
+    if humanoid and (tonumber(humanoid.Health) or 1) <= 0 then
         ItemRenderCache[id] = nil
         return
     end
@@ -548,7 +581,7 @@ local function BuildItemRenderInfo(id, inst, now)
         end
     elseif not Parts or not Parts.Parent then
         refresh = true
-    elseif inst:FindFirstChild("Humanoid") and (not PartCacheRefresh[id] or now - PartCacheRefresh[id] >= .25) then
+    elseif humanoid and (not PartCacheRefresh[id] or now - PartCacheRefresh[id] >= .25) then
         refresh = true
     end
 
@@ -577,6 +610,7 @@ local function BuildItemRenderInfo(id, inst, now)
             Kind = "Body",
             Parts = Parts,
             Torso = torsoPart,
+            Humanoid = humanoid,
             Color = color,
             Text = info.Display or "Minion",
         }
@@ -584,6 +618,7 @@ local function BuildItemRenderInfo(id, inst, now)
         ItemRenderCache[id] = {
             Kind = "Part",
             Part = Parts,
+            Humanoid = humanoid,
             Color = color,
             Text = info.Display,
         }
@@ -734,7 +769,8 @@ local CachedQueryHitbox
 local CachedQueryHitboxChar
 
 local function GetQueryHitbox(lchar)
-    if CachedQueryHitboxChar == lchar then
+    local charId = InstId(lchar)
+    if charId and CachedQueryHitboxChar == charId then
         if CachedQueryHitbox and CachedQueryHitbox.Parent then
             return CachedQueryHitbox
         end
@@ -746,7 +782,7 @@ local function GetQueryHitbox(lchar)
 
     Timers.QueryHitbox = os.clock() + .5
     CachedQueryHitbox = lchar:FindFirstChild("QueryHitbox", true)
-    CachedQueryHitboxChar = lchar
+    CachedQueryHitboxChar = charId
 
     return CachedQueryHitbox
 end
@@ -826,7 +862,7 @@ local function BlockChecker(KRoot, inst, attackData)
     while os.clock() - started < blockEndDelay do
         if not active or not bAutoBlock or ActiveAttacks[KRoot] ~= attackData then break end
 
-        local lchar = LocalPlayer.Character
+        local lchar = ValidCharacter(LocalPlayer.Character)
         local queryHitbox = lchar and GetQueryHitbox(lchar)
         local okPoll, killerPos, killerLook, localPos = pcall(function()
             return KRoot.Position, KRoot.LookVector, lchar and lchar:FindFirstChild("HumanoidRootPart") and lchar.HumanoidRootPart.Position
@@ -866,7 +902,7 @@ local PredictionData = {}
 
 local function DrawPartText(part, text, color)
     local ok, pos = pcall(ReadPosition, part)
-    if ok then DrawTextAt(pos, text, color) end
+    if ok and pos then DrawTextAt(pos, text, color) end
 end
 
 local function UpdatePrediction(key, pos)
@@ -923,18 +959,185 @@ PredictKillerPosition = function(killerKey, killerPos, localPos, multiplier)
     return PredictPosition(killerKey, killerPos, prediction)
 end
 
-local function IsFakeNoliUnsafe(inst, killerCount)
-    if inst.Name ~= "Noli" or not inst.Parent then return false end
+do
+    local attributeRootOffset = 0x38
+    local attributeStride = 0x58
+    local attributeValueOffset = 0x18
 
-    local usern = noliname or inst:GetAttribute("Username")
-    if not usern then return false end
-    noliname = usern
+    local function IsHeapPointer(value)
+        return type(value) == "number" and value >= 0x10000000000 and value < 0x70000000000
+    end
 
-    local player = Players:FindFirstChild(usern)
-    local char = player and player.Character
-    if not char then return false end
+    local function ReadU64(address, offset)
+        local ok, value = pcall(memory.readu64, address, offset)
+        return ok and value or nil
+    end
 
-    return char ~= inst and killerCount > 1
+    local function ReadName(address)
+        local size = ReadU64(address, 0x10)
+        local capacity = ReadU64(address, 0x18)
+        if not size or not capacity or size <= 0 or size > 64 then return "" end
+
+        local stringAddress = address
+        if capacity >= 16 then
+            stringAddress = ReadU64(address, 0)
+            if not IsHeapPointer(stringAddress) then return "" end
+        end
+
+        local ok, value = pcall(memory.readstring, stringAddress, 0)
+        return ok and type(value) == "string" and value or ""
+    end
+
+    local function SearchEntries(first, packed, wantedName)
+        if not IsHeapPointer(first) or not packed then return nil, false end
+
+        local count = packed % 0x100000000
+        local capacity = math.floor(packed / 0x100000000)
+        if count <= 0 or count > capacity or capacity > 256 then return nil, false end
+
+        local valid = false
+        for i = 0, count - 1 do
+            local entry = first + i * attributeStride
+            local namePointer = ReadU64(entry, 0)
+            if IsHeapPointer(namePointer) then
+                local name = ReadName(namePointer)
+                if name == "" then name = ReadName(namePointer + 0x8) end
+                if name ~= "" then
+                    valid = true
+                    if name == wantedName then return entry, true end
+                end
+            end
+        end
+
+        return nil, valid
+    end
+
+    local function SearchNode(node, wantedName)
+        local first, packed = ReadU64(node, 0x8), ReadU64(node, 0x10)
+        if first and packed then
+            local entry, valid = SearchEntries(first, packed, wantedName)
+            if entry or valid then return entry, valid end
+        end
+
+        packed, first = ReadU64(node, 0x8), ReadU64(node, 0x18)
+        if first and packed then
+            return SearchEntries(first, packed, wantedName)
+        end
+
+        return nil, false
+    end
+
+    local function FindAttributeEntry(address, wantedName)
+        local root = ReadU64(address, attributeRootOffset)
+        if not IsHeapPointer(root) then return nil end
+
+        local queue = {root}
+        local visited = {}
+        local index = 1
+
+        while index <= #queue and index <= 64 do
+            local node = queue[index]
+            index += 1
+
+            if not visited[node] then
+                visited[node] = true
+
+                local entry = SearchNode(node, wantedName)
+                if entry then return entry, node end
+
+                for _, offset in {0x0, 0x10} do
+                    local pointer = ReadU64(node, offset)
+                    if IsHeapPointer(pointer) and not visited[pointer] then
+                        queue[#queue + 1] = pointer
+                    end
+                end
+            end
+        end
+
+        return nil
+    end
+
+    local function ReadEntryNumber(entry)
+        local ok, value = pcall(memory.readf64, entry + attributeValueOffset)
+        if not ok or type(value) ~= "number" or value ~= value or math.abs(value) > 1e12 then
+            return nil
+        end
+        return value
+    end
+
+    local nodes = {}
+    local misses = {}
+    local modes = {}
+    local mismatches = {}
+
+    local function ReadMemory(inst, id, name)
+        local node = nodes[id]
+        if node then
+            local entry, valid = SearchNode(node, name)
+            if valid then return entry and ReadEntryNumber(entry) end
+            nodes[id] = nil
+        end
+
+        local now = os.clock()
+        local missedAt = misses[id]
+        if missedAt and now - missedAt < 1 then return nil, true end
+
+        local address = tonumber(inst.Data)
+        if not address then return nil end
+
+        local entry
+        entry, node = FindAttributeEntry(address, name)
+        if not node then
+            misses[id] = now
+            return nil
+        end
+        misses[id] = nil
+        nodes[id] = node
+        return entry and ReadEntryNumber(entry)
+    end
+
+    local function ReadAttribute(inst, name)
+        return tonumber(inst:GetAttribute(name) or 0) or 0
+    end
+
+    function ReadNumberAttribute(inst, id, name)
+        local mode = modes[id]
+        if mode == "Memory" then
+            return ReadMemory(inst, id, name) or ReadAttribute(inst, name)
+        end
+
+        local value = ReadAttribute(inst, name)
+        if mode == "Attribute" or value == 0 then return value end
+
+        local memoryValue, skipped = ReadMemory(inst, id, name)
+        if skipped then return value end
+        if memoryValue and math.abs(memoryValue - value) < .001 then
+            modes[id] = "Memory"
+            KillerAbTime[id] = nil
+            KillerAb[id] = nil
+            print("Attribute reader: reading " .. inst.Name .. "'s attributes from memory")
+            return memoryValue
+        end
+
+        mismatches[id] = (mismatches[id] or 0) + 1
+        if mismatches[id] >= 5 then
+            modes[id] = "Attribute"
+            print(string.format("Attribute reader: memory read failed for %s (memory %s, GetAttribute %s), using GetAttribute", inst.Name, tostring(memoryValue), tostring(value)))
+        end
+        return value
+    end
+end
+
+local function IsFakeNoliUnsafe(inst, username, killerCount)
+    username = username or inst:GetAttribute("Username")
+    if username then noliname = username end
+    username = username or noliname
+    if not username or killerCount <= 1 then return false, username end
+
+    local player = Players:FindFirstChild(username)
+    local char = player and ValidCharacter(player.Character)
+    local charId = char and InstId(char)
+    return charId ~= nil and charId ~= InstId(inst), username
 end
 
 local FakeNoliCache = {}
@@ -943,10 +1146,7 @@ local function IsFakeNoli(inst, killerCount)
     if inst.Name ~= "Noli" then return false end
 
     local id = InstId(inst)
-    if not id then
-        local ok, result = pcall(IsFakeNoliUnsafe, inst, killerCount)
-        return ok and result == true
-    end
+    if not id then return false end
 
     local now = os.clock()
     local cached = FakeNoliCache[id]
@@ -954,9 +1154,9 @@ local function IsFakeNoli(inst, killerCount)
         return cached.Value
     end
 
-    local ok, result = pcall(IsFakeNoliUnsafe, inst, killerCount)
+    local ok, result, username = pcall(IsFakeNoliUnsafe, inst, cached and cached.Username, killerCount)
     local value = ok and result == true
-    FakeNoliCache[id] = {Value = value, Time = now}
+    FakeNoliCache[id] = {Value = value, Time = now, Username = ok and username or nil}
     return value
 end
 
@@ -1009,7 +1209,7 @@ local function Parry(lchar)
         local function FindHits(onHit)
             local fov = lchar:FindFirstChild("FOVMultipliers")
             if not fov then return end
-            for _, child in fov:GetChildren() do
+            for _, child in MemoryChildren(fov) do
                 if child.Name == "HitRegistered" then
                     local id = InstId(child)
                     if id then onHit(id) end
@@ -1120,766 +1320,761 @@ local function Parry(lchar)
     end
 end
 
-local function DrawWorldLine(startPos, endPos)
-    local offseta = endPos - startPos
-    local dist = vector.magnitude(offseta)
+local AutoStabBlacklist, RenderActiveLines, UpdateActiveLines
 
-    if dist <= 0 then return end
+do
+    local function DrawWorldLine(startPos, endPos)
+        local offseta = endPos - startPos
+        local dist = vector.magnitude(offseta)
 
-    local startScreen, startVisible = Camera:WorldToScreenPoint(startPos)
-    local endScreen, endVisible = Camera:WorldToScreenPoint(endPos)
+        if dist <= 0 then return end
 
-    if startVisible and endVisible then
-        DrawingImmediate.Line(Vector2.new(startScreen.X, startScreen.Y), Vector2.new(endScreen.X, endScreen.Y), c.lineprim, 1, 4, 1)
-        return
-    end
+        local startScreen, startVisible = Camera:WorldToScreenPoint(startPos)
+        local endScreen, endVisible = Camera:WorldToScreenPoint(endPos)
 
-    local direction = offseta / dist
-    local segmentLength = 5
-    local segments = math.max(1, math.ceil(dist / segmentLength))
-    local segml = dist / segments
-
-    for i = 0, segments - 1 do
-        local d1 = i * segml
-        local d2 = math.min((i + 1) * segml, dist)
-        local p1 = startPos + direction * d1
-        local p2 = startPos + direction * d2
-        local a, aVisible = Camera:WorldToScreenPoint(p1)
-        local b, bVisible = Camera:WorldToScreenPoint(p2)
-
-        if aVisible and bVisible then
-            DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 4, 1)
+        if startVisible and endVisible then
+            DrawingImmediate.Line(Vector2.new(startScreen.X, startScreen.Y), Vector2.new(endScreen.X, endScreen.Y), c.lineprim, 1, 4, 1)
+            return
         end
-    end
-end
 
-local function DrawLookLine(rootpos, rootlv, rootrv, rootuv, dist, right, down)
-    right = right or 0
-    down = down or 0
-    local direction = rootlv + rootrv * right - rootuv * down
-    direction = direction / vector.magnitude(direction)
+        local direction = offseta / dist
+        local segmentLength = 5
+        local segments = math.max(1, math.ceil(dist / segmentLength))
+        local segml = dist / segments
 
-    local segmentLength = 5
-    local segments = math.max(1, math.ceil(dist / segmentLength))
-    local segml = dist / segments
+        for i = 0, segments - 1 do
+            local d1 = i * segml
+            local d2 = math.min((i + 1) * segml, dist)
+            local p1 = startPos + direction * d1
+            local p2 = startPos + direction * d2
+            local a, aVisible = Camera:WorldToScreenPoint(p1)
+            local b, bVisible = Camera:WorldToScreenPoint(p2)
 
-    for i = 0, segments - 1 do
-        local d1 = i * segml
-        local d2 = math.min((i + 1) * segml, dist)
-        local p1 = rootpos + direction * d1
-        local p2 = rootpos + direction * d2
-        local a, aVisible = Camera:WorldToScreenPoint(p1)
-        local b, bVisible = Camera:WorldToScreenPoint(p2)
-
-        if aVisible and bVisible then
-            DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 4, 1)
-        end
-    end
-end
-
-local function DrawAbilityName(data)
-    local pos = data.CurrentPosition or data.Origin
-    DrawTextAt(pos, data.Name or data.Ability.Name, c.linesec, 25)
-end
-
-local function ReadPrimaryPosition(obj)
-    return obj.PrimaryPart.Position
-end
-
-local function LiveTrackedPosition(obj)
-    local ok, pos = pcall(ReadPosition, obj)
-    if ok and pos then return pos end
-
-    local okPrimary, primary = pcall(ReadPrimaryPosition, obj)
-    if okPrimary and primary then return primary end
-
-    return nil
-end
-
-local function GetTrackedPosition(obj)
-    if not obj or not obj.Parent then return nil end
-    return LiveTrackedPosition(obj)
-end
-
-local function HasSound(root, sounds)
-    for _, sound in sounds do
-        if root:FindFirstChild(sound) then
-            return true
-        end
-    end
-
-    return false
-end
-
-local function SnapshotObjects()
-    local result = {}
-
-    for _, obj in Ingame:GetChildren() do
-        result[obj] = true
-    end
-
-    return result
-end
-
-local function FindNewObject(data, root, names)
-    for _, obj in Ingame:GetChildren() do
-        if not data.KnownObjects[obj] and names[obj.Name] then
-            local pos = GetTrackedPosition(obj)
-
-            if pos and vector.magnitude(root.Position - pos) < 30 then
-                return obj
+            if aVisible and bVisible then
+                DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 4, 1)
             end
         end
     end
-end
 
-local function DrawMovementFromOrigin(data)
-    local currentPos = data.CurrentPosition
-    local movement = Vector3.new(currentPos.X - data.Origin.X, 0, currentPos.Z - data.Origin.Z)
-    local traveled = vector.magnitude(movement)
+    local function DrawLookLine(rootpos, rootlv, rootrv, rootuv, dist, right, down)
+        right = right or 0
+        down = down or 0
+        local direction = rootlv + rootrv * right - rootuv * down
+        direction = direction / vector.magnitude(direction)
 
-    if traveled <= 2 then
-        DrawLookLine(currentPos, data.CurrentLookVector, data.CurrentRightVector, data.CurrentUpVector, data.Length)
-        return
-    end
+        local segmentLength = 5
+        local segments = math.max(1, math.ceil(dist / segmentLength))
+        local segml = dist / segments
 
-    local direction = movement / traveled
-    local destination = Vector3.new(data.Origin.X + direction.X * data.Length, currentPos.Y, data.Origin.Z + direction.Z * data.Length)
+        for i = 0, segments - 1 do
+            local d1 = i * segml
+            local d2 = math.min((i + 1) * segml, dist)
+            local p1 = rootpos + direction * d1
+            local p2 = rootpos + direction * d2
+            local a, aVisible = Camera:WorldToScreenPoint(p1)
+            local b, bVisible = Camera:WorldToScreenPoint(p2)
 
-    if traveled < data.Length then
-        DrawWorldLine(currentPos, destination)
-    end
-end
-
-local function UpdateTrackedObject(data)
-    local obj = data.TrackedObject
-
-    if not obj or not obj.Parent then
-        data.Finished = true
-        data.HasTrackedLine = false
-        return
-    end
-
-    local currentPos = GetTrackedPosition(obj)
-    if not currentPos then
-        data.Finished = true
-        data.HasTrackedLine = false
-        return
-    end
-
-    if not data.ObjectSamplePos then
-        data.ObjectSamplePos = currentPos
-        data.HasTrackedLine = false
-        return
-    end
-
-    if not data.ObjectDirection then
-        local movement = Vector3.new(currentPos.X - data.ObjectSamplePos.X, 0, currentPos.Z - data.ObjectSamplePos.Z)
-
-        local moved = vector.magnitude(movement)
-        if moved >= .5 then
-            data.ObjectDirection = movement / moved
-            data.ObjectDestination = data.ObjectSamplePos + data.ObjectDirection * data.Length
+            if aVisible and bVisible then
+                DrawingImmediate.Line(Vector2.new(a.X, a.Y), Vector2.new(b.X, b.Y), c.lineprim, 1, 4, 1)
+            end
         end
     end
 
-    if data.ObjectDestination then
-        data.TrackedFrom = currentPos
-        data.HasTrackedLine = true
-    else
-        data.HasTrackedLine = false
-    end
-end
-
-local function DrawTrackedObject(data)
-    if not data.HasTrackedLine then return end
-
-    local pos = LiveTrackedPosition(data.TrackedObject) or data.TrackedFrom
-    local destination = data.ObjectDestination
-    DrawWorldLine(pos, Vector3.new(destination.X, pos.Y, destination.Z))
-end
-
-local function HasLeftOrigin(data, root)
-    if data.LeftOrigin then return true end
-
-    local pos = root.Position
-    local dx, dz = pos.X - data.Origin.X, pos.Z - data.Origin.Z
-    if dx * dx + dz * dz > 4 then
-        data.LeftOrigin = true
-        data.StillPosition = nil
-        data.StillSince = nil
+    local function DrawAbilityName(data)
+        local pos = data.CurrentPosition or data.Origin
+        DrawTextAt(pos, data.Name or data.Ability.Name, c.linesec, 25)
     end
 
-    return data.LeftOrigin == true
-end
-
-local function IsStandingStill(data, root)
-    local pos = root.Position
-    local now = os.clock()
-
-    if not data.StillPosition then
-        data.StillPosition = pos
-        data.StillSince = now
-        return false
+    local function ReadPrimaryPosition(obj)
+        return obj.PrimaryPart.Position
     end
 
-    local movement = Vector3.new(pos.X - data.StillPosition.X, 0, pos.Z - data.StillPosition.Z)
+    local function LiveTrackedPosition(obj)
+        local ok, pos = pcall(ReadPosition, obj)
+        if ok and pos then return pos end
 
-    if vector.magnitude(movement) > .12 then
-        data.StillPosition = pos
-        data.StillSince = now
-        return false
+        local okPrimary, primary = pcall(ReadPrimaryPosition, obj)
+        if okPrimary and primary then return primary end
+
+        return nil
     end
 
-    return now - data.StillSince >= .2
-end
+    local function GetTrackedPosition(obj)
+        if not obj or not obj.Parent then return nil end
+        return LiveTrackedPosition(obj)
+    end
 
-local AutoStabBlacklist = {"Walkspeed Override", "Entanglement", "Mass Infection", "Corrupt Energy", "Voidrush", "Demonic Pursuit", "Ascension", "Bloodhook", "Enstrangle"}
-
-local ascensionFeetOffset = 3
-
-local function DrawCurrentLookLine(data, right, down)
-    DrawLookLine(data.CurrentPosition, data.CurrentLookVector, data.CurrentRightVector, data.CurrentUpVector, data.Length, right, down)
-end
-
-local KillerAbilities = {
-    c00lkidd = {
-        {
-            Name = "Walkspeed Override",
-            Length = 90,
-            TriggerOnce = true,
-            Check = function(char, root, data)
-                if not data then
-                    return char:FindFirstChild("c00lgui") ~= nil
-                end
-
-                if data.Finished then return false end
-                if os.clock() - data.Started >= 1.9 then return false end
-
+    local function HasSound(root, sounds)
+        for _, sound in sounds do
+            if root:FindFirstChild(sound) then
                 return true
-            end,
-            Update = function(char, root, data)
-                if os.clock() - data.Started < .6 then return end
+            end
+        end
 
-                if HasLeftOrigin(data, root) and IsStandingStill(data, root) then
-                    data.Finished = true
-                end
-            end,
-            Draw = function(data)
-                local elapsed = os.clock() - data.Started
-                if elapsed < .6 then
-                    DrawCurrentLookLine(data)
-                    return
-                end
-                DrawMovementFromOrigin(data)
-            end,
-        },
-    },
+        return false
+    end
 
-    ["1x1x1x1"] = {
-        {
-            Name = "Entanglement",
-            Length = 125,
-            Check = function(char, root, data)
-                if data then
-                    if data.Finished then
-                        return HasSound(root, Sounds.Ent)
-                    end
-                    if data.TrackedObject then
-                        return true
-                    end
-                    if os.clock() - data.Started <= 2 then
-                        return true
-                    end
-                end
-                return HasSound(root, Sounds.Ent)
-            end,
-            Start = function(data)
-                data.KnownObjects = SnapshotObjects()
-            end,
-            Update = function(char, root, data)
-                if data.Finished then return end
-                if not data.TrackedObject then
-                    data.TrackedObject = FindNewObject(data, root, {Swords = true})
-                end
-                if data.TrackedObject then
-                    UpdateTrackedObject(data)
-                end
-            end,
-            Draw = function(data)
-                if data.Finished then return end
-                if data.TrackedObject then
-                    DrawTrackedObject(data)
-                else
-                    DrawCurrentLookLine(data)
-                end
-            end,
-        },
+    local function SnapshotObjects()
+        local result = {}
 
-        {
-            Name = "Mass Infection",
-            Length = 630,
-            Check = function(char, root, data)
-                if HasSound(root, Sounds.Martyr) then
-                    RejuvSuppressUntil[char] = os.clock() + 1.4
-                    return false
-                end
-                if os.clock() < (RejuvSuppressUntil[char] or 0) then
-                    return false
-                end
-                local active = HasSound(root, Sounds.MassInf) and not HasSound(root, Sounds.Rejuv)
-                if data then
-                    if data.Finished then
-                        return active
-                    end
-                    if data.TrackedObject then
-                        return true
-                    end
-                    if os.clock() - data.Started <= 2 then
-                        return true
-                    end
-                end
-                return active
-            end,
-            Start = function(data)
-                data.KnownObjects = SnapshotObjects()
-            end,
-            Update = function(char, root, data)
-                if data.Finished then return end
-                if not data.TrackedObject then
-                    data.TrackedObject = FindNewObject(data, root, {shockwave = true, Shockwave = true})
-                end
-                if data.TrackedObject then
-                    UpdateTrackedObject(data)
-                end
-            end,
-            Draw = function(data)
-                if data.Finished then return end
-                if data.TrackedObject then
-                    DrawTrackedObject(data)
-                else
-                    DrawCurrentLookLine(data)
-                end
-            end,
-        },
-    },
+        for _, obj in MemoryChildren(Ingame) do
+            local id = InstId(obj)
+            if id then result[id] = true end
+        end
 
-    JohnDoe = {
-        {
-            Name = "Corrupt Energy",
-            Length = 125,
-            Duration = 3.5,
-            TriggerOnce = true,
-            Check = function(char, root)
-                if HasSound(root, Sounds.Corrupt) then
+        return result
+    end
+
+    local function FindNewObject(data, root, names)
+        for _, obj in MemoryChildren(Ingame) do
+            if names[obj.Name] and not data.KnownObjects[InstId(obj)] then
+                local pos = GetTrackedPosition(obj)
+
+                if pos and vector.magnitude(root.Position - pos) < 30 then
+                    return obj
+                end
+            end
+        end
+    end
+
+    local function DrawMovementFromOrigin(data)
+        local currentPos = data.CurrentPosition
+        local movement = Vector3.new(currentPos.X - data.Origin.X, 0, currentPos.Z - data.Origin.Z)
+        local traveled = vector.magnitude(movement)
+
+        if traveled <= 2 then
+            DrawLookLine(currentPos, data.CurrentLookVector, data.CurrentRightVector, data.CurrentUpVector, data.Length)
+            return
+        end
+
+        local direction = movement / traveled
+        local destination = Vector3.new(data.Origin.X + direction.X * data.Length, currentPos.Y, data.Origin.Z + direction.Z * data.Length)
+
+        if traveled < data.Length then
+            DrawWorldLine(currentPos, destination)
+        end
+    end
+
+    local function UpdateTrackedObject(data)
+        local obj = data.TrackedObject
+
+        if not obj or not obj.Parent then
+            data.Finished = true
+            data.HasTrackedLine = false
+            return
+        end
+
+        local currentPos = GetTrackedPosition(obj)
+        if not currentPos then
+            data.Finished = true
+            data.HasTrackedLine = false
+            return
+        end
+
+        if not data.ObjectSamplePos then
+            data.ObjectSamplePos = currentPos
+            data.HasTrackedLine = false
+            return
+        end
+
+        if not data.ObjectDirection then
+            local movement = Vector3.new(currentPos.X - data.ObjectSamplePos.X, 0, currentPos.Z - data.ObjectSamplePos.Z)
+
+            local moved = vector.magnitude(movement)
+            if moved >= .5 then
+                data.ObjectDirection = movement / moved
+                data.ObjectDestination = data.ObjectSamplePos + data.ObjectDirection * data.Length
+            end
+        end
+
+        if data.ObjectDestination then
+            data.TrackedFrom = currentPos
+            data.HasTrackedLine = true
+        else
+            data.HasTrackedLine = false
+        end
+    end
+
+    local function DrawTrackedObject(data)
+        if not data.HasTrackedLine then return end
+
+        local pos = LiveTrackedPosition(data.TrackedObject) or data.TrackedFrom
+        local destination = data.ObjectDestination
+        DrawWorldLine(pos, Vector3.new(destination.X, pos.Y, destination.Z))
+    end
+
+    local function HasLeftOrigin(data, root)
+        if data.LeftOrigin then return true end
+
+        local pos = root.Position
+        local dx, dz = pos.X - data.Origin.X, pos.Z - data.Origin.Z
+        if dx * dx + dz * dz > 4 then
+            data.LeftOrigin = true
+            data.StillPosition = nil
+            data.StillSince = nil
+        end
+
+        return data.LeftOrigin == true
+    end
+
+    local function IsStandingStill(data, root)
+        local pos = root.Position
+        local now = os.clock()
+
+        if not data.StillPosition then
+            data.StillPosition = pos
+            data.StillSince = now
+            return false
+        end
+
+        local movement = Vector3.new(pos.X - data.StillPosition.X, 0, pos.Z - data.StillPosition.Z)
+
+        if vector.magnitude(movement) > .12 then
+            data.StillPosition = pos
+            data.StillSince = now
+            return false
+        end
+
+        return now - data.StillSince >= .2
+    end
+
+    AutoStabBlacklist = {"Walkspeed Override", "Entanglement", "Mass Infection", "Corrupt Energy", "Voidrush", "Demonic Pursuit", "Ascension", "Bloodhook", "Enstrangle"}
+
+    local ascensionFeetOffset = 3
+
+    local function DrawCurrentLookLine(data, right, down)
+        DrawLookLine(data.CurrentPosition, data.CurrentLookVector, data.CurrentRightVector, data.CurrentUpVector, data.Length, right, down)
+    end
+
+    local KillerAbilities = {
+        c00lkidd = {
+            {
+                Name = "Walkspeed Override",
+                Length = 90,
+                TriggerOnce = true,
+                Check = function(char, root, data)
+                    if not data then
+                        return char:FindFirstChild("c00lgui") ~= nil
+                    end
+
+                    if data.Finished then return false end
+                    if os.clock() - data.Started >= 1.9 then return false end
+
                     return true
-                end
-            end,
-            Draw = function(data)
-                local windup = 2
-                local elapsed = os.clock() - data.Started
+                end,
+                Update = function(char, root, data)
+                    if os.clock() - data.Started < .6 then return end
 
-                if elapsed < windup then
-                    DrawCurrentLookLine(data)
-                    return
-                end
-
-                local direction = data.CurrentLookVector
-                local magnitude = vector.magnitude(direction)
-
-                if magnitude == 0 then return end
-
-                direction /= magnitude
-                local endPos = data.CurrentPosition + direction * data.Length
-                local alpha = math.clamp((elapsed - windup) / (data.Duration - windup), 0, 2)
-                local startPos = data.CurrentPosition + direction * data.Length * alpha
-                DrawWorldLine(startPos, endPos)
-            end,
-        },
-    },
-
-    Noli = {
-        {
-            Name = "Voidrush",
-            Length = 20,
-            TriggerOnce = true,
-            Check = function(char, root, data)
-                if data and data.Finished then
-                    return false
-                end
-                local state = char:FindFirstChild("SpeedMultipliers")
-                if state then
-                    return state:FindFirstChild("VoidRushCharging") or state:FindFirstChild("VoidRushDash")
-                end
-            end,
-            Draw = function(data)
-                DrawCurrentLookLine(data)
-            end,
-        },
-    },
-
-    Sixer = {
-        {
-            Name = "Demonic Pursuit",
-            Length = 155,
-            TriggerOnce = true,
-            Check = function(char, root, data)
-                local state = char:FindFirstChild("SpeedMultipliers")
-                if not state then return false end
-                local start = state:FindFirstChild("666PursuitStart")
-                local pursuit = state:FindFirstChild("666Pursuit")
-                if not start and not pursuit then
-                    return false
-                end
-                if data and not start and pursuit and data.LeftOrigin and IsStandingStill(data, root) then
-                    return false
-                end
-                return true
-            end,
-            Update = function(char, root, data)
-                local state = char:FindFirstChild("SpeedMultipliers")
-                data.Pursuing = state and state:FindFirstChild("666Pursuit") ~= nil
-                if data.Pursuing then HasLeftOrigin(data, root) end
-            end,
-            Draw = function(data)
-                if data.Pursuing then
+                    if HasLeftOrigin(data, root) and IsStandingStill(data, root) then
+                        data.Finished = true
+                    end
+                end,
+                Draw = function(data)
+                    local elapsed = os.clock() - data.Started
+                    if elapsed < .6 then
+                        DrawCurrentLookLine(data)
+                        return
+                    end
                     DrawMovementFromOrigin(data)
-                else
-                    DrawCurrentLookLine(data)
-                end
-            end,
+                end,
+            },
         },
-    },
 
-    Nosferatu = {
-        {
-            Name = "Ascension",
-            Length = 120,
-
-            Check = function(char, root, data)
-                local state = char:FindFirstChild("SpeedMultipliers")
-                local present
-                if state then
-                    present = state:FindFirstChild("NosFlying")
-                end
-
-                if present then
+        ["1x1x1x1"] = {
+            {
+                Name = "Entanglement",
+                Length = 125,
+                Check = function(char, root, data)
                     if data then
-                        data.LastPresent = os.clock()
+                        if data.Finished then
+                            return HasSound(root, Sounds.Ent)
+                        end
+                        if data.TrackedObject then
+                            return true
+                        end
+                        if os.clock() - data.Started <= 2 then
+                            return true
+                        end
+                    end
+                    return HasSound(root, Sounds.Ent)
+                end,
+                Start = function(data)
+                    data.KnownObjects = SnapshotObjects()
+                end,
+                Update = function(char, root, data)
+                    if data.Finished then return end
+                    if not data.TrackedObject then
+                        data.TrackedObject = FindNewObject(data, root, {Swords = true})
+                    end
+                    if data.TrackedObject then
+                        UpdateTrackedObject(data)
+                    end
+                end,
+                Draw = function(data)
+                    if data.Finished then return end
+                    if data.TrackedObject then
+                        DrawTrackedObject(data)
+                    else
+                        DrawCurrentLookLine(data)
+                    end
+                end,
+            },
+
+            {
+                Name = "Mass Infection",
+                Length = 630,
+                Check = function(char, root, data)
+                    if HasSound(root, Sounds.Martyr) then
+                        RejuvSuppressUntil[char] = os.clock() + 1.4
+                        return false
+                    end
+                    if os.clock() < (RejuvSuppressUntil[char] or 0) then
+                        return false
+                    end
+                    local active = HasSound(root, Sounds.MassInf) and not HasSound(root, Sounds.Rejuv)
+                    if data then
+                        if data.Finished then
+                            return active
+                        end
+                        if data.TrackedObject then
+                            return true
+                        end
+                        if os.clock() - data.Started <= 2 then
+                            return true
+                        end
+                    end
+                    return active
+                end,
+                Start = function(data)
+                    data.KnownObjects = SnapshotObjects()
+                end,
+                Update = function(char, root, data)
+                    if data.Finished then return end
+                    if not data.TrackedObject then
+                        data.TrackedObject = FindNewObject(data, root, {shockwave = true, Shockwave = true})
+                    end
+                    if data.TrackedObject then
+                        UpdateTrackedObject(data)
+                    end
+                end,
+                Draw = function(data)
+                    if data.Finished then return end
+                    if data.TrackedObject then
+                        DrawTrackedObject(data)
+                    else
+                        DrawCurrentLookLine(data)
+                    end
+                end,
+            },
+        },
+
+        JohnDoe = {
+            {
+                Name = "Corrupt Energy",
+                Length = 125,
+                Duration = 3.5,
+                TriggerOnce = true,
+                Check = function(char, root)
+                    if HasSound(root, Sounds.Corrupt) then
+                        return true
+                    end
+                end,
+                Draw = function(data)
+                    local windup = 2
+                    local elapsed = os.clock() - data.Started
+
+                    if elapsed < windup then
+                        DrawCurrentLookLine(data)
+                        return
                     end
 
-                    return true
-                end
-
-                if data and data.LastPresent then
-                    return os.clock() - data.LastPresent <= 1.1
-                end
-
-                return false
-            end,
-
-            Draw = function(data)
-                local dist = data.Length
-
-                if LocalPos then
-                    local direction = data.CurrentLookVector - data.CurrentUpVector
+                    local direction = data.CurrentLookVector
                     local magnitude = vector.magnitude(direction)
+
                     if magnitude == 0 then return end
 
-                    local dropY = direction.Y / magnitude
-                    local feetY = LocalPos.Y - ascensionFeetOffset
+                    direction /= magnitude
+                    local endPos = data.CurrentPosition + direction * data.Length
+                    local alpha = math.clamp((elapsed - windup) / (data.Duration - windup), 0, 2)
+                    local startPos = data.CurrentPosition + direction * data.Length * alpha
+                    DrawWorldLine(startPos, endPos)
+                end,
+            },
+        },
 
-                    if dropY < 0 then
-                        dist = math.min(dist, (feetY - data.CurrentPosition.Y) / dropY)
+        Noli = {
+            {
+                Name = "Voidrush",
+                Length = 20,
+                TriggerOnce = true,
+                Check = function(char, root, data)
+                    if data and data.Finished then
+                        return false
                     end
-                end
-
-                if dist <= 0 then return end
-                DrawLookLine(data.CurrentPosition, data.CurrentLookVector, data.CurrentRightVector, data.CurrentUpVector, dist, 0, 1)
-            end,
-        },
-        {
-            Name = "Bloodhook",
-            Length = 115,
-            Check = function(char, root)
-                local folder = char:FindFirstChild("SpeedMultipliers")
-                return folder and folder:FindFirstChild("NosBloodhookThrow") ~= nil
-            end,
-            Draw = function(data)
-                DrawCurrentLookLine(data)
-            end,
-        },
-    },
-
-    Azure = {
-        {
-            Name = "Enstrangle",
-            Length = 55,
-            Check = function(char, root)
-                return root:FindFirstChild("HomingSpotlightOthers") ~= nil
-            end,
-            Draw = function(data)
-                DrawCurrentLookLine(data, .03, 0)
-            end,
-        },
-    },
-}
-
-local SurvivorAbilities = {
-    Shedletsky = {
-        {
-            Name = "Slash",
-            Length = 6,
-            Check = function(char, root)
-                local state = char:FindFirstChild("ResistanceMultipliers")
-                if state then
-                    local resist = state:FindFirstChild("ResistanceStatus")
-                    if resist then
-                        return resist.Value == 40
+                    local state = char:FindFirstChild("SpeedMultipliers")
+                    if state then
+                        return state:FindFirstChild("VoidRushCharging") or state:FindFirstChild("VoidRushDash")
                     end
-                end
-            end,
-            Draw = function(data)
-                DrawCurrentLookLine(data)
-            end,
+                end,
+                Draw = function(data)
+                    DrawCurrentLookLine(data)
+                end,
+            },
         },
-    },
 
-    Chance = {
-        {
-            Name = "One Shot",
-            Length = 92,
-            Duration = .925,
-            TriggerOnce = true,
-            Check = function(char, root)
-                local state = char:FindFirstChild("Flintlock")
-                if state then
-                    return state.Transparency == 0
-                end
-            end,
-            Draw = function(data)
-                DrawCurrentLookLine(data)
-            end,
+        Sixer = {
+            {
+                Name = "Demonic Pursuit",
+                Length = 155,
+                TriggerOnce = true,
+                Check = function(char, root, data)
+                    local state = char:FindFirstChild("SpeedMultipliers")
+                    if not state then return false end
+                    local start = state:FindFirstChild("666PursuitStart")
+                    local pursuit = state:FindFirstChild("666Pursuit")
+                    if not start and not pursuit then
+                        return false
+                    end
+                    if data and not start and pursuit and data.LeftOrigin and IsStandingStill(data, root) then
+                        return false
+                    end
+                    return true
+                end,
+                Update = function(char, root, data)
+                    local state = char:FindFirstChild("SpeedMultipliers")
+                    data.Pursuing = state and state:FindFirstChild("666Pursuit") ~= nil
+                    if data.Pursuing then HasLeftOrigin(data, root) end
+                end,
+                Draw = function(data)
+                    if data.Pursuing then
+                        DrawMovementFromOrigin(data)
+                    else
+                        DrawCurrentLookLine(data)
+                    end
+                end,
+            },
         },
-    },
 
-    Guest1337 = {
-        {
-            Name = "Block",
-            Duration = .9,
-            TriggerOnce = true,
-            Check = function(char, root)
-                if char == LocalPlayer.Character then return end
+        Nosferatu = {
+            {
+                Name = "Ascension",
+                Length = 120,
 
-                local state = char:FindFirstChild("SpeedMultipliers")
-                if state then
-                    if state:FindFirstChild("GuestBlocking") then
+                Check = function(char, root, data)
+                    local state = char:FindFirstChild("SpeedMultipliers")
+                    local present
+                    if state then
+                        present = state:FindFirstChild("NosFlying")
+                    end
+
+                    if present then
+                        if data then
+                            data.LastPresent = os.clock()
+                        end
+
                         return true
                     end
-                end
-            end,
-        },
-    },
 
-    JaneDoe = {
-        {
-            Name = "Hachet",
-            Length = 13,
-            Duration = 1.1,
-            TriggerOnce = true,
-            Check = function(char, root)
-                local state = char:FindFirstChild("SpeedMultipliers")
-                if state then
-                    if state:FindFirstChild("jdaw") then
-                        return true
+                    if data and data.LastPresent then
+                        return os.clock() - data.LastPresent <= 1.1
                     end
-                end
-            end,
-            Draw = function(data)
-                DrawCurrentLookLine(data)
-            end,
+
+                    return false
+                end,
+
+                Draw = function(data)
+                    local dist = data.Length
+
+                    if LocalPos then
+                        local direction = data.CurrentLookVector - data.CurrentUpVector
+                        local magnitude = vector.magnitude(direction)
+                        if magnitude == 0 then return end
+
+                        local dropY = direction.Y / magnitude
+                        local feetY = LocalPos.Y - ascensionFeetOffset
+
+                        if dropY < 0 then
+                            dist = math.min(dist, (feetY - data.CurrentPosition.Y) / dropY)
+                        end
+                    end
+
+                    if dist <= 0 then return end
+                    DrawLookLine(data.CurrentPosition, data.CurrentLookVector, data.CurrentRightVector, data.CurrentUpVector, dist, 0, 1)
+                end,
+            },
+            {
+                Name = "Bloodhook",
+                Length = 115,
+                Check = function(char, root)
+                    local folder = char:FindFirstChild("SpeedMultipliers")
+                    return folder and folder:FindFirstChild("NosBloodhookThrow") ~= nil
+                end,
+                Draw = function(data)
+                    DrawCurrentLookLine(data)
+                end,
+            },
         },
-    },
-}
 
-local function ReadRootPose(root)
-    return root.Position, root.LookVector, root.RightVector, root.UpVector
-end
-
-local function NewLineData(ability, char, root, pos, lv, rv, uv)
-    return {
-        Ability = ability,
-        Character = char,
-        Root = root,
-        IsLocal = char == LocalPlayer.Character,
-        Name = ability.Name,
-        Length = ability.Length,
-        Duration = ability.Duration,
-        Origin = pos,
-        Rootlv = lv,
-        Rootrv = rv,
-        Rootuv = uv,
-        CurrentPosition = pos,
-        CurrentLookVector = lv,
-        CurrentRightVector = rv,
-        CurrentUpVector = uv,
-        Started = os.clock(),
+        Azure = {
+            {
+                Name = "Enstrangle",
+                Length = 55,
+                Check = function(char, root)
+                    return root:FindFirstChild("HomingSpotlightOthers") ~= nil
+                end,
+                Draw = function(data)
+                    DrawCurrentLookLine(data, .03, 0)
+                end,
+            },
+        },
     }
-end
 
-local function UpdateAbility(ability, char, root, lines, pose)
-    local data
+    local SurvivorAbilities = {
+        Shedletsky = {
+            {
+                Name = "Slash",
+                Length = 6,
+                Check = function(char, root)
+                    local state = char:FindFirstChild("ResistanceMultipliers")
+                    if state then
+                        local resist = state:FindFirstChild("ResistanceStatus")
+                        if resist then
+                            return resist.Value == 40
+                        end
+                    end
+                end,
+                Draw = function(data)
+                    DrawCurrentLookLine(data)
+                end,
+            },
+        },
 
-    for _, existing in lines do
-        if existing.Ability == ability then
-            data = existing
-            break
-        end
+        Chance = {
+            {
+                Name = "One Shot",
+                Length = 92,
+                Duration = .925,
+                TriggerOnce = true,
+                Check = function(char, root)
+                    local state = char:FindFirstChild("Flintlock")
+                    if state then
+                        return state.Transparency == 0
+                    end
+                end,
+                Draw = function(data)
+                    DrawCurrentLookLine(data)
+                end,
+            },
+        },
+
+        Guest1337 = {
+            {
+                Name = "Block",
+                Duration = .9,
+                TriggerOnce = true,
+                Check = function(char, root)
+                    if InstId(char) == InstId(ValidCharacter(LocalPlayer.Character)) then return end
+
+                    local state = char:FindFirstChild("SpeedMultipliers")
+                    if state then
+                        if state:FindFirstChild("GuestBlocking") then
+                            return true
+                        end
+                    end
+                end,
+            },
+        },
+
+        JaneDoe = {
+            {
+                Name = "Hachet",
+                Length = 13,
+                Duration = 1.1,
+                TriggerOnce = true,
+                Check = function(char, root)
+                    local state = char:FindFirstChild("SpeedMultipliers")
+                    if state then
+                        if state:FindFirstChild("jdaw") then
+                            return true
+                        end
+                    end
+                end,
+                Draw = function(data)
+                    DrawCurrentLookLine(data)
+                end,
+            },
+        },
+    }
+
+    local function ReadRootPose(root)
+        return root.Position, root.LookVector, root.RightVector, root.UpVector
     end
 
-    local triggered = ability.Check(char, root)
-
-    local function Create()
-        if not pose.Position then
-            pose.Position, pose.Look, pose.Right, pose.Up = ReadRootPose(root)
-        end
-
-        data = NewLineData(ability, char, root, pose.Position, pose.Look, pose.Right, pose.Up)
-
-        if ability.Start then
-            ability.Start(data, char)
-        end
-
-        lines[#lines + 1] = data
+    local function NewLineData(ability, char, root, pos, lv, rv, uv)
+        return {
+            Ability = ability,
+            Character = char,
+            Root = root,
+            IsLocal = InstId(char) == InstId(ValidCharacter(LocalPlayer.Character)),
+            Name = ability.Name,
+            Length = ability.Length,
+            Duration = ability.Duration,
+            Origin = pos,
+            Rootlv = lv,
+            Rootrv = rv,
+            Rootuv = uv,
+            CurrentPosition = pos,
+            CurrentLookVector = lv,
+            CurrentRightVector = rv,
+            CurrentUpVector = uv,
+            Started = os.clock(),
+        }
     end
 
-    if ability.TriggerOnce then
-        ability.ActiveStates = ability.ActiveStates or {}
-        ability.InactiveSince = ability.InactiveSince or {}
+    local function UpdateAbility(ability, char, root, lines, pose)
+        local data
 
-        if triggered and not ability.ActiveStates[char] and not data then
+        for _, existing in lines do
+            if existing.Ability == ability then
+                data = existing
+                break
+            end
+        end
+
+        local triggered = ability.Check(char, root)
+
+        local function Create()
+            if not pose.Position then
+                pose.Position, pose.Look, pose.Right, pose.Up = ReadRootPose(root)
+            end
+
+            data = NewLineData(ability, char, root, pose.Position, pose.Look, pose.Right, pose.Up)
+
+            if ability.Start then
+                ability.Start(data, char)
+            end
+
+            lines[#lines + 1] = data
+        end
+
+        if ability.TriggerOnce then
+            ability.ActiveStates = ability.ActiveStates or {}
+            ability.InactiveSince = ability.InactiveSince or {}
+
+            if triggered and not ability.ActiveStates[char] and not data then
+                Create()
+            end
+
+            if triggered then
+                ability.ActiveStates[char] = true
+                ability.InactiveSince[char] = nil
+            else
+                ability.InactiveSince[char] = ability.InactiveSince[char] or os.clock()
+                if os.clock() - ability.InactiveSince[char] >= .2 then
+                    ability.ActiveStates[char] = false
+                    ability.InactiveSince[char] = nil
+                end
+            end
+        elseif triggered and not data then
             Create()
         end
 
-        if triggered then
-            ability.ActiveStates[char] = true
-            ability.InactiveSince[char] = nil
-        else
-            ability.InactiveSince[char] = ability.InactiveSince[char] or os.clock()
-            if os.clock() - ability.InactiveSince[char] >= .2 then
-                ability.ActiveStates[char] = false
-                ability.InactiveSince[char] = nil
-            end
-        end
-    elseif triggered and not data then
-        Create()
-    end
-
-    if data and not data.LineDone then
-        if ability.Update then
-            ability.Update(char, root, data)
-        end
-
-        if not data.Duration and not ability.Check(char, root, data) then
-            data.LineDone = true
-        end
-    end
-end
-
-local function UpdateAbilityFolder(folder, abilitiesTable)
-    for _, char in folder:GetChildren() do
-        local abilities = abilitiesTable[char.Name]
-        if not abilities then continue end
-
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then continue end
-
-        local lines = ActiveLines[root]
-        if not lines then
-            lines = {}
-            ActiveLines[root] = lines
-        end
-
-        local pose = {}
-
-        for _, ability in abilities do
-            pcall(UpdateAbility, ability, char, root, lines, pose)
-        end
-    end
-end
-
-local function CleanupActiveLines()
-    for root, lines in ActiveLines do
-        local rootValid = root.Parent ~= nil
-
-        for _, data in lines do
-            if data.LineDone then continue end
-
-            if not rootValid then
-                data.LineDone = true
-                continue
+        if data and not data.LineDone then
+            if ability.Update then
+                ability.Update(char, root, data)
             end
 
-            local char = data.Character
-            if not char or (char.Parent ~= Killers and char.Parent ~= Survivors) then
+            if not data.Duration and not ability.Check(char, root, data) then
                 data.LineDone = true
             end
         end
     end
-end
 
-local function RenderActiveLines()
-    if not bShowLine then
-        return
-    end
+    local function UpdateAbilityFolder(folder, abilitiesTable, seenRoots)
+        for _, char in folder:GetChildren() do
+            local abilities = abilitiesTable[char.Name]
+            if not abilities then continue end
 
-    for root, lines in ActiveLines do
-        for i, data in lines do
-            if not bShowLocalLine and data.IsLocal then
-                continue
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if not root then continue end
+            seenRoots[root] = true
+
+            local lines = ActiveLines[root]
+            if not lines then
+                lines = {}
+                ActiveLines[root] = lines
             end
 
-            local elapsed = os.clock() - data.Started
+            local pose = {}
 
-            if data.Duration then
-                if elapsed >= data.Duration then
+            for _, ability in abilities do
+                pcall(UpdateAbility, ability, char, root, lines, pose)
+            end
+        end
+    end
+
+    local function CleanupActiveLines(seenRoots)
+        for root in ActiveLines do
+            if not seenRoots[root] then
+                ActiveLines[root] = nil
+            end
+        end
+    end
+
+    function RenderActiveLines()
+        if not bShowLine then
+            return
+        end
+
+        for root, lines in ActiveLines do
+            for i, data in lines do
+                if not bShowLocalLine and data.IsLocal then
+                    continue
+                end
+
+                local elapsed = os.clock() - data.Started
+
+                if data.Duration then
+                    if elapsed >= data.Duration then
+                        lines[i] = nil
+                        continue
+                    end
+                elseif data.LineDone then
                     lines[i] = nil
                     continue
                 end
-            elseif data.LineDone then
-                lines[i] = nil
-                continue
+
+                local ability = data.Ability
+
+                local ok, pos, lv, rv, uv = pcall(ReadRootPose, data.Root)
+                if ok and pos and lv and rv and uv then
+                    data.CurrentPosition = pos
+                    data.CurrentLookVector = lv
+                    data.CurrentRightVector = rv
+                    data.CurrentUpVector = uv
+                end
+
+                if ability.Draw then
+                    pcall(ability.Draw, data)
+                end
+
+                if ability.ShowName ~= false then
+                    pcall(DrawAbilityName, data)
+                end
             end
 
-            local ability = data.Ability
-
-            local ok, pos, lv, rv, uv = pcall(ReadRootPose, data.Root)
-            if ok then
-                data.CurrentPosition = pos
-                data.CurrentLookVector = lv
-                data.CurrentRightVector = rv
-                data.CurrentUpVector = uv
+            if next(lines) == nil then
+                ActiveLines[root] = nil
             end
-
-            if ability.Draw then
-                pcall(ability.Draw, data)
-            end
-
-            if ability.ShowName ~= false then
-                pcall(DrawAbilityName, data)
-            end
-        end
-
-        if next(lines) == nil then
-            ActiveLines[root] = nil
         end
     end
-end
 
-local function UpdateActiveLines()
-    UpdateAbilityFolder(Killers, KillerAbilities)
-    UpdateAbilityFolder(Survivors, SurvivorAbilities)
-    CleanupActiveLines()
+    function UpdateActiveLines()
+        local seenRoots = {}
+        UpdateAbilityFolder(Killers, KillerAbilities, seenRoots)
+        UpdateAbilityFolder(Survivors, SurvivorAbilities, seenRoots)
+        CleanupActiveLines(seenRoots)
+    end
 end
 
 local function ChanceAim(f, lroot, kroot)
@@ -1916,286 +2111,270 @@ local function SecondsToMinute(num)
     return min .. ":" .. sec
 end
 
-local function SolveWires(Endpoints, Size)
-    Size = Size or 7
+local SolveWires, Solver
 
-    local Directions = {{1, 0}, {-1, 0}, {0, 1}, {0, -1},}
+do
+    function SolveWires(Endpoints, Size)
+        Size = Size or 7
 
-    local Grid = {}
-    local Wires = {}
-    local Solution = {}
+        local Directions = {{1, 0}, {-1, 0}, {0, 1}, {0, -1},}
 
-    for y = 1, Size do
-        Grid[y] = {}
+        local Grid = {}
+        local Wires = {}
+        local Solution = {}
 
-        for x = 1, Size do
-            Grid[y][x] = false
+        for y = 1, Size do
+            Grid[y] = {}
+
+            for x = 1, Size do
+                Grid[y][x] = false
+            end
         end
-    end
 
-    local function Key(x, y)
-        return (y - 1) * Size + x
-    end
+        local function Key(x, y)
+            return (y - 1) * Size + x
+        end
 
-    local function InBounds(x, y)
-        return x >= 1
-            and x <= Size
-            and y >= 1
-            and y <= Size
-    end
+        local function InBounds(x, y)
+            return x >= 1
+                and x <= Size
+                and y >= 1
+                and y <= Size
+        end
 
-    local function GetX(point)
-        return point.x or point[1]
-    end
-    local function GetY(point)
-        return point.y or point[2]
-    end
-    local function Manhattan(x1, y1, x2, y2)
-        return math.abs(x1 - x2) + math.abs(y1 - y2)
-    end
+        local function GetX(point)
+            return point.x or point[1]
+        end
+        local function GetY(point)
+            return point.y or point[2]
+        end
+        local function Manhattan(x1, y1, x2, y2)
+            return math.abs(x1 - x2) + math.abs(y1 - y2)
+        end
 
-    local function CopyPath(path)
-        local result = {}
+        local function CopyPath(path)
+            local result = {}
 
-        for i, point in path do
-            result[i] = {
-                x = point.x,
-                y = point.y,
+            for i, point in path do
+                result[i] = {
+                    x = point.x,
+                    y = point.y,
+                }
+            end
+
+            return result
+        end
+
+        for id, points in Endpoints do
+            if not points[1] or not points[2] then
+                return nil, "Wire " .. tostring(id) .. " doesn't have 2 endpoints"
+            end
+
+            local ax = GetX(points[1])
+            local ay = GetY(points[1])
+            local bx = GetX(points[2])
+            local by = GetY(points[2])
+
+            if not ax or not ay or not bx or not by then
+                return nil, "Invalid endpoint for " .. tostring(id)
+            end
+            if not InBounds(ax, ay) or not InBounds(bx, by) then
+                return nil, "Endpoint outside board for " .. tostring(id)
+            end
+            if Grid[ay][ax] or Grid[by][bx] then
+                return nil, "Two wires use the same endpoint"
+            end
+
+            local wire = {
+                Id = id,
+                AX = ax,
+                AY = ay,
+                BX = bx,
+                BY = by,
             }
+
+            Wires[#Wires + 1] = wire
+            Grid[ay][ax] = wire
+            Grid[by][bx] = wire
         end
 
-        return result
-    end
-
-    for id, points in Endpoints do
-        if not points[1] or not points[2] then
-            return nil, "Wire " .. tostring(id) .. " doesn't have 2 endpoints"
+        local function IsGoal(wire, x, y)
+            return x == wire.BX and y == wire.BY
         end
 
-        local ax = GetX(points[1])
-        local ay = GetY(points[1])
-        local bx = GetX(points[2])
-        local by = GetY(points[2])
-
-        if not ax or not ay or not bx or not by then
-            return nil, "Invalid endpoint for " .. tostring(id)
-        end
-        if not InBounds(ax, ay) or not InBounds(bx, by) then
-            return nil, "Endpoint outside board for " .. tostring(id)
-        end
-        if Grid[ay][ax] or Grid[by][bx] then
-            return nil, "Two wires use the same endpoint"
-        end
-
-        local wire = {
-            Id = id,
-            AX = ax,
-            AY = ay,
-            BX = bx,
-            BY = by,
-        }
-
-        Wires[#Wires + 1] = wire
-        Grid[ay][ax] = wire
-        Grid[by][bx] = wire
-    end
-
-    local function IsGoal(wire, x, y)
-        return x == wire.BX and y == wire.BY
-    end
-
-    local function CanUse(wire, x, y)
-        if not InBounds(x, y) then
-            return false
-        end
-
-        if IsGoal(wire, x, y) then
-            return true
-        end
-
-        return Grid[y][x] == false
-    end
-
-    local function CanReach(wire, startX, startY)
-        local Queue = {{startX, startY}}
-
-        local Head = 1
-        local Visited = {}
-        Visited[Key(startX, startY)] = true
-
-        while Head <= #Queue do
-            local pos = Queue[Head]
-            Head += 1
-            local x = pos[1]
-            local y = pos[2]
-
-            if IsGoal(wire, x, y) then
-                return true
-            end
-
-            for _, dir in Directions do
-                local nx = x + dir[1]
-                local ny = y + dir[2]
-
-                if InBounds(nx, ny) then
-                    local key = Key(nx, ny)
-                    if not Visited[key] and CanUse(wire, nx, ny) then
-                        Visited[key] = true
-                        Queue[#Queue + 1] = {nx, ny}
-                    end
-                end
-            end
-        end
-
-        return false
-    end
-
-    local function AllReachable(Remaining)
-        for _, wire in Remaining do
-            if not CanReach(wire, wire.AX, wire.AY) then
+        local function CanUse(wire, x, y)
+            if not InBounds(x, y) then
                 return false
             end
-        end
-
-        return true
-    end
-
-    local function CountExits(wire, x, y)
-        local count = 0
-
-        for _, dir in Directions do
-            local nx = x + dir[1]
-            local ny = y + dir[2]
-
-            if CanUse(wire, nx, ny) then
-                count += 1
-            end
-        end
-
-        return count
-    end
-
-    local function ReachableArea(wire)
-        local Queue = {{wire.AX, wire.AY}}
-
-        local Head = 1
-        local Visited = {}
-        Visited[Key(wire.AX, wire.AY)] = true
-        local count = 0
-        local reachedGoal = false
-
-        while Head <= #Queue do
-            local pos = Queue[Head]
-            Head += 1
-            local x = pos[1]
-            local y = pos[2]
-            count += 1
 
             if IsGoal(wire, x, y) then
-                reachedGoal = true
+                return true
             end
+
+            return Grid[y][x] == false
+        end
+
+        local function CanReach(wire, startX, startY)
+            local Queue = {{startX, startY}}
+
+            local Head = 1
+            local Visited = {}
+            Visited[Key(startX, startY)] = true
+
+            while Head <= #Queue do
+                local pos = Queue[Head]
+                Head += 1
+                local x = pos[1]
+                local y = pos[2]
+
+                if IsGoal(wire, x, y) then
+                    return true
+                end
+
+                for _, dir in Directions do
+                    local nx = x + dir[1]
+                    local ny = y + dir[2]
+
+                    if InBounds(nx, ny) then
+                        local key = Key(nx, ny)
+                        if not Visited[key] and CanUse(wire, nx, ny) then
+                            Visited[key] = true
+                            Queue[#Queue + 1] = {nx, ny}
+                        end
+                    end
+                end
+            end
+
+            return false
+        end
+
+        local function AllReachable(Remaining)
+            for _, wire in Remaining do
+                if not CanReach(wire, wire.AX, wire.AY) then
+                    return false
+                end
+            end
+
+            return true
+        end
+
+        local function CountExits(wire, x, y)
+            local count = 0
 
             for _, dir in Directions do
                 local nx = x + dir[1]
                 local ny = y + dir[2]
-                if InBounds(nx, ny) then
-                    local key = Key(nx, ny)
-                    if not Visited[key] and CanUse(wire, nx, ny) then
-                        Visited[key] = true
-                        Queue[#Queue + 1] = {nx, ny}
+
+                if CanUse(wire, nx, ny) then
+                    count += 1
+                end
+            end
+
+            return count
+        end
+
+        local function ReachableArea(wire)
+            local Queue = {{wire.AX, wire.AY}}
+
+            local Head = 1
+            local Visited = {}
+            Visited[Key(wire.AX, wire.AY)] = true
+            local count = 0
+            local reachedGoal = false
+
+            while Head <= #Queue do
+                local pos = Queue[Head]
+                Head += 1
+                local x = pos[1]
+                local y = pos[2]
+                count += 1
+
+                if IsGoal(wire, x, y) then
+                    reachedGoal = true
+                end
+
+                for _, dir in Directions do
+                    local nx = x + dir[1]
+                    local ny = y + dir[2]
+                    if InBounds(nx, ny) then
+                        local key = Key(nx, ny)
+                        if not Visited[key] and CanUse(wire, nx, ny) then
+                            Visited[key] = true
+                            Queue[#Queue + 1] = {nx, ny}
+                        end
                     end
                 end
             end
+
+            return reachedGoal, count
         end
 
-        return reachedGoal, count
-    end
+        local function ChooseWire(Remaining)
+            local bestIndex
+            local bestExits
+            local bestArea
+            local bestDistance
 
-    local function ChooseWire(Remaining)
-        local bestIndex
-        local bestExits
-        local bestArea
-        local bestDistance
+            for i, wire in Remaining do
+                local reachable, area = ReachableArea(wire)
 
-        for i, wire in Remaining do
-            local reachable, area = ReachableArea(wire)
+                if not reachable then
+                    return nil
+                end
 
-            if not reachable then
-                return nil
+                local exitsA = CountExits(wire, wire.AX, wire.AY)
+                local exitsB = CountExits(wire, wire.BX, wire.BY)
+                local exits = math.min(exitsA, exitsB)
+                local distance = Manhattan(wire.AX, wire.AY, wire.BX, wire.BY)
+
+                if not bestIndex or exits < bestExits or (exits == bestExits and area < bestArea) or (exits == bestExits and area == bestArea and distance < bestDistance) then
+                    bestIndex = i
+                    bestExits = exits
+                    bestArea = area
+                    bestDistance = distance
+                end
             end
 
-            local exitsA = CountExits(wire, wire.AX, wire.AY)
-            local exitsB = CountExits(wire, wire.BX, wire.BY)
-            local exits = math.min(exitsA, exitsB)
-            local distance = Manhattan(wire.AX, wire.AY, wire.BX, wire.BY)
+            return bestIndex
+        end
 
-            if not bestIndex or exits < bestExits or (exits == bestExits and area < bestArea) or (exits == bestExits and area == bestArea and distance < bestDistance) then
-                bestIndex = i
-                bestExits = exits
-                bestArea = area
-                bestDistance = distance
+        local function RemoveIndex(list, index)
+            local result = {}
+
+            for i, value in list do
+                if i ~= index then
+                    result[#result + 1] = value
+                end
             end
+
+            return result
         end
 
-        return bestIndex
-    end
+        local SolveRemaining
 
-    local function RemoveIndex(list, index)
-        local result = {}
-
-        for i, value in list do
-            if i ~= index then
-                result[#result + 1] = value
-            end
-        end
-
-        return result
-    end
-
-    local SolveRemaining
-
-    SolveRemaining = function(Remaining)
-        if #Remaining == 0 then
-            return true
-        end
-
-        local chosenIndex = ChooseWire(Remaining)
-        if not chosenIndex then
-            return false
-        end
-
-        local wire = Remaining[chosenIndex]
-        local NextRemaining = RemoveIndex(Remaining, chosenIndex)
-
-        if Manhattan(wire.AX, wire.AY, wire.BX, wire.BY) == 1 then
-            Solution[wire.Id] = {{
-                x = wire.AX,
-                y = wire.AY,
-            },
-            {
-                x = wire.BX,
-                y = wire.BY,
-            }}
-
-            if SolveRemaining(NextRemaining) then
+        SolveRemaining = function(Remaining)
+            if #Remaining == 0 then
                 return true
             end
-            Solution[wire.Id] = nil
 
-            return false
-        end
+            local chosenIndex = ChooseWire(Remaining)
+            if not chosenIndex then
+                return false
+            end
 
-        local Path = {{
-            x = wire.AX,
-            y = wire.AY,
-        }}
+            local wire = Remaining[chosenIndex]
+            local NextRemaining = RemoveIndex(Remaining, chosenIndex)
 
-        local PathVisited = {}
-        PathVisited[Key(wire.AX, wire.AY)] = true
+            if Manhattan(wire.AX, wire.AY, wire.BX, wire.BY) == 1 then
+                Solution[wire.Id] = {{
+                    x = wire.AX,
+                    y = wire.AY,
+                },
+                {
+                    x = wire.BX,
+                    y = wire.BY,
+                }}
 
-        local function SearchPath(x, y)
-            if IsGoal(wire, x, y) then
-                Solution[wire.Id] = CopyPath(Path)
                 if SolveRemaining(NextRemaining) then
                     return true
                 end
@@ -2204,231 +2383,251 @@ local function SolveWires(Endpoints, Size)
                 return false
             end
 
-            local Neighbors = {}
-            for _, dir in Directions do
-                local nx = x + dir[1]
-                local ny = y + dir[2]
+            local Path = {{
+                x = wire.AX,
+                y = wire.AY,
+            }}
 
-                if InBounds(nx, ny) then
-                    local key = Key(nx, ny)
-                    if not PathVisited[key] and CanUse(wire, nx, ny) then
-                        Neighbors[#Neighbors + 1] = {x = nx, y = ny, distance = Manhattan(nx, ny, wire.BX, wire.BY)}
+            local PathVisited = {}
+            PathVisited[Key(wire.AX, wire.AY)] = true
+
+            local function SearchPath(x, y)
+                if IsGoal(wire, x, y) then
+                    Solution[wire.Id] = CopyPath(Path)
+                    if SolveRemaining(NextRemaining) then
+                        return true
+                    end
+                    Solution[wire.Id] = nil
+
+                    return false
+                end
+
+                local Neighbors = {}
+                for _, dir in Directions do
+                    local nx = x + dir[1]
+                    local ny = y + dir[2]
+
+                    if InBounds(nx, ny) then
+                        local key = Key(nx, ny)
+                        if not PathVisited[key] and CanUse(wire, nx, ny) then
+                            Neighbors[#Neighbors + 1] = {x = nx, y = ny, distance = Manhattan(nx, ny, wire.BX, wire.BY)}
+                        end
                     end
                 end
+
+                table.sort(Neighbors, function(a, b)
+                    return a.distance < b.distance
+                end)
+
+                for _, nextPos in Neighbors do
+                    local nx = nextPos.x
+                    local ny = nextPos.y
+                    local key = Key(nx, ny)
+                    local goal = IsGoal(wire, nx, ny)
+                    PathVisited[key] = true
+                    Path[#Path + 1] = {x = nx, y = ny,}
+
+                    if not goal then
+                        Grid[ny][nx] = wire
+                    end
+
+                    local possible = true
+
+                    if not goal and not CanReach(wire, nx, ny) then
+                        possible = false
+                    end
+                    if possible and not AllReachable(NextRemaining) then
+                        possible = false
+                    end
+                    if possible and SearchPath(nx, ny) then
+                        return true
+                    end
+                    if not goal then
+                        Grid[ny][nx] = false
+                    end
+
+                    Path[#Path] = nil
+                    PathVisited[key] = nil
+                end
+                return false
             end
 
-            table.sort(Neighbors, function(a, b)
-                return a.distance < b.distance
-            end)
-
-            for _, nextPos in Neighbors do
-                local nx = nextPos.x
-                local ny = nextPos.y
-                local key = Key(nx, ny)
-                local goal = IsGoal(wire, nx, ny)
-                PathVisited[key] = true
-                Path[#Path + 1] = {x = nx, y = ny,}
-
-                if not goal then
-                    Grid[ny][nx] = wire
-                end
-
-                local possible = true
-
-                if not goal and not CanReach(wire, nx, ny) then
-                    possible = false
-                end
-                if possible and not AllReachable(NextRemaining) then
-                    possible = false
-                end
-                if possible and SearchPath(nx, ny) then
-                    return true
-                end
-                if not goal then
-                    Grid[ny][nx] = false
-                end
-
-                Path[#Path] = nil
-                PathVisited[key] = nil
-            end
-            return false
+            return SearchPath(wire.AX, wire.AY)
         end
 
-        return SearchPath(wire.AX, wire.AY)
+        local Remaining = {}
+        for _, wire in Wires do
+            Remaining[#Remaining + 1] = wire
+        end
+
+        if SolveRemaining(Remaining) then
+            return Solution
+        end
+
+        return nil, "No solution found"
     end
 
-    local Remaining = {}
-    for _, wire in Wires do
-        Remaining[#Remaining + 1] = wire
+    local cellSize = 75
+    local guiInsetY = 0
+
+    local function MouseNow()
+        if type(getmouseposition) == "function" then
+            local ok, pos = pcall(getmouseposition)
+            if ok and pos then return pos.x, pos.y end
+        end
+
+        local pos = UserInputService:GetMouseLocation()
+        return pos.X, pos.Y
     end
 
-    if SolveRemaining(Remaining) then
-        return Solution
+    local MoveOffset = {X = 0, Y = 0}
+
+    local function MoveMouse(x, y)
+        mousemoveabs(x + MoveOffset.X, y + MoveOffset.Y)
     end
 
-    return nil, "No solution found"
-end
+    local function CalibrateMouse()
+        MoveOffset.X, MoveOffset.Y = 0, 0
 
-local cellSize = 75
-local guiInsetY = 0
+        local sx, sy = MouseNow()
+        mousemoveabs(sx, sy)
+        task.wait()
+        task.wait()
 
-local function MouseNow()
-    if type(getmouseposition) == "function" then
-        local ok, pos = pcall(getmouseposition)
-        if ok and pos then return pos.x, pos.y end
+        local ax, ay = MouseNow()
+        MoveOffset.X = math.floor(sx - ax + .5)
+        MoveOffset.Y = math.floor(sy - ay + .5)
+
+        MoveMouse(sx, sy)
+        task.wait()
     end
 
-    local pos = UserInputService:GetMouseLocation()
-    return pos.X, pos.Y
-end
+    local function GetCenter(gui)
+        local px = memory.readf32(gui, abspos)
+        local py = memory.readf32(gui, abspos + 4)
 
-local MoveOffset = {X = 0, Y = 0}
-
-local function MoveMouse(x, y)
-    mousemoveabs(x + MoveOffset.X, y + MoveOffset.Y)
-end
-
-local function CalibrateMouse()
-    MoveOffset.X, MoveOffset.Y = 0, 0
-
-    local sx, sy = MouseNow()
-    mousemoveabs(sx, sy)
-    task.wait()
-    task.wait()
-
-    local ax, ay = MouseNow()
-    MoveOffset.X = math.floor(sx - ax + .5)
-    MoveOffset.Y = math.floor(sy - ay + .5)
-
-    MoveMouse(sx, sy)
-    task.wait()
-end
-
-local function GetCenter(gui)
-    local px = memory.readf32(gui, abspos)
-    local py = memory.readf32(gui, abspos + 4)
-
-    return px + cellSize / 2, py + cellSize / 2 + guiInsetY
-end
-
-local dragCellsPerSecond = 20
-local travelSpeed = 4000
-local maxDragStep = cellSize * .45
-
-local function MoveAlong(points, speed, maxStep)
-    local lengths = {}
-    local total = 0
-
-    for i = 2, #points do
-        local dx = points[i].x - points[i - 1].x
-        local dy = points[i].y - points[i - 1].y
-        lengths[i] = math.sqrt(dx * dx + dy * dy)
-        total += lengths[i]
+        return px + cellSize / 2, py + cellSize / 2 + guiInsetY
     end
 
-    local last = points[#points]
-    if total <= 0 then
+    local dragCellsPerSecond = 20
+    local travelSpeed = 4000
+    local maxDragStep = cellSize * .45
+
+    local function MoveAlong(points, speed, maxStep)
+        local lengths = {}
+        local total = 0
+
+        for i = 2, #points do
+            local dx = points[i].x - points[i - 1].x
+            local dy = points[i].y - points[i - 1].y
+            lengths[i] = math.sqrt(dx * dx + dy * dy)
+            total += lengths[i]
+        end
+
+        local last = points[#points]
+        if total <= 0 then
+            MoveMouse(last.x, last.y)
+            return
+        end
+
+        local duration = math.max(total / speed, .07)
+        local start = os.clock()
+        local traveled = 0
+        local segment = 2
+        local segmentStart = 0
+
+        while traveled < total do
+            local alpha = math.min((os.clock() - start) / duration, 1)
+            local target = alpha * alpha * (3 - 2 * alpha) * total
+            traveled = math.min(target, traveled + maxStep)
+
+            while segment < #points and segmentStart + lengths[segment] < traveled do
+                segmentStart += lengths[segment]
+                segment += 1
+            end
+
+            local a, b = points[segment - 1], points[segment]
+            local f = lengths[segment] > 0 and math.clamp((traveled - segmentStart) / lengths[segment], 0, 1) or 1
+            MoveMouse(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f)
+
+            if traveled >= total then break end
+            task.wait()
+        end
+
         MoveMouse(last.x, last.y)
-        return
     end
 
-    local duration = math.max(total / speed, .07)
-    local start = os.clock()
-    local traveled = 0
-    local segment = 2
-    local segmentStart = 0
+    local function SpeedJitter()
+        return .9 + math.random() * .2
+    end
 
-    while traveled < total do
-        local alpha = math.min((os.clock() - start) / duration, 1)
-        local target = alpha * alpha * (3 - 2 * alpha) * total
-        traveled = math.min(target, traveled + maxStep)
+    local function SimplifyPath(path)
+        if #path <= 2 then
+            return path
+        end
+        local result = {path[1]}
+        local lastDX = path[2].x - path[1].x
+        local lastDY = path[2].y - path[1].y
 
-        while segment < #points and segmentStart + lengths[segment] < traveled do
-            segmentStart += lengths[segment]
-            segment += 1
+        for i = 2, #path - 1 do
+            local current = path[i]
+            local nextPoint = path[i + 1]
+            local dx = nextPoint.x - current.x
+            local dy = nextPoint.y - current.y
+            if dx ~= lastDX or dy ~= lastDY then
+                result[#result + 1] = current
+            end
+
+            lastDX = dx
+            lastDY = dy
         end
 
-        local a, b = points[segment - 1], points[segment]
-        local f = lengths[segment] > 0 and math.clamp((traveled - segmentStart) / lengths[segment], 0, 1) or 1
-        MoveMouse(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f)
-
-        if traveled >= total then break end
-        task.wait()
+        result[#result + 1] = path[#path]
+        return result
     end
 
-    MoveMouse(last.x, last.y)
-end
+    function Solver(grid, solution)
+        local ogtime = os.clock()
 
-local function SpeedJitter()
-    return .9 + math.random() * .2
-end
-
-local function SimplifyPath(path)
-    if #path <= 2 then
-        return path
-    end
-    local result = {path[1]}
-    local lastDX = path[2].x - path[1].x
-    local lastDY = path[2].y - path[1].y
-
-    for i = 2, #path - 1 do
-        local current = path[i]
-        local nextPoint = path[i + 1]
-        local dx = nextPoint.x - current.x
-        local dy = nextPoint.y - current.y
-        if dx ~= lastDX or dy ~= lastDY then
-            result[#result + 1] = current
-        end
-
-        lastDX = dx
-        lastDY = dy
-    end
-
-    result[#result + 1] = path[#path]
-    return result
-end
-
-local function Solver(grid, solution)
-    local ogtime = os.clock()
-
-    mouse1release()
-    local time = math.floor(math.max(AutoGenTime + (math.random() * 2 - 1) * AutoGenRandom, .2) * 100) / 100
-    task.wait(time)
-
-    CalibrateMouse()
-
-    for _, path in solution do
-        if #path < 2 then continue end
-
-        local first = path[1]
-        local firstCell = grid:FindFirstChild(tostring(first.x) .. "-" .. tostring(first.y))
-        if not firstCell then continue end
-        local fx, fy = GetCenter(firstCell)
-        local mx, my = MouseNow()
-
-        MoveAlong({{x = mx, y = my}, {x = fx, y = fy}}, travelSpeed * SpeedJitter(), math.huge)
-        task.wait(.03)
-        mouse1press()
-
-        local points = {{x = fx, y = fy}}
-        local simplePath = SimplifyPath(path)
-        for i = 2, #simplePath do
-            local point = simplePath[i]
-            local cell = grid:FindFirstChild(tostring(point.x) .. "-" .. tostring(point.y))
-            if not cell then break end
-
-            local px, py = GetCenter(cell)
-            points[#points + 1] = {x = px, y = py}
-        end
-
-        MoveAlong(points, cellSize * dragCellsPerSecond * SpeedJitter(), maxDragStep)
-        task.wait()
         mouse1release()
+        local time = math.floor(math.max(AutoGenTime + (math.random() * 2 - 1) * AutoGenRandom, .2) * 100) / 100
+        task.wait(time)
+
+        CalibrateMouse()
+
+        for _, path in solution do
+            if #path < 2 then continue end
+
+            local first = path[1]
+            local firstCell = grid:FindFirstChild(tostring(first.x) .. "-" .. tostring(first.y))
+            if not firstCell then continue end
+            local fx, fy = GetCenter(firstCell)
+            local mx, my = MouseNow()
+
+            MoveAlong({{x = mx, y = my}, {x = fx, y = fy}}, travelSpeed * SpeedJitter(), math.huge)
+            task.wait(.03)
+            mouse1press()
+
+            local points = {{x = fx, y = fy}}
+            local simplePath = SimplifyPath(path)
+            for i = 2, #simplePath do
+                local point = simplePath[i]
+                local cell = grid:FindFirstChild(tostring(point.x) .. "-" .. tostring(point.y))
+                if not cell then break end
+
+                local px, py = GetCenter(cell)
+                points[#points + 1] = {x = px, y = py}
+            end
+
+            MoveAlong(points, cellSize * dragCellsPerSecond * SpeedJitter(), maxDragStep)
+            task.wait()
+            mouse1release()
+        end
+
+        print("Time took: " .. tostring(math.floor((os.clock() - ogtime) * 1000) / 1000))
+
+        TempAutoGen = false
     end
-
-    print("Time took: " .. tostring(math.floor((os.clock() - ogtime) * 1000) / 1000))
-
-    TempAutoGen = false
 end
 
 local function IsKillerAbilityActive(kroot, abilityTable)
@@ -2494,7 +2693,18 @@ local function BackstabHandler(killer, lroot, kroot, lrootp, krootp, krootlv)
 end
 
 
+local function SyncFlags()
+    for flag, apply in FlagSetters do
+        local value = window:get(flag)
+        if value ~= AppliedFlags[flag] then
+            AppliedFlags[flag] = value
+            apply(value)
+        end
+    end
+end
+
 local function PreLocal()
+    SyncFlags()
     local now = os.clock()
 
     if now >= Timers.Camera then
@@ -2564,7 +2774,7 @@ local function PreLocal()
         LastPuzzleSignature = nil
     end
 
-    local lchar = LocalPlayer.Character
+    local lchar = ValidCharacter(LocalPlayer.Character)
 
     if (not blockKey or not parryKey or not sprintKey) and now >= Timers.Bind then
         Timers.Bind = now + 2
@@ -2609,7 +2819,11 @@ local function PreLocal()
     end
 
     if bShowTimer then
-        local ctimer = game.ReplicatedStorage.RoundTimer:GetAttribute("TimeLeft")
+        if now >= Timers.RoundTimeLeft then
+            Timers.RoundTimeLeft = now + .25
+            RoundTimeLeft = game.ReplicatedStorage.RoundTimer:GetAttribute("TimeLeft")
+        end
+        local ctimer = RoundTimeLeft
         local texttimer = SecondsToMinute(ctimer)
 
         if ctimer then
@@ -2642,32 +2856,6 @@ local function PreLocal()
         end
     end
 
-    local pressed = false
-
-    if bAutoBlock then
-        for _, v in getpressedkeys() do
-            if v == keybind then
-                pressed = true
-                break
-            end
-        end
-    end
-
-    if pressed and not tempactive then
-        tempactive = true
-        active = not active
-        bt.Visible = active
-
-        KillerAbTime = {}
-        KillerAb = {}
-
-        if not active then
-            bt2.Visible = false
-        end
-    elseif not pressed then
-        tempactive = false
-    end
-
     if bt2.Visible then
         bt2.Position = Vector2.new(viewport.x / 2 + math.random(-5, 5), viewport.y / 2 - bt2.Size / 2 + math.random(-5, 5))
     end
@@ -2675,7 +2863,7 @@ local function PreLocal()
     local newSnapshot = {}
     local lroot
 
-    if active or bShowBlock or bAutoStab or bAutoParry or bChanceAimbot then
+    if bInRound and (active or bShowBlock or bAutoStab or bAutoParry or bChanceAimbot) then
         lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
         LocalRoot = lroot
         LocalPos = lroot and lroot.Position
@@ -2713,17 +2901,17 @@ local function PreLocal()
             end
 
             if active then
-                local AbTime = tonumber(inst:GetAttribute("AbilityLastUsed") or 0)
+                local AbTime = ReadNumberAttribute(inst, id, "AbilityLastUsed")
 
                 if AbTime then
                     if not KillerAbTime[id] or not KillerAb[id] then
-                        local Ab = tonumber(inst:GetAttribute("AbilitiesUsed") or 0)
+                        local Ab = ReadNumberAttribute(inst, id, "AbilitiesUsed")
                         if Ab then
                             KillerAbTime[id] = AbTime
                             KillerAb[id] = Ab
                         end
                     elseif KillerAbTime[id] ~= AbTime then
-                        local Ab = tonumber(inst:GetAttribute("AbilitiesUsed") or 0)
+                        local Ab = ReadNumberAttribute(inst, id, "AbilitiesUsed")
 
                         if Ab and KillerAb[id] == Ab then
                             KillerAb[id] = Ab
@@ -2811,57 +2999,75 @@ local function GetOblation(player, char)
     return tostring(math.floor(math.clamp(value / 15, 0, 1) * 100 + .5)) .. "%"
 end
 
-local function RegisterPlayers()
-    for _, player in Players:GetChildren() do
-        local Char = player.Character
+local RegisterPlayers
 
-        if Char and Char:FindFirstChild("Humanoid") and not ESP.IsTracked(Char) then
-            local label = AddSpaces(Char.Name)
-            local isAzure = Char.Name == "Azure"
-            local nextCheck = 0
-            local nextExtra = 0
-            local inRound = false
-            local extra
+do
+    local registered = {}
 
-            ESP.AddPlayer(Char, {
-                Player = player,
-                TeamType = "Parent",
-                CustomParts = Char.Name == "Sixer" and SixerRig or nil,
-                GetTool = function(data)
-                    local t = os.clock()
-                    local char = data.Character
+    function RegisterPlayers()
+        local current = {}
 
-                    if t >= nextCheck then
-                        nextCheck = t + .25
+        for _, player in Players:GetChildren() do
+            local Char = ValidCharacter(player.Character)
+            local charId = Char and InstId(Char)
+            if charId then current[charId] = true end
 
-                        local parent = char and char.Parent
-                        local parentName = parent and parent.Name
-                        inRound = parentName == "Survivors" or parentName == "Killers"
-                    end
+            if charId and Char:FindFirstChild("Humanoid") and not ESP.IsTracked(Char) then
+                registered[charId] = true
+                local label = AddSpaces(Char.Name)
+                local isAzure = Char.Name == "Azure"
+                local nextCheck = 0
+                local nextExtra = 0
+                local inRound = false
+                local extra
 
-                    if not inRound then return nil end
+                ESP.AddPlayer(Char, {
+                    Player = player,
+                    TeamType = "Parent",
+                    CustomParts = Char.Name == "Sixer" and SixerRig or nil,
+                    GetTool = function(data)
+                        local t = os.clock()
+                        local char = data.Character
 
-                    if t >= nextExtra then
-                        nextExtra = t + 1
+                        if t >= nextCheck then
+                            nextCheck = t + .25
 
-                        local ok, result = pcall(function()
-                            if isAzure then
-                                return GetOblation(player, char)
-                            end
-                            return GetCarriedItems(player, char)
-                        end)
-                        extra = ok and result or nil
-                    end
+                            local parent = char and char.Parent
+                            local parentName = parent and parent.Name
+                            inRound = parentName == "Survivors" or parentName == "Killers"
+                        end
 
-                    return extra and (label .. ": " .. extra) or label
-                end,
-            })
+                        if not inRound then return nil end
+
+                        if t >= nextExtra then
+                            nextExtra = t + 1
+
+                            local ok, result = pcall(function()
+                                if isAzure then
+                                    return GetOblation(player, char)
+                                end
+                                return GetCarriedItems(player, char)
+                            end)
+                            extra = ok and result or nil
+                        end
+
+                        return extra and (label .. ": " .. extra) or label
+                    end,
+                })
+            end
+        end
+
+        for charId in registered do
+            if not current[charId] then
+                registered[charId] = nil
+                ESP.RemovePlayer(charId)
+            end
         end
     end
 end
 
 local function RefreshLocalState()
-    local char = LocalPlayer.Character
+    local char = ValidCharacter(LocalPlayer.Character)
     local parent = char and char.Parent
 
     local name = parent and parent.Name
@@ -2872,8 +3078,37 @@ local function RefreshLocalState()
     bInUI = gui ~= nil and gui:FindFirstChild("PuzzleUI") ~= nil
 end
 
+local function AddItem(id, inst)
+    ItemCache[id] = inst
+    ItemQueue.Fresh[#ItemQueue.Fresh + 1] = id
+    local name = inst.Name
+    Profile.Found[id] = {Name = name, At = os.clock()}
+    local parent = inst.Parent
+    print(string.format("[ESP] found %s (id %s, parent %s)", tostring(name), id, parent and tostring(parent.Name) or "nil"))
+end
+
+local function ReportDrawn(id)
+    local found = Profile.Found[id]
+    if found and ItemRenderCache[id] then
+        Profile.Found[id] = nil
+        print(string.format("[ESP] drawing %s, %.2fs after it was found", tostring(found.Name), os.clock() - found.At))
+    end
+end
+
 local function RefreshItemRenderInfo(now)
     local queue = ItemQueue
+    local started = os.clock()
+
+    while #queue.Fresh > 0 do
+        local id = table.remove(queue.Fresh)
+        local inst = ItemCache[id]
+        if inst and not pcall(BuildItemRenderInfo, id, inst, now) then
+            RemoveCachedItem(id)
+        end
+        ReportDrawn(id)
+
+        if os.clock() - started >= .002 then return end
+    end
 
     if queue.Pos > #queue.List and now - queue.Built >= .1 then
         queue.Built = now
@@ -2884,7 +3119,6 @@ local function RefreshItemRenderInfo(now)
         queue.Pos = 1
     end
 
-    local started = os.clock()
     while queue.Pos <= #queue.List do
         local id = queue.List[queue.Pos]
         queue.Pos += 1
@@ -2893,31 +3127,59 @@ local function RefreshItemRenderInfo(now)
         if inst and now >= (queue.Next[id] or 0) and not pcall(BuildItemRenderInfo, id, inst, now) then
             RemoveCachedItem(id)
         end
+        ReportDrawn(id)
 
         if os.clock() - started >= .002 then break end
     end
 end
 
 local function ScanItems()
-    local ingameChildren = Ingame:GetChildren()
+    local now = os.clock()
+    local ingameChildren = MemoryChildren(Ingame)
+    local nonItems = {}
+    local present = {}
 
     for _, inst in ingameChildren do
         local id = InstId(inst)
-        if not id or ItemCache[id] then continue end
+        if not id then continue end
+        present[id] = true
+        if ItemCache[id] then continue end
+
+        local seenAt = NonItems[id]
+        if seenAt and now - seenAt > 1 then
+            nonItems[id] = seenAt
+            continue
+        end
 
         local info = GetNameInfo(inst.Name)
+        local okHumanoid, humanoid = false, nil
+        if not info.IsItem then
+            okHumanoid, humanoid = pcall(function()
+                return inst:FindFirstChild("Humanoid")
+            end)
+        end
 
-        if info.IsItem or inst:FindFirstChild("Humanoid") then
-            ItemCache[id] = inst
+        if info.IsItem or (okHumanoid and humanoid) then
+            AddItem(id, inst)
         elseif not bKill and info.IsTrailFolder then
-            for _, part in inst:GetChildren() do
+            for _, part in MemoryChildren(inst) do
                 local partId = InstId(part)
-                if partId and not ItemCache[partId] then
-                    ItemCache[partId] = part
+                if partId then
+                    present[partId] = true
+                    if not ItemCache[partId] then
+                        AddItem(partId, part)
+                    end
                 end
             end
+        elseif not info.IsTrailFolder then
+            if not seenAt then
+                print(string.format("[ESP] ignored %s (%s)", tostring(inst.Name), tostring(inst.ClassName)))
+            end
+            nonItems[id] = seenAt or now
         end
     end
+    NonItems = nonItems
+    Profile.Add("ScanIngame", now)
 
     local killers = Killers:GetChildren()
     local killerCount = #killers
@@ -2925,46 +3187,81 @@ local function ScanItems()
     for _, inst in killers do
         if inst.Name == "Noli" then
             local id = InstId(inst)
-            if id and not ItemCache[id] and IsFakeNoli(inst, killerCount) then
-                ItemCache[id] = inst
+            if id then
+                present[id] = true
+                if not ItemCache[id] and IsFakeNoli(inst, killerCount) then
+                    AddItem(id, inst)
+                end
             end
         end
     end
 
+    local started = os.clock()
     local azure = Map:FindFirstChild("Azure")
     local azureId = azure and InstId(azure)
-    if azureId and not ItemCache[azureId] then
-        ItemCache[azureId] = azure
+    if azureId then
+        present[azureId] = true
+        if not ItemCache[azureId] then
+            AddItem(azureId, azure)
+        end
     end
 
-    for _, inst in workspace:GetChildren() do
+    for _, inst in MemoryChildren(workspace) do
         local name = inst.Name
         if name == "BloxyCola" or name == "Medkit" then
             local id = InstId(inst)
-            if id and not ItemCache[id] then
-                ItemCache[id] = inst
+            if id then
+                present[id] = true
+                if not ItemCache[id] then
+                    AddItem(id, inst)
+                end
             end
         end
     end
 
+    Profile.Add("ScanWorkspace", started)
+
+    started = os.clock()
     local mapFolder = Ingame:FindFirstChild("Map")
-    if not mapFolder then return end
+    if mapFolder then
+        for _, inst in MemoryChildren(mapFolder) do
+            local name = inst.Name
 
-    for _, inst in mapFolder:GetChildren() do
-        local name = inst.Name
-
-        if name == "Generator" then
-            local id = InstId(inst)
-            if id and not ItemCache[id] and inst:FindFirstChild("Progress") then
-                local ok, progress = pcall(function() return inst.Progress.Value end)
-                if ok and progress ~= 100 then
-                    ItemCache[id] = inst
+            if name == "Generator" then
+                local id = InstId(inst)
+                if id then
+                    present[id] = true
+                    if not ItemCache[id] then
+                        AddItem(id, inst)
+                    end
+                end
+            elseif name == "FakeGenerator" or name == "BloxyCola" or name == "Medkit" then
+                local id = InstId(inst)
+                if id then
+                    present[id] = true
+                    if not ItemCache[id] then
+                        AddItem(id, inst)
+                    end
                 end
             end
-        elseif name == "FakeGenerator" or name == "BloxyCola" or name == "Medkit" then
-            local id = InstId(inst)
-            if id and not ItemCache[id] then
-                ItemCache[id] = inst
+        end
+    end
+
+    Profile.Add("ScanMap", started)
+
+    for id in ItemCache do
+        if not present[id] then
+            RemoveCachedItem(id)
+        end
+    end
+
+    for id, info in ItemRenderCache do
+        if info.Humanoid then
+            local ok, health = pcall(function()
+                return info.Humanoid.Health
+            end)
+            if not ok or (tonumber(health) or 1) <= 0 then
+                ItemRenderCache[id] = nil
             end
         end
     end
@@ -2974,6 +3271,7 @@ local function PreData()
     local now = os.clock()
 
     if FocusTimer ~= 0 and FocusTimer + .5 < now then
+        Profile.Resets += 1
         ClearItems()
         FakeNoliCache = {}
         _G.ESPList = {}
@@ -2985,27 +3283,61 @@ local function PreData()
 
     if now >= Timers.Players then
         Timers.Players = now + .1
+        local started = os.clock()
         RegisterPlayers()
         RefreshLocalState()
+        Profile.Add("Players", started)
+
+        local inRound = Ingame:FindFirstChild("Map") ~= nil
+        if bInRound and not inRound then
+            ActiveLines = {}
+        end
+        bInRound = inRound
     end
 
-    if (bShowLine or bAutoStab) and now - LastAttackScan >= .03 then
-        LastAttackScan = now
-        pcall(UpdateActiveLines)
+    if bInRound and (bShowLine or bAutoStab) then
+        if now - LastAttackScan >= .03 then
+            LastAttackScan = now
+            local started = os.clock()
+            pcall(UpdateActiveLines)
+            Profile.Add("AttackLines", started)
+        end
+    elseif next(ActiveLines) then
+        ActiveLines = {}
+    end
+
+    if now >= Profile.NextReport then
+        local elapsed = now - Profile.NextReport + 5
+        Profile.NextReport = now + 5
+        local parts = {}
+        for _, name in {"PreLocal", "PreData", "Render", "Players", "AttackLines", "Build", "Scan", "ScanIngame", "ScanWorkspace", "ScanMap"} do
+            local count = Profile.Counts[name] or 0
+            local total = (Profile.Totals[name] or 0) * 1000
+            parts[#parts + 1] = string.format("%s %.0f/s %.2fms avg %.1fms/s", name, count / elapsed, count > 0 and total / count or 0, total / elapsed)
+        end
+        local cached, drawn, queued = 0, 0, #ItemQueue.List - ItemQueue.Pos + 1
+        for _ in ItemCache do cached += 1 end
+        for _ in ItemRenderCache do drawn += 1 end
+        print("[Profile] " .. table.concat(parts, " | "))
+        print(string.format("[Profile] items cached %d, drawn %d, waiting in queue %d, fresh %d, full resets %d", cached, drawn, math.max(queued, 0), #ItemQueue.Fresh, Profile.Resets))
+        Profile.Totals, Profile.Counts, Profile.Resets = {}, {}, 0
     end
 
     if not bESP then return end
 
+    local started = os.clock()
     RefreshItemRenderInfo(now)
+    Profile.Add("Build", started)
 
     if now - LastItemScan < .1 then return end
     LastItemScan = now
 
+    started = os.clock()
     ScanItems()
+    Profile.Add("Scan", started)
 end
 
 local function Render()
-    RefreshTextFont()
     DrawLabels()
 
     if LocalRoot then
@@ -3050,432 +3382,233 @@ local function Render()
     end
 end
 
-window = UI:createwindow({
-    Title = "Forsaken | Andris",
-    Version = "VX",
-    Keybind = "RightShift",
-    ConfigFolder = "AndrisForsaken",
-    CustomResolution = Vector2.new(580, 370),
-    DPIScale = 1.0,
-    CompactSettings = false,
-    DefaultTab = "Survivor", 
-    TabAlignment = "Center",
-    DefaultColor = Color3.fromRGB(28, 27, 31),
-    DefaultAccent = Color3.fromRGB(208, 188, 255),
-    DefaultSnowfall = true,
-    DefaultScale = _G.DPIScale or 1.0,
-    DefaultFont = "Nunito",
+window = UI.new({
+    Title = "Andris: Forsaken",
+    Subtitle = "Support | Exploits",
+    Version = "3.4.1",
+    Folder = "AndrisForsaken",
+    Footer = "This script is in active development! New features releasing soon",
+    UpdateNotice = {"V3.4.1", "This script now uses ok0f's V2 UI library."},
+    OnUnload = function()
+        preLocalConnect:Disconnect()
+        preDataConnect:Disconnect()
+        renderConnect:Disconnect()
+        ESP.Clear()
+        clear_model_data()
+    end,
+    OnReload = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Games/refs/heads/main/Forsaken.lua"))()
+    end,
 })
 
-window:registerkey("AutoBlockKeybind", keybind, function(val)
-    keybind = val
-    if keybindlabel then keybindlabel.Txt.Text = "Current keybind: " .. val end
-end)
+do
+    local survivor = window:tab("Survivor")
+    local autoBlock = survivor:section("AUTO BLOCK")
 
-
-local Tabs = {}
-Tabs.Survivor = window:createtab("Survivor")
-Tabs.Killer = window:createtab("Killer")
-Tabs.Visual = window:createtab("Visual")
-Tabs.Misc = window:createtab("Misc")
-Tabs.Colors = window:createtab("Colors")
-
-window:createlabel(Tabs.Survivor, "After enabling, you need to press your keybind", 1)
-
-window:createtoggle(Tabs.Survivor, {
-    Name = "Enable Auto block",
-    Col = 1,
-    Default = false,
-    Callback = function(val)
+    autoBlock:toggle({Name = "Enable Auto block", Flag = "AutoBlock", Default = false})
+    FlagSetters.AutoBlock = function(val)
         if bAutoBlock == val then return end
 
         KillerAb = {}
         KillerAbTime = {}
-        tempactive = false
-        active = false
-        bt.Visible = false
+        active = val
+        bt.Visible = val
         bt2.Visible = false
         bAutoBlock = val
-	end
-})
+    end
 
-window:createdropdown(Tabs.Survivor, {
-    Name = "Auto block mode",
-    StateKey = "AutoBlockMode",
-    Col = 1,
-    Options = {"very-strict", "strict", "default", "permissive", "always"},
-    Default = "default",
-    Callback = function(val)
+    autoBlock:dropdown({
+        Name = "Auto block mode",
+        Flag = "AutoBlockMode",
+        Values = {"very-strict", "strict", "default", "permissive", "always"},
+        Default = "default",
+    })
+    FlagSetters.AutoBlockMode = function(val)
         autoBlockMode = val
     end
-})
 
-window:createslider(Tabs.Survivor, {
-    Name = "Auto block delay",
-    Col = 1,
-    Min = 0, Max = .5, Default = 0,
-    Step = .01,
-    Callback = function(val)
+    autoBlock:slider({Name = "Auto block delay", Flag = "AutoBlockDelay", Min = 0, Max = .5, Default = 0, Step = .01})
+    FlagSetters.AutoBlockDelay = function(val)
         blockDelay = val
     end
-})
 
-window:createtoggle(Tabs.Survivor, {
-    Name = "Show Auto block range",
-    Col = 1,
-    Default = false,
-    Callback = function(val)
-		bShowBlock = val
-	end
-})
-
-keybindlabel = window:createlabel(Tabs.Survivor, "Current keybind: " .. keybind, 1)
-
-local keybindbtn
-keybindbtn = window:createbutton(Tabs.Survivor, {
-    Name = "Change keybind",
-    Col = 1,
-    Callback = function()
-        if bChangingBind then return end
-        task.spawn(function()
-            keybindbtn.Txt.Text = "Press any key.."
-            bChangingBind = true
-            local loop = true
-            while loop do
-                local key = getpressedkeys()
-
-                for i, v in key do
-                    if v ~= "LeftMouse" then
-                        tempactive = true
-                        window:setvalue("AutoBlockKeybind", key[i])
-                        keybindbtn.Txt.Text = "Change keybind"
-                        bChangingBind = false
-                        send_notification("Keybind set to: " .. keybind, "info")
-                        loop = false
-                        break
-                    end
-                end
-
-                task.wait(.01)
-            end
-        end)
+    autoBlock:toggle({Name = "Show Auto block range", Flag = "ShowBlock", Default = false})
+    FlagSetters.ShowBlock = function(val)
+        bShowBlock = val
     end
-})
 
-window:createlabel(Tabs.Survivor, "Auto aim for survivor sentinel stuns", 2)
+    local abilities = survivor:section("ABILITIES")
 
-window:createtoggle(Tabs.Survivor, {
-    Name = "Guest 1337 auto parry",
-    Col = 2,
-    Default = false,
-    Callback = function(val)
-		bAutoParry = val
-	end
-})
+    abilities:label("Auto aim for survivor sentinel stuns")
 
-window:createslider(Tabs.Survivor, {
-    Name = "Auto parry delay",
-    Col = 2, 
-    Min = 0, Max = .6, Default = 0,
-    Step = .05,
-    Callback = function(val)
+    abilities:toggle({Name = "Guest 1337 auto parry", Flag = "AutoParry", Default = false})
+    FlagSetters.AutoParry = function(val)
+        bAutoParry = val
+    end
+
+    abilities:slider({Name = "Auto parry delay", Flag = "ParryDelay", Min = 0, Max = .6, Default = 0, Step = .05})
+    FlagSetters.ParryDelay = function(val)
         parryDelay = val
     end
-})
 
-window:createslider(Tabs.Survivor, {
-    Name = "Auto parry upwards angle (fling killer, blatant)",
-    Col = 2,
-    Min = 0, Max = 90, Default = 0,
-    Step = 5,
-    Callback = function(val)
+    abilities:slider({Name = "Auto parry upwards angle (fling killer, blatant)", Flag = "ParryUpAngle", Min = 0, Max = 90, Default = 0, Step = 5})
+    FlagSetters.ParryUpAngle = function(val)
         parryUpAngle = val
     end
-})
 
-window:createtoggle(Tabs.Survivor, {
-    Name = "Parry when the killer is stun immune",
-    Col = 2,
-    Default = false,
-    Callback = function(val)
+    abilities:toggle({Name = "Parry when the killer is stun immune", Flag = "ParryOnInv", Default = false})
+    FlagSetters.ParryOnInv = function(val)
         bParryOnInv = val
     end
-})
 
-window:createseparator(Tabs.Survivor, 2)
+    abilities:toggle({Name = "Chance aimbot", Flag = "ChanceAimbot", Default = false})
+    FlagSetters.ChanceAimbot = function(val)
+        bChanceAimbot = val
+    end
 
-window:createtoggle(Tabs.Survivor, {
-    Name = "Chance aimbot",
-    Col = 2,
-    Default = false,
-    Callback = function(val)
-		bChanceAimbot = val
-	end
-})
+    abilities:toggle({Name = "Two time auto backstab", Flag = "AutoStab", Default = false})
+    FlagSetters.AutoStab = function(val)
+        bAutoStab = val
+    end
 
-window:createseparator(Tabs.Survivor, 2)
+    window:tab("Killer"):label("Nothing yet!")
 
-window:createtoggle(Tabs.Survivor, {
-    Name = "Two time auto backstab",
-    Col = 2,
-    Default = false,
-    Callback = function(val)
-		bAutoStab = val
-	end
-})
+    local visual = window:tab("Visual")
+    local esp = visual:section("ESP")
 
-window:createlabel(Tabs.Killer, "Nothing yet!", 1)
+    esp:label("ESP settings (AKA Highlighter)")
 
-window:createlabel(Tabs.Visual, "ESP settings (AKA Highlighter)", 1)
-
-window:createtoggle(Tabs.Visual, {
-    Name = "Enable ESP",
-    Col = 1,
-    Default = true,
-    Callback = function(val)
-		if bESP == val then return end
+    esp:toggle({Name = "Enable ESP", Flag = "ESP", Default = true})
+    FlagSetters.ESP = function(val)
+        if bESP == val then return end
 
         bESP = val
         if not bESP then ClearItems() end
-	end
-})
+    end
 
-window:createtoggle(Tabs.Visual, {
-    Name = "Highlight part",
-    Col = 1,
-    Default = true,
-    Callback = function(val)
-		bHighlight = val
-	end
-})
+    esp:toggle({Name = "Highlight part", Flag = "Highlight", Default = true})
+    FlagSetters.Highlight = function(val)
+        bHighlight = val
+    end
 
-window:createtoggle(Tabs.Visual, {
-    Name = "Show object name",
-    Col = 1,
-    Default = true,
-    Callback = function(val)
-		bTextName = val
-	end
-})
+    esp:toggle({Name = "Show object name", Flag = "TextName", Default = true})
+    FlagSetters.TextName = function(val)
+        bTextName = val
+    end
 
-window:createlabel(Tabs.Visual, "Shows killer attack abilty paths", 2)
+    local paths = visual:section("ATTACK PATHS")
 
-window:createtoggle(Tabs.Visual, {
-    Name = "Show attack path",
-    Col = 2,
-    Default = false,
-    Callback = function(val)
-		bShowLine = val
-	end
-})
+    paths:label("Shows killer attack abilty paths")
 
-window:createtoggle(Tabs.Visual, {
-    Name = "Show path when you're killer",
-    Col = 2,
-    Default = false,
-    Callback = function(val)
-		bShowLocalLine = val
-	end
-})
+    paths:toggle({Name = "Show attack path", Flag = "ShowLine", Default = false})
+    FlagSetters.ShowLine = function(val)
+        bShowLine = val
+    end
 
-window:createtoggle(Tabs.Misc, {
-    Name = "Auto complete generators",
-    Col = 1,
-    Default = false,
-    Callback = function(val)
-		-- Disabled
-	end
-})
+    paths:toggle({Name = "Show path when you're killer", Flag = "ShowLocalLine", Default = false})
+    FlagSetters.ShowLocalLine = function(val)
+        bShowLocalLine = val
+    end
 
-window:createslider(Tabs.Misc, {
-    Name = "Delay before starting puzzle (seconds)",
-    Col = 1,
-    Min = .3, Max = 3, Default = 1.75,
-    Step = .05,
-    Callback = function(val)
+    local misc = window:tab("Misc")
+    local generators = misc:section("GENERATORS")
+
+    generators:toggle({Name = "Auto complete generators", Flag = "AutoGen", Default = false})
+    FlagSetters.AutoGen = function(val)
+        -- Disabled
+    end
+
+    generators:slider({Name = "Delay before starting puzzle (seconds)", Flag = "AutoGenTime", Min = .3, Max = 3, Default = 1.75, Step = .05})
+    FlagSetters.AutoGenTime = function(val)
         AutoGenTime = val
     end
-})
 
-window:createslider(Tabs.Misc, {
-    Name = "Randomize time by (seconds)",
-    Col = 1,
-    Min = 0, Max = 2, Default = .5,
-    Step = .05,
-    Callback = function(val)
+    generators:slider({Name = "Randomize time by (seconds)", Flag = "AutoGenRandom", Min = 0, Max = 2, Default = .5, Step = .05})
+    FlagSetters.AutoGenRandom = function(val)
         AutoGenRandom = val
     end
-})
 
-window:createseparator(Tabs.Misc, 1)
+    local other = misc:section("OTHER")
 
-window:createtoggle(Tabs.Misc, {
-    Name = "Show round timer on bloodhunt",
-    Col = 1,
-    Default = false,
-    Callback = function(val)
-		bShowTimer = val
-	end
-})
+    other:toggle({Name = "Show round timer on bloodhunt", Flag = "ShowTimer", Default = false})
+    FlagSetters.ShowTimer = function(val)
+        bShowTimer = val
+    end
 
-window:createlabel(Tabs.Misc, "Stops sprinting right before hitting 0 stamina", 2)
+    other:label("Stops sprinting right before hitting 0 stamina")
 
-window:createtoggle(Tabs.Misc, {
-    Name = "Safe sprint",
-    Col = 2,
-    Default = false,
-    Callback = function(val)
-		bStopStam = val
-	end
-})
+    other:toggle({Name = "Safe sprint", Flag = "StopStam", Default = false})
+    FlagSetters.StopStam = function(val)
+        bStopStam = val
+    end
 
-window:createseparator(Tabs.Misc, 2)
+    other:button({
+        Name = "Unhide playtime of all players",
+        Callback = function()
+            for _, inst in Players:GetChildren() do
+                pcall(function()
+                    inst.PlayerData.Settings.Privacy.HidePlaytime.Value = false
+                end)
+            end
+        end,
+    })
 
-window:createbutton(Tabs.Misc, {
-    Name = "Unhide playtime of all players",
-    Col = 2,
-    Callback = function(val)
-        for _, inst in Players:GetChildren() do
-            pcall(function()
-                inst.PlayerData.Settings.Privacy.HidePlaytime.Value = false
-            end)
+    other:button({
+        Name = "Unhide killer and survivor wins of all players",
+        Callback = function()
+            for _, inst in Players:GetChildren() do
+                pcall(function()
+                    inst.PlayerData.Settings.Privacy.HideKillerWins.Value = false
+                    inst.PlayerData.Settings.Privacy.HideSurvivorWins.Value = false
+                end)
+            end
+        end,
+    })
+
+    local colors = window:tab("Colors")
+    local colorSections = {colors:section("ABILITIES"), colors:section("OTHER")}
+
+    for _, entry in {
+        {1, "Projectile color", "danger"},
+        {1, "Trap color", "trap"},
+        {1, "Passive trap color", "slightdanger"},
+        {1, "Clone color", "neutral"},
+        {1, "Azure ability color", "azure"},
+        {1, "Show projectile line color", "lineprim"},
+        {2, "Auto block visual color", "autoblock"},
+        {2, "Auto block visual attack color", "autoblockattack"},
+        {2, "Minion color", "yellow"},
+        {2, "Generator color", "generator"},
+        {2, "Medkit color", "medkit"},
+        {2, "Bloxy cola color", "cola"},
+        {2, "Show projectile text color", "linesec"},
+    } do
+        local key = entry[3]
+        local flag = "Color_" .. key
+        colorSections[entry[1]]:color({Name = entry[2], Flag = flag, Default = c[key]})
+        FlagSetters[flag] = function(val)
+            c[key] = val
         end
-	end
-})
-
-window:createbutton(Tabs.Misc, {
-    Name = "Unhide killer and survivor wins of all players",
-    Col = 2,
-    Callback = function(val)
-        for _, inst in Players:GetChildren() do
-            pcall(function()
-                inst.PlayerData.Settings.Privacy.HideKillerWins.Value = false
-                inst.PlayerData.Settings.Privacy.HideSurvivorWins.Value = false
-            end)
-        end
-	end
-})
-
-window:createcolorpicker(Tabs.Colors, {
-    Name = "Projectile color",
-    Col = 1,
-    Default = c.danger,
-    Callback = function(val)
-        c.danger = val
     end
-})
+end
 
-window:createcolorpicker(Tabs.Colors, {
-    Name = "Trap color",
-    Col = 1,
-    Default = c.trap,
-    Callback = function(val)
-        c.trap = val
-    end
-})
+window:start()
 
-window:createcolorpicker(Tabs.Colors, {
-    Name = "Passive trap color",
-    Col = 1,
-    Default = c.slightdanger,
-    Callback = function(val)
-        c.slightdanger = val
-    end
-})
-
-window:createcolorpicker(Tabs.Colors, {
-    Name = "Clone color",
-    Col = 1,
-    Default = c.neutral,
-    Callback = function(val)
-        c.neutral = val
-    end
-})
-
-window:createcolorpicker(Tabs.Colors, {
-    Name = "Azure ability color",
-    Col = 1,
-    Default = c.azure,
-    Callback = function(val)
-        c.azure = val
-    end
-})
-
-window:createcolorpicker(Tabs.Colors, {
-    Name = "Show projectile line color",
-    Col = 1,
-    Default = c.lineprim,
-    Callback = function(val)
-        c.lineprim = val
-    end
-})
-
-window:createcolorpicker(Tabs.Colors, {
-    Name = "Auto block visual color",
-    Col = 2,
-    Default = c.autoblock,
-    Callback = function(val)
-        c.autoblock = val
-    end
-})
-
-window:createcolorpicker(Tabs.Colors, {
-    Name = "Auto block visual attack color",
-    Col = 2,
-    Default = c.autoblockattack,
-    Callback = function(val)
-        c.autoblockattack = val
-    end
-})
-
-window:createcolorpicker(Tabs.Colors, {
-    Name = "Minion color",
-    Col = 2,
-    Default = c.yellow,
-    Callback = function(val)
-        c.yellow = val
-    end
-})
-
-window:createcolorpicker(Tabs.Colors, {
-    Name = "Generator color",
-    Col = 2,
-    Default = c.generator,
-    Callback = function(val)
-        c.generator = val
-    end
-})
-
-window:createcolorpicker(Tabs.Colors, {
-    Name = "Medkit color",
-    Col = 2,
-    Default = c.medkit,
-    Callback = function(val)
-        c.medkit = val
-    end
-})
-
-window:createcolorpicker(Tabs.Colors, {
-    Name = "Bloxy cola color",
-    Col = 2,
-    Default = c.cola,
-    Callback = function(val)
-        c.cola = val
-    end
-})
-
-window:createcolorpicker(Tabs.Colors, {
-    Name = "Show projectile text color",
-    Col = 2,
-    Default = c.linesec,
-    Callback = function(val)
-        c.linesec = val
-    end
-})
-
-RunService.PreLocal:Connect(PreLocal)
-RunService.PreData:Connect(PreData)
-RunService.Render:Connect(Render)
+preLocalConnect = RunService.PreLocal:Connect(function()
+    local started = os.clock()
+    PreLocal()
+    Profile.Add("PreLocal", started)
+end)
+preDataConnect = RunService.PreData:Connect(function()
+    local started = os.clock()
+    PreData()
+    Profile.Add("PreData", started)
+end)
+renderConnect = RunService.Render:Connect(function()
+    local started = os.clock()
+    Render()
+    Profile.Add("Render", started)
+end)
 
 clear_model_data()
 
