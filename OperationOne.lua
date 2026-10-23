@@ -69,11 +69,18 @@ local Text = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris30
 
 local GadgetRenderCache = {}
 local CameraRenderCache = {}
-local NextValidate = 0
 local NextCameraSync = 0
 
 local function ReadPosition(part)
     return part.Position
+end
+
+local function ReadPose(part)
+    return part.Position, part.RightVector, part.UpVector, part.LookVector
+end
+
+local function ReadSize(part)
+    return part.Size
 end
 
 _G.CustomParts = nil
@@ -103,26 +110,63 @@ local function InstId(inst)
     return tostring(tonumber(inst.Data))
 end
 
+local MemoryChildren
+
+do
+    local robloxVersion = _G.RobloxVersion or game:GetClientVersion()
+    local okOffsets, offsets = pcall(function()
+        return crypt.json.decode(game:HttpGet("https://offsets.imtheo.lol/" .. robloxVersion .. "/offsets.json")).Offsets.Instance
+    end)
+    local childrenOffset = okOffsets and offsets and offsets.ChildrenStart
+    local childrenEndOffset = okOffsets and offsets and offsets.ChildrenEnd
+
+    local function ReadU64(address, offset)
+        local ok, value = pcall(memory.readu64, address, offset)
+        return ok and value or nil
+    end
+
+    function MemoryChildren(folder)
+        local address = childrenOffset and tonumber(folder.Data)
+        local list = address and ReadU64(address, childrenOffset)
+        local first = list and ReadU64(list, 0)
+        local last = list and ReadU64(list, childrenEndOffset)
+        if not first or not last or last < first or last - first > 0x10 * 5000 then
+            return folder:GetChildren()
+        end
+
+        local children = {}
+        for pointer = first, last - 0x10, 0x10 do
+            local child = ReadU64(pointer, 0)
+            if child and child ~= 0 then
+                local ok, inst = pcall(pointer_to_userdata, child)
+                if ok and inst then children[#children + 1] = inst end
+            end
+        end
+        return children
+    end
+end
+
 local function AddSpaces(text)
     text = text:gsub("(%l)(%u)", "%1 %2")
     text = text:gsub("(%u%u)(%u%l)", "%1 %2")
     return text
 end
 
-local SOUND_INTERVAL = .05
-local POST_INTERVAL = .1
-local GADGET_INTERVAL = .25
-local PLAYER_SCAN_INTERVAL = 1
-local PAUSE_GAP = 1
-local MATCH_DISTANCE = 1.3
-local MAX_MATCHES_PER_TICK = 3
-local MAX_MODEL_LOOKUPS_PER_TICK = 2
+local soundInterval = .05
+local postInterval = .1
+local gadgetInterval = .1
+local playerScanInterval = 1
+local pauseGap = 1
+local matchDistance = 1.3
+local maxMatchesPerTick = 3
+local maxModelLookupsPerTick = 2
 
 local function RetryDelay(base)
     return base + math.random() * base * .5
 end
 
 local SolidClasses = {Part = true, MeshPart = true, UnionOperation = true}
+local ZombieNames = {Walker = true, Runner = true, ["Special Op"] = true, Smoker = true, Tank = true, Bomber = true, Slasher = true, Firefighter = true}
 local IgnoredSounds = {Rustle = true, Rope = true, RopeDescend = true}
 
 local SoundRetry = {}
@@ -133,14 +177,14 @@ local NextSoundTick = 0
 local NextPostTick = 0
 local NextPlayerScan = 0
 local NextTrackedCheck = 0
-local TRACKED_CHECK_INTERVAL = .25
+local trackedCheckInterval = .25
 local ScanCursor = 0
 local LastBeat = 0
-local HEAVY_SPACING = .006
+local heavySpacing = .006
 local LastHeavy = 0
 
 local function HeavyReady()
-    return os.clock() - LastHeavy >= HEAVY_SPACING
+    return os.clock() - LastHeavy >= heavySpacing
 end
 
 local function MarkHeavy()
@@ -152,7 +196,6 @@ local function ResetCaches()
     RenderCache = {}
     GadgetRenderCache = {}
     CameraRenderCache = {}
-    NextValidate = 0
     NextCameraSync = 0
     ModelRetry = {}
     SoundRetry = {}
@@ -168,7 +211,7 @@ end
 
 local function Heartbeat()
     local now = os.clock()
-    if LastBeat ~= 0 and now - LastBeat > PAUSE_GAP then
+    if LastBeat ~= 0 and now - LastBeat > pauseGap then
         ResetCaches()
     end
     LastBeat = now
@@ -207,8 +250,8 @@ local function PlayerToModel(Char)
     local bestModel
     local bestDistance
 
-    for _, viewmodel in viewmodels:GetChildren() do
-        if not viewmodel:FindFirstChildOfClass("Model") then continue end
+    for _, viewmodel in MemoryChildren(viewmodels) do
+        if not viewmodel:FindFirstChildOfClass("Model") and not GetTorso(viewmodel) then continue end
 
         local torso = GetTorso(viewmodel)
         if not torso then continue end
@@ -220,7 +263,7 @@ local function PlayerToModel(Char)
         end
     end
 
-    if bestDistance and bestDistance < MATCH_DISTANCE then
+    if bestDistance and bestDistance < matchDistance then
         return bestModel
     end
     return nil
@@ -229,7 +272,7 @@ end
 local function GetCharCandidates()
     local candidates = {}
 
-    for _, Char in workspace:GetChildren() do
+    for _, Char in MemoryChildren(workspace) do
         if Char.Name == "WarehouseMenu" then continue end
         if Char.ClassName ~= "Model" then continue end
 
@@ -286,7 +329,11 @@ local function ModelToPlayer(inst, scan)
     end
 
     if not bestChar then return nil end
-    if bestDistance >= MATCH_DISTANCE then return nil end
+    if bestDistance >= matchDistance then return nil end
+
+    if ZombieNames[bestChar.Name] then
+        return "Zombie", bestChar
+    end
 
     local Player = Players:FindFirstChild(bestChar.Name)
     if not Player then return nil end
@@ -468,6 +515,7 @@ local function TrackGadgetModel(target, label)
     if ESP.IsTracked(model) then return end
 
     local partName = target.Part.Name
+    local rootName = model:FindFirstChild("Root") and "Root" or partName
     local owner = model:FindFirstChild("Owner")
     local friendly = owner ~= nil and owner.ClassName == "BillboardGui"
 
@@ -481,13 +529,13 @@ local function TrackGadgetModel(target, label)
         LocalTeamName = "Friendly",
         CustomParts = {
             RigType = "R6",
-            HumanoidRootPart = partName,
-            Head = partName,
-            Torso = partName,
-            ["Left Arm"] = partName,
-            ["Right Arm"] = partName,
-            ["Left Leg"] = partName,
-            ["Right Leg"] = partName,
+            HumanoidRootPart = rootName,
+            Head = rootName,
+            Torso = rootName,
+            ["Left Arm"] = rootName,
+            ["Right Arm"] = rootName,
+            ["Left Leg"] = rootName,
+            ["Right Leg"] = rootName,
         },
         ShouldShow = function()
             return GadgetESP and (not friendly or TeamGadgetESP)
@@ -495,20 +543,104 @@ local function TrackGadgetModel(target, label)
     })
 end
 
+local maxTwinDistance = 40
+
+local function TwinPart(model)
+    local client = model:FindFirstChild("ClientModel")
+    if client and SolidClasses[client.ClassName] then return client end
+    local part = model:FindFirstChild("Root") or model.PrimaryPart
+    if not part and client and client.ClassName == "Model" then
+        part = client:FindFirstChild("Root") or client.PrimaryPart
+    end
+    if part and SolidClasses[part.ClassName] then return part end
+    return nil
+end
+
+local function UseVisibleTwins(targets, twins)
+    local used = {}
+    for _, target in targets do
+        local okServer, serverPosition = pcall(ReadPosition, target.Part)
+        if not okServer or not serverPosition then continue end
+
+        local bestIndex, bestPart, bestDistance = nil, nil, maxTwinDistance
+        for index, twin in twins do
+            if used[index] or twin.Name ~= target.Model.Name then continue end
+            local part = TwinPart(twin)
+            if not part then continue end
+            local okTwin, twinPosition = pcall(ReadPosition, part)
+            if not okTwin or not twinPosition then continue end
+            local distance = vector.magnitude(twinPosition - serverPosition)
+            if distance < bestDistance then
+                bestIndex, bestPart, bestDistance = index, part, distance
+            end
+        end
+
+        if bestIndex then
+            used[bestIndex] = true
+            target.ServerPart = target.Part
+            target.Part = bestPart
+        end
+    end
+
+    for index, twin in twins do
+        if used[index] or PlayerLikeGadgets[twin.Name] then continue end
+        local part = TwinPart(twin)
+        local id = InstId(twin)
+        if not part or not id then continue end
+
+        local owner = twin:FindFirstChild("Owner")
+        if owner and not TeamGadgetESP and owner.ClassName == "BillboardGui" then continue end
+        if twin.Name == "Defuser" and part:FindFirstChild("DefuserFlag") then continue end
+
+        local label = LabelCache[twin.Name]
+        if not label then
+            label = AddSpaces(twin.Name)
+            LabelCache[twin.Name] = label
+        end
+        targets[#targets + 1] = {Model = twin, Id = id, Part = part, Color = GadgetColors[twin.Name], Label = label}
+    end
+end
+
+local HighlightModels = {MilitaryPouch = {Color = Color3.fromRGB(120, 200, 90), Label = "Military Pouch"}}
+
+local function ModelPart(model)
+    local part = model.PrimaryPart or model:FindFirstChildOfClass("MeshPart") or model:FindFirstChildOfClass("Part") or model:FindFirstChildOfClass("UnionOperation")
+    if part and SolidClasses[part.ClassName] then return part end
+    return nil
+end
+
 local function UpdateGadgets(now)
-    if now - LastGadgetScan < GADGET_INTERVAL then return end
-    if not HeavyReady() and now - LastGadgetScan < GADGET_INTERVAL * 3 then return end
+    if now - LastGadgetScan < gadgetInterval then return end
+    if not HeavyReady() and now - LastGadgetScan < gadgetInterval * 3 then return end
     LastGadgetScan = now
 
     local state = {Targets = {}, Cameras = {}, SeenCameras = {}}
+    local twins = {}
+    local extras = {}
 
     pcall(function()
-        for _, inst in workspace:GetChildren() do
+        for _, inst in MemoryChildren(workspace) do
+            local extra = HighlightModels[inst.Name]
+            if extra and inst.ClassName == "Model" then
+                local part = ModelPart(inst)
+                local id = InstId(inst)
+                if part and id then
+                    extras[#extras + 1] = {Model = inst, Id = id, Part = part, Color = extra.Color, Label = extra.Label}
+                end
+            end
             if GadgetColors[inst.Name] and inst.ClassName == "Model" and InstId(inst) then
                 pcall(ScanGadget, inst, state)
+                if not inst:FindFirstChild("StateObject") then
+                    twins[#twins + 1] = inst
+                end
             end
         end
     end)
+
+    pcall(UseVisibleTwins, state.Targets, twins)
+    for _, extra in extras do
+        state.Targets[#state.Targets + 1] = extra
+    end
 
     GadgetTargets = state.Targets
 
@@ -524,12 +656,27 @@ local function UpdateGadgets(now)
     MarkHeavy()
 end
 
+local window
+local FlagSetters = {}
+local AppliedFlags = {}
+
+local function SyncFlags()
+    for flag, apply in FlagSetters do
+        local value = window:get(flag)
+        if value ~= AppliedFlags[flag] then
+            AppliedFlags[flag] = value
+            apply(value)
+        end
+    end
+end
+
 local function PreLocal()
+    SyncFlags()
     local now = Heartbeat()
 
     if not SoundESP then return end
     if now < NextSoundTick then return end
-    NextSoundTick = now + SOUND_INTERVAL
+    NextSoundTick = now + soundInterval
 
     local viewmodels = workspace:FindFirstChild("Viewmodels")
 
@@ -563,7 +710,7 @@ local function PreLocal()
         local id = InstId(Char)
         if not id or PlayerCache[id] or SoundRetry[id] then continue end
 
-        if lookups >= MAX_MODEL_LOOKUPS_PER_TICK then break end
+        if lookups >= maxModelLookupsPerTick then break end
         lookups += 1
 
         local model
@@ -654,11 +801,15 @@ local function TrackViewmodel(inst, scan, now)
         return
     end
 
+    local bZombie = Player == "Zombie"
     local teamCache = {Value = "Enemies", Next = 0}
     local toolCache = {Part = nil, Name = "None", Next = 0}
 
     ESP.AddPlayer(inst, {
-        Player = Player,
+        Player = if bZombie then nil else Player,
+        Username = if bZombie then Char.Name else nil,
+        DisplayName = if bZombie then Char.Name else nil,
+        UserId = if bZombie then 0 else nil,
         SourceCharacter = Char,
         HealthSource = Human,
         IsLocal = inst.Name == "LocalViewmodel",
@@ -685,6 +836,7 @@ local function TrackViewmodel(inst, scan, now)
         end,
 
         GetTool = function(data)
+            if bZombie then return Char.Name end
             local t = os.clock()
             if t < toolCache.Next then return toolCache.Name end
             toolCache.Next = t + RetryDelay(.2)
@@ -745,7 +897,7 @@ local function RunPost()
 
     if now < NextPostTick then return end
     if not HeavyReady() then return end
-    NextPostTick = now + POST_INTERVAL
+    NextPostTick = now + postInterval
 
     local viewmodels = workspace:FindFirstChild("Viewmodels")
     if not viewmodels then return end
@@ -757,7 +909,7 @@ local function RunPost()
     end
 
     if now >= NextPlayerScan then
-        NextPlayerScan = now + PLAYER_SCAN_INTERVAL
+        NextPlayerScan = now + playerScanInterval
         ScanModerators()
     end
 
@@ -767,11 +919,11 @@ local function RunPost()
 
     local scan = {}
     local matches = 0
-    local children = viewmodels:GetChildren()
+    local children = MemoryChildren(viewmodels)
     local total = #children
 
     if now >= NextTrackedCheck then
-        NextTrackedCheck = now + TRACKED_CHECK_INTERVAL
+        NextTrackedCheck = now + trackedCheckInterval
         pcall(RefreshTracked, children)
     end
 
@@ -781,9 +933,9 @@ local function RunPost()
         if not instid then continue end
         if ESP.IsTracked(inst) then continue end
         if ModelRetry[instid] then continue end
-        if not inst:FindFirstChildOfClass("Model") then continue end
+        if not inst:FindFirstChildOfClass("Model") and not GetTorso(inst) then continue end
 
-        if matches >= MAX_MATCHES_PER_TICK then
+        if matches >= maxMatchesPerTick then
             ScanCursor = (ScanCursor + step) % total
             return
         end
@@ -805,9 +957,6 @@ local function UpdateRenderCaches(now)
         return
     end
 
-    if now < NextValidate then return end
-    NextValidate = now + .1
-
     local newCameras = {}
     local newGadgets = {}
 
@@ -818,18 +967,24 @@ local function UpdateRenderCaches(now)
             continue
         end
 
-        newCameras[#newCameras + 1] = {Part = cam, Color = AccentColor, Label = "Hacked Camera"}
+        local okSize, size = pcall(ReadSize, cam)
+        newCameras[#newCameras + 1] = {Part = cam, Size = okSize and size or nil, Color = AccentColor, Label = "Hacked Camera"}
     end
 
     for index = #GadgetTargets, 1, -1 do
         local target = GadgetTargets[index]
+        if target.ServerPart and not InstId(target.Part) then
+            target.Part = target.ServerPart
+            target.ServerPart = nil
+        end
         if target.Model.Parent ~= workspace or InstId(target.Model) ~= target.Id or not InstId(target.Part) then
             table.remove(GadgetTargets, index)
             continue
         end
 
         if not target.EspOnly then
-            newGadgets[#newGadgets + 1] = {Part = target.Part, Color = target.Color, Label = target.Label}
+            local okSize, size = pcall(ReadSize, target.Part)
+            newGadgets[#newGadgets + 1] = {Part = target.Part, Size = okSize and size or nil, Color = target.Color, Label = target.Label}
         end
     end
 
@@ -873,6 +1028,16 @@ local function DrawLabel(entry)
     end
 end
 
+local livePose = {Parent = true}
+
+local function HighlightLive(entry, color, opacityFill, opacityOutline, thickness)
+    if not entry.Size then return end
+    local ok, position, right, up, look = pcall(ReadPose, entry.Part)
+    if not ok or not position then return end
+    livePose.Position, livePose.RightVector, livePose.UpVector, livePose.LookVector, livePose.PartSize = position, right, up, look, entry.Size
+    pcall(Highlight, livePose, color, opacityFill, opacityOutline, thickness)
+end
+
 local function Render()
     if SoundESP then
         for _, render in RenderCache do
@@ -885,98 +1050,70 @@ local function Render()
     if not GadgetESP then return end
 
     for _, entry in CameraRenderCache do
-        pcall(Highlight, entry.Part, AccentColor, .2, .8, .6)
+        HighlightLive(entry, AccentColor, .2, .8, .6)
         DrawLabel(entry)
     end
 
     for _, entry in GadgetRenderCache do
-        pcall(Highlight, entry.Part, entry.Color, .2, .8, 1)
+        HighlightLive(entry, entry.Color, .2, .8, 1)
         DrawLabel(entry)
     end
 end
 
-local UI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/UI.lua"))()
+local UI = loadstring(game:HttpGet("https://gitlab.com/okdude42/severe-scripts/-/raw/main/uilib2/SevereUI.luau?ref_type=heads"))()
 
-local window = UI:createwindow({
+window = UI.new({
     Title = "Operation One | Andris",
+    Subtitle = "ESP",
     Version = "VX",
-    Keybind = "RightShift",
-    ConfigFolder = "AndrisOP1",
-    CustomResolution = Vector2.new(580, 360),
-    DPIScale = _G.DPIScale or 1.0,
-    CompactSettings = false,
-    DefaultTab = "Main", 
-    TabAlignment = "Center",
-    DefaultColor = Color3.fromRGB(28, 27, 31),
-    DefaultAccent = Color3.fromRGB(208, 188, 255),
-    DefaultSnowfall = true,
-    DefaultScale = 1.0,
-    DefaultFont = "Nunito",
+    Folder = "AndrisOP1",
 })
 
-local tabMain = window:createtab("Main")
-window:createtab("Settings")
+local tabMain = window:tab("Main")
+local espSection = tabMain:section("ESP")
 
-window:createlabel(tabMain, "ESP support requires ESP to be enabled in severe", 1)
+espSection:label("ESP support requires ESP to be enabled in severe")
 
-window:createtoggle(tabMain, {
-    Name = "Enable ESP support",
-    Col = 1,
-    Default = true,
-    Callback = function(val)
-		bESP = val
-		ESP.SetEnabled(val)
-	end
-})
+espSection:toggle({Name = "Enable ESP support", Flag = "ESP", Default = true})
+FlagSetters.ESP = function(val)
+    bESP = val
+    ESP.SetEnabled(val)
+end
 
-window:createtoggle(tabMain, {
-    Name = "Show teammates",
-    Col = 1,
-    Default = false,
-    Callback = function(val)
-		TeammateESP = val
-		if not val then
-			_G.ESPList = {}
-			clear_model_data()
-		end
-	end
-})
+espSection:toggle({Name = "Show teammates", Flag = "TeammateESP", Default = false})
+FlagSetters.TeammateESP = function(val)
+    TeammateESP = val
+    if not val then
+        _G.ESPList = {}
+        clear_model_data()
+    end
+end
 
-window:createseparator(tabMain, 1)
+espSection:toggle({Name = "Enable Gadget ESP", Flag = "GadgetESP", Default = true})
+FlagSetters.GadgetESP = function(val)
+    GadgetESP = val
+end
 
-window:createtoggle(tabMain, {
-    Name = "Enable Gadget ESP",
-    Col = 1,
-    Default = true,
-    Callback = function(val)
-		GadgetESP = val
-	end
-})
+espSection:toggle({Name = "Show your team's gadgets", Flag = "TeamGadgetESP", Default = false})
+FlagSetters.TeamGadgetESP = function(val)
+    TeamGadgetESP = val
+end
 
-window:createtoggle(tabMain, {
-    Name = "Show your team\'s gadgets",
-    Col = 1,
-    Default = false,
-    Callback = function(val)
-		TeamGadgetESP = val
-	end
-})
+local soundSection = tabMain:section("SOUND ESP")
 
-window:createlabel(tabMain, "ESP that only activates on sound", 2)
-window:createlabel(tabMain, "This doesn\'t require severe\'s ESP", 2)
+soundSection:label("ESP that only activates on sound")
+soundSection:label("This doesn't require severe's ESP")
 
-window:createtoggle(tabMain, {
-    Name = "Enable Sound ESP",
-    Col = 2,
-    Default = false,
-    Callback = function(val)
-		SoundESP = val
-		if not val then
-			PlayerCache = {}
-			RenderCache = {}
-		end
-	end
-})
+soundSection:toggle({Name = "Enable Sound ESP", Flag = "SoundESP", Default = false})
+FlagSetters.SoundESP = function(val)
+    SoundESP = val
+    if not val then
+        PlayerCache = {}
+        RenderCache = {}
+    end
+end
+
+window:start()
 
 clear_model_data()
 
