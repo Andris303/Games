@@ -490,6 +490,30 @@ local function GetNameInfo(Name)
     return info
 end
 
+local GeneratorText
+
+do
+    local puzzleNames = {
+        LockServerMinigame = "Padlock",
+        GearServerMinigame = "Gears",
+        FlowServerMinigame = "Flow wires",
+        ConnectServerMinigame = "Wire connect",
+    }
+    local texts = {}
+
+    function GeneratorText(inst, id)
+        local text = texts[id]
+        if text then return text end
+
+        local puzzle = inst:GetAttribute("Puzzle")
+        if not puzzle then return "Generator" end
+
+        text = puzzleNames[puzzle] or "Generator"
+        texts[id] = text
+        return text
+    end
+end
+
 local function BuildItemRenderInfo(id, inst, now)
     ItemQueue.Next[id] = now + .25
 
@@ -532,7 +556,7 @@ local function BuildItemRenderInfo(id, inst, now)
             Kind = "Generator",
             Main = Main,
             Color = c.generator,
-            Text = "Generator",
+            Text = GeneratorText(inst, id),
         }
         return
     end
@@ -2087,6 +2111,331 @@ local function ChanceAim(f, lroot, kroot)
     end
 end
 
+local CorruptAim = {Enabled = false, Mode = "Legit", Radius = 125}
+
+do
+    local windup = 2
+    local duration = 3.5
+    local spikeSpeed = 125 / 1.5
+    local flickLate = 2
+    local steerFrom = -.6 * spikeSpeed
+    local steerTolerance = math.rad(3)
+    local lead = .15
+    local keyCodes = {W = 0x57, A = 0x41, S = 0x53, D = 0x44}
+    local keyCombos = {{1, 0, "W"}, {1, 1, "W", "D"}, {0, 1, "D"}, {-1, 1, "S", "D"}, {-1, 0, "S"}, {-1, -1, "S", "A"}, {0, -1, "A"}, {1, -1, "W", "A"}}
+    local heldKeys = {}
+    local sensitivityFile = "AndrisForsaken/CorruptSensitivity.txt"
+    local mousePerDegree = isfile(sensitivityFile) and tonumber(readfile(sensitivityFile)) or 2
+    if mousePerDegree < .1 or mousePerDegree > 50 then mousePerDegree = 2 end
+    local savedPerDegree = mousePerDegree
+    local mousePixels = 0
+    local mouseDegrees = 0
+    local moveFrames = 0
+    local moveSign = 0
+    local prevCameraYaw
+    local started
+    local wasActive = false
+    local cast = 0
+    local selectedId
+
+    local Motion = {}
+
+    local function TrackVelocity(id, pos, now)
+        local entry = Motion[id]
+        if not entry or now - entry.Time > .5 then
+            Motion[id] = {Position = pos, Time = now, VelX = 0, VelZ = 0}
+            return 0, 0
+        end
+
+        local dt = now - entry.Time
+        if dt >= .05 then
+            local velX = (pos.X - entry.Position.X) / dt
+            local velZ = (pos.Z - entry.Position.Z) / dt
+            if velX * velX + velZ * velZ > 6400 then
+                velX, velZ = 0, 0
+            end
+            entry.VelX = entry.VelX * .5 + velX * .5
+            entry.VelZ = entry.VelZ * .5 + velZ * .5
+            entry.Position = pos
+            entry.Time = now
+        end
+        return entry.VelX, entry.VelZ
+    end
+
+    local function Targets(lpos)
+        local list = {}
+        local now = os.clock()
+        for _, char in MemoryChildren(Survivors) do
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if root then
+                local id = InstId(root)
+                local pos = root.Position
+                local velX, velZ = 0, 0
+                if id then velX, velZ = TrackVelocity(id, pos, now) end
+                local dist = vector.magnitude(vector.create(pos.X - lpos.X, 0, pos.Z - lpos.Z))
+                if dist > .5 and dist <= CorruptAim.Radius then
+                    list[#list + 1] = {Char = char, Root = root, Id = id, Position = pos, Distance = dist, VelX = velX, VelZ = velZ}
+                end
+            end
+        end
+        return list
+    end
+
+    local function PickLegit(targets)
+        local centerX, centerY = viewport.X / 2, viewport.Y / 2
+        local best
+        local bestDist
+        for _, target in targets do
+            local screen, visible = Camera:WorldToScreenPoint(target.Position)
+            if visible then
+                local dist = vector.magnitude(vector.create(screen.X - centerX, screen.Y - centerY, 0))
+                if not bestDist or dist < bestDist then
+                    best = target
+                    bestDist = dist
+                end
+            end
+        end
+        return best
+    end
+
+    local function HasCorruptNature(lchar)
+        local state = lchar:FindFirstChild("SpeedMultipliers")
+        if not state then return false end
+        for _, child in MemoryChildren(state) do
+            local name = child.Name
+            if name == "CorruptEnergy" then return true end
+        end
+        return false
+    end
+
+    local function Select(target)
+        local id = target and target.Id
+        if id == selectedId then return end
+        selectedId = id
+        if not target then
+            CorruptAim.Parts = nil
+            return
+        end
+
+        local ok, parts = pcall(GetPart, target.Char)
+        if not ok or type(parts) ~= "table" then
+            CorruptAim.Parts = nil
+            return
+        end
+
+        local poses = {}
+        for _, part in parts do
+            poses[#poses + 1] = {Parent = true, Part = part, PartSize = part.Size}
+        end
+        CorruptAim.Parts = poses
+    end
+
+    local function SetKeys(first, second)
+        for name, code in keyCodes do
+            local want = name == first or name == second
+            if want and not heldKeys[name] then
+                keypress(code)
+                heldKeys[name] = true
+            elseif not want and heldKeys[name] then
+                keyrelease(code)
+                heldKeys[name] = nil
+            end
+        end
+    end
+
+    local function AngleBetween(from, to)
+        return (to - from + math.pi) % (2 * math.pi) - math.pi
+    end
+
+    local function PredictTarget(target, front)
+        local offsetX, offsetZ = target.VelX * lead, target.VelZ * lead
+        local offsetLength = math.sqrt(offsetX * offsetX + offsetZ * offsetZ)
+        local maxOffset = target.Distance
+        if offsetLength > maxOffset then
+            offsetX *= maxOffset / offsetLength
+            offsetZ *= maxOffset / offsetLength
+        end
+        return target.Position.X + offsetX, target.Position.Z + offsetZ
+    end
+
+    local function Steer(lroot, target, front)
+        local look = lroot.LookVector
+        local lpos = lroot.Position
+        local aimX, aimZ = PredictTarget(target, front)
+        local toX, toZ = aimX - lpos.X, aimZ - lpos.Z
+        if toX * toX + toZ * toZ < .01 then
+            SetKeys()
+            return
+        end
+
+        local current = math.atan2(look.X, look.Z)
+        local delta = AngleBetween(current, math.atan2(toX, toZ))
+        if math.abs(delta) <= steerTolerance then
+            SetKeys()
+            return
+        end
+
+        local camLook = Camera.LookVector
+        local camRight = Camera.RightVector
+        local forward = vector.normalize(vector.create(camLook.X, 0, camLook.Z))
+        local right = vector.normalize(vector.create(camRight.X, 0, camRight.Z))
+
+        local best
+        local bestTurn
+        local closest
+        local closestMiss
+        for _, combo in keyCombos do
+            local dir = forward * combo[1] + right * combo[2]
+            local turn = AngleBetween(current, math.atan2(dir.X, dir.Z))
+            if turn * delta > 0 and math.abs(turn) >= math.abs(delta) and (not bestTurn or math.abs(turn) < bestTurn) then
+                best = combo
+                bestTurn = math.abs(turn)
+            end
+            local miss = math.abs(AngleBetween(turn, delta))
+            if not closestMiss or miss < closestMiss then
+                closest = combo
+                closestMiss = miss
+            end
+        end
+
+        best = best or closest
+        SetKeys(best[3], best[4])
+    end
+
+    local function ShiftLocked(lroot)
+        local mouse = getmouseposition()
+        local viewportSize = Camera.ViewportSize
+        if math.abs(mouse.X - viewportSize.X / 2) > 3 or math.abs(mouse.Y - viewportSize.Y / 2) > 3 then
+            return false
+        end
+
+        local offset = Camera.Position - lroot.Position
+        local shoulder = vector.dot(offset, Camera.RightVector)
+        return (shoulder > 1.4 and shoulder < 2.1) or vector.magnitude(offset) < 3
+    end
+
+    local function MouseAim(lroot, target, front)
+        local lpos = lroot.Position
+        local aimX, aimZ = PredictTarget(target, front)
+        local camLook = Camera.LookVector
+        local cameraYaw = math.atan2(camLook.X, camLook.Z)
+
+        if prevCameraYaw and moveFrames > 0 then
+            moveFrames -= 1
+            local turned = math.deg(AngleBetween(prevCameraYaw, cameraYaw))
+            if turned * moveSign < 0 then
+                mouseDegrees += turned
+                if math.abs(mouseDegrees) >= 10 then
+                    local ratio = -mousePixels / mouseDegrees
+                    if ratio > 0 then
+                        mousePerDegree = math.clamp(ratio, mousePerDegree * .5, mousePerDegree * 2)
+                    end
+                    if math.abs(mouseDegrees) > 90 then
+                        mousePixels *= .5
+                        mouseDegrees *= .5
+                    end
+                end
+            end
+        end
+        prevCameraYaw = cameraYaw
+
+        local delta = math.deg(AngleBetween(cameraYaw, math.atan2(aimX - lpos.X, aimZ - lpos.Z)))
+        if math.abs(delta) < 1 then return end
+
+        local pixels = math.floor(math.clamp(-delta * mousePerDegree * .9, -800, 800) + .5)
+        if pixels == 0 then return end
+
+        mousemoverel(pixels, 0)
+        if (pixels > 0 and 1 or -1) ~= moveSign then
+            mousePixels = 0
+            mouseDegrees = 0
+        end
+        moveSign = pixels > 0 and 1 or -1
+        mousePixels += pixels
+        moveFrames = 3
+    end
+
+    local function NextTarget(targets, front)
+        local best
+        for _, target in targets do
+            if front <= target.Distance + flickLate and (not best or target.Distance < best.Distance) then
+                best = target
+            end
+        end
+        return best
+    end
+
+    local function AimLoop(lroot, castId)
+        local lockedId
+        table.clear(Motion)
+        mousePixels = 0
+        mouseDegrees = 0
+        moveSign = 0
+        if mousePerDegree < .1 or mousePerDegree > 50 then mousePerDegree = 2 end
+        prevCameraYaw = nil
+        while castId == cast and CorruptAim.Enabled do
+            local elapsed = os.clock() - started
+            if elapsed > duration then break end
+
+            local front = (elapsed - windup) * spikeSpeed
+            local targets = Targets(lroot.Position)
+            local target
+
+            if CorruptAim.Mode == "Rage" then
+                target = NextTarget(targets, front)
+            elseif lockedId then
+                for _, candidate in targets do
+                    if candidate.Id == lockedId then target = candidate end
+                end
+            else
+                target = PickLegit(targets)
+                if target and front >= steerFrom then lockedId = target.Id end
+            end
+
+            if target and front > target.Distance + flickLate then target = nil end
+            Select(target)
+
+            if target and front >= steerFrom then
+                if ShiftLocked(lroot) then
+                    SetKeys()
+                    MouseAim(lroot, target, front)
+                else
+                    prevCameraYaw = nil
+                    Steer(lroot, target, front)
+                end
+            else
+                SetKeys()
+                prevCameraYaw = nil
+            end
+
+            task.wait()
+        end
+        SetKeys()
+        if mousePerDegree ~= savedPerDegree then
+            savedPerDegree = mousePerDegree
+            if not isfolder("AndrisForsaken") then makefolder("AndrisForsaken") end
+            writefile(sensitivityFile, string.format("%.4f", mousePerDegree))
+        end
+        if castId == cast then CorruptAim.Clear() end
+    end
+
+    function CorruptAim.Clear()
+        selectedId = nil
+        CorruptAim.Parts = nil
+    end
+
+    function CorruptAim.Update(lchar, now)
+        local active = HasCorruptNature(lchar)
+        if active and not wasActive then
+            cast += 1
+            started = now
+            local lroot = lchar:FindFirstChild("HumanoidRootPart")
+            if lroot then task.spawn(AimLoop, lroot, cast) end
+        end
+        wasActive = active
+    end
+end
+
 local function GetStam()
     return memory.readstring(LocalPlayer.PlayerGui.TemporaryUI.PlayerInfo.Bars.Stamina.Amount, offset)
 end
@@ -2792,6 +3141,12 @@ local function PreLocal()
 
     local tempisguest = lname == "Guest1337" or lname == "007n7"
 
+    if CorruptAim.Enabled and lchar then
+        CorruptAim.Update(lchar, now)
+    elseif CorruptAim.Parts then
+        CorruptAim.Clear()
+    end
+
     if bChanceAimbot and lname == "Chance" then
         local f = lchar:FindFirstChild("SpeedMultipliers")
         local chanceRoot = lchar:FindFirstChild("HumanoidRootPart")
@@ -3282,6 +3637,18 @@ end
 local function Render()
     DrawLabels()
 
+    local corruptParts = CorruptAim.Parts
+    if corruptParts then
+        for _, pose in corruptParts do
+            local part = pose.Part
+            pose.Position = part.Position
+            pose.RightVector = part.RightVector
+            pose.UpVector = part.UpVector
+            pose.LookVector = part.LookVector
+        end
+        pcall(h.HighlightGroup, corruptParts, c.yellow, .18, .7, .7, 1.25)
+    end
+
     if LocalRoot then
         local ok, pos = pcall(ReadPosition, LocalRoot)
         if ok and pos then LocalPos = pos end
@@ -3413,7 +3780,25 @@ do
         bAutoStab = val
     end
 
-    window:tab("Killer"):label("Nothing yet!")
+    local johnDoe = window:tab("Killer"):section("JOHN DOE")
+
+    johnDoe:label("Turns you toward survivors while Corrupt Energy fires")
+
+    johnDoe:toggle({Name = "John doe corrupt energy aimbot", Flag = "CorruptAim", Default = false})
+    FlagSetters.CorruptAim = function(val)
+        CorruptAim.Enabled = val
+        if not val then CorruptAim.Clear() end
+    end
+
+    johnDoe:dropdown({
+        Name = "Corrupt energy aimbot mode",
+        Flag = "CorruptAimMode",
+        Values = {"Legit", "Rage"},
+        Default = "Legit",
+    })
+    FlagSetters.CorruptAimMode = function(val)
+        CorruptAim.Mode = val
+    end
 
     local visual = window:tab("Visual")
     local esp = visual:section("ESP")
