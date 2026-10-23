@@ -56,6 +56,9 @@ local GadgetColors = {
 	SignalDisruptor = c.purple,
 	NeedleMine = c.red,
 }
+local preLocalConnect
+local postLocalConnect
+local renderConnect
 
 _G.PixelOffset = 5
 _G.Outline = true
@@ -1063,10 +1066,22 @@ end
 local UI = loadstring(game:HttpGet("https://gitlab.com/okdude42/severe-scripts/-/raw/main/uilib2/SevereUI.luau?ref_type=heads"))()
 
 window = UI.new({
-    Title = "Operation One | Andris",
-    Subtitle = "ESP",
-    Version = "VX",
+    Title = "OP1 | Andris",
+    Subtitle = "Support",
+    Version = "2.0.1",
     Folder = "AndrisOP1",
+    Footer = "This script is in active development! New features releasing soon",
+    UpdateNotice = {"V2.0.1", "This script now uses ok0f's V2 UI library."},
+    OnUnload = function()
+        preLocalConnect:Disconnect()
+        preDataConnect:Disconnect()
+        renderConnect:Disconnect()
+        ESP.Clear()
+        clear_model_data()
+    end,
+    OnReload = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Games/refs/heads/main/OperationOne.lua"))()
+    end,
 })
 
 local tabMain = window:tab("Main")
@@ -1119,9 +1134,9 @@ clear_model_data()
 
 print("Loaded")
 
-RunService.PreLocal:Connect(PreLocal)
-RunService.PostLocal:Connect(PostLocal)
-RunService.Render:Connect(Render)
+preLocalConnect = RunService.PreLocal:Connect(PreLocal)
+postLocalConnect = RunService.PostLocal:Connect(PostLocal)
+renderConnect = RunService.Render:Connect(Render)
 
 else
 	print("Wrong game")
