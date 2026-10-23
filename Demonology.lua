@@ -3,15 +3,44 @@
 
 if game.GameId == 6170143659 and workspace:FindFirstChild("Ghost") then
 
+local RobloxVersion = _G.RobloxVersion or game:GetClientVersion()
+local offsetsOk, offsetsData = pcall(crypt.json.decode, game:HttpGet("https://offsets.imtheo.lol/" .. RobloxVersion .. "/offsets.json"))
+local O = offsetsOk and type(offsetsData) == "table" and offsetsData.Offsets or {}
+local walkspeedOffset = O.Humanoid and O.Humanoid.Walkspeed
+local textOffset = O.GuiObject and O.GuiObject.Text
+local childrenOffset = O.Instance and O.Instance.ChildrenStart
+local childrenEndOffset = O.Instance and O.Instance.ChildrenEnd
+
+if not walkspeedOffset or not textOffset then
+    print("No live offsets for " .. tostring(RobloxVersion) .. ", speed and spirit box tracking are disabled")
+end
+
+local UI = loadstring(game:HttpGet("https://gitlab.com/okdude42/severe-scripts/-/raw/main/uilib2/SevereUI.luau?ref_type=heads"))()
+local Highlight = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/Highlighter.lua"))().Highlight
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
 local Ghost = workspace.Ghost
 local Rooms = workspace.Map.Rooms
-local ScriptRestart = false
-local SkinwalkerPartiallyFound = false
-local TestMode = false -- do not enable, might cause bugs
+local Handprints = workspace:FindFirstChild("Handprints")
+local ScratchText = workspace:FindFirstChild("ScratchText")
+local ItemsFolder = workspace:FindFirstChild("Items")
+
+local bGhostESP = true
+local bHandprintESP = true
+local bInfoText = true
+local bNotify = true
+local bInfStamina = true
+local ghostColor = Color3.fromRGB(196, 45, 32)
+local handprintColor = Color3.fromRGB(177, 45, 146)
+
+local window
+local preLocalConnect
+local renderConnect
+local FlagSetters = {}
+local AppliedFlags = {}
 
 local Colors = {
     Green = Color3.fromRGB(32, 196, 93),
@@ -19,20 +48,6 @@ local Colors = {
     Orange = Color3.fromRGB(234, 165, 16),
     White = Color3.fromRGB(228, 217, 211),
     Blue = Color3.fromRGB(16, 167, 234),
-}
-
-local Evidence = {
-    EMF = false,
-    UV = false,
-    SpiritBox = false,
-    Orb = false,
-    Freeze = false,
-    Inscript = false,
-    Laser = false,
-    Wither = false,
-    TypeFound = false,
-    TypeSiren = false,
-    TypeBanshee = false
 }
 
 local GhostCodes = {
@@ -58,344 +73,185 @@ local GhostCodes = {
     UVOrbLaser = "Umbra",
     UVInscriptWither = "Vesper",
     OrbFreezeWither = "Vex",
-    OrbInscriptLaser = "Wendigo",
+    OrbInscriptLaser = "Wretch",
     OrbLaserWither = "The Wisp",
-    EMFSpiritBoxLaser = "Wraith"
+    EMFSpiritBoxLaser = "Wraith",
 }
 
-local SpiritBoxResponses = {
-    "CLOSE",
-    "FAR",
-    "FAR AWAY",
-    "AWAY",
-    "KILL",
-    "HATE",
-    "DON'T TURN AROUND",
-    "BEHIND",
-    "I'M BEHIND YOU",
-    "DEATH",
-    "ATTACK",
-    "HURT",
-    "YOUNG",
-    "OLD",
-    "ELDER"
-}
-
--- Text handler
-
-local TextOffset = 0
-local TextYVal = 0
-local TextC = 0
-local Texts = {}
-local TextIds = {}
-
-local test = Drawing.new("Text")
-test.Text = "XYZ"
-test.Size = 20
-test.Font = 0
-TextOffset = test.TextBounds.Y
-TextYVal = Camera.ViewportSize.Y - 25
-test:Remove()
-
-local function AddText(id, text, color)
-    if TextIds[id] then return end
-
-    TextC += 1
-    TextIds[id] = TextC
-    TextYVal -= TextOffset
-
-    Texts[id] = Drawing.new("Text")
-    Texts[id].Text = text
-    Texts[id].Size = 20
-    Texts[id].Font = 0
-    Texts[id].Position = Vector2.new(25, TextYVal)
-    Texts[id].Color = color
-    Texts[id].Visible = true
+local SpiritBoxResponses = {}
+for _, response in {"CLOSE", "FAR", "FAR AWAY", "AWAY", "KILL", "HATE", "DON'T TURN AROUND", "BEHIND", "I'M BEHIND YOU", "DEATH", "ATTACK", "HURT", "YOUNG", "OLD", "ELDER"} do
+    SpiritBoxResponses[response] = true
 end
 
-local function RemoveText(id)
-    if not TextIds[id] then return end
+local EvidenceOrder = {"EMF", "UV", "SpiritBox", "Orb", "Freeze", "Inscript", "Laser", "Wither"}
+local Evidence = {}
+local BodyParts = {"Head", "Torso", "Right Arm", "Left Arm", "Right Leg", "Left Leg"}
 
-    local Stack = TextIds[id]
-    local temp = TextYVal
+local Lines = {}
+local LineById = {}
+local viewportY = Camera.ViewportSize.Y
 
-    for i, inst in pairs(TextIds) do
-        if not inst then continue end
-        if inst <= Stack then continue end
-        TextIds[i] = inst - 1
-        temp += TextOffset
-        Texts[i].Position = Vector2.new(25, temp)
-    end
+local GhostParts = {}
+local HandprintParts = {}
+local HandprintClass = {}
+local ItemNames = {}
+local RoomList = Rooms:GetChildren()
+local roomIndex = 0
 
-    TextYVal += TextOffset
-    TextC -= 1
-    TextIds[id] = nil
-    Texts[id]:Remove()
+local Timers = {Refs = 0, Ghost = 0, Energy = 0, Stamina = 0, Rooms = 0, RoomList = 0, Items = 0, Handprints = 0, Parts = 0, Static = 0}
+local lastTick = 0
+local lastData = 0
+
+local typeFound = false
+local skinwalkerPartial = false
+local ghostHunting = false
+local speedEnabled = walkspeedOffset ~= nil
+local ghostSpeed
+local GhostHumanoid
+local LocalHumanoid
+local Subtitle
+
+local function InstId(inst)
+    return tostring(tonumber(inst.Data))
 end
 
-local BodyParts = {
-    "Head",
-    "Torso",
-    "Right Arm",
-    "Left Arm",
-    "Right Leg",
-    "Left Leg"
-}
-
-local Convex = {
-    Scratch = {
-        Points = {},
-        Hull = {},
-        Poly = {}
-    },
-
-    Static = {
-        HWMPoints = 0,
-        HWMHull = 0,
-        HWMPoly = 0
-    }
-}
-
-local function TruncateBuffer(Buffer, NewSize, HighWaterMark)
-    for Index = NewSize + 1, HighWaterMark do
-        Buffer[Index] = nil
-    end
-    return math.max(NewSize, HighWaterMark)
+local function ReadU64(address, offset)
+    local ok, value = pcall(memory.readu64, address, offset)
+    return ok and value or nil
 end
 
-local function CrossDimension(OriginX, OriginY, PointAX, PointAY, PointBX, PointBY)
-    return (PointAX - OriginX) * (PointBY - OriginY) - (PointAY - OriginY) * (PointBX - OriginX)
-end
+local function MemoryChildren(folder)
+    if not childrenOffset or not childrenEndOffset then return folder:GetChildren() end
 
-local function CalculateConvexHull(Points, PointCount, Outer)
-    if PointCount == 0 then return 0 end
-    if PointCount == 1 then Outer[1] = Points[1]; return 1 end
-    if PointCount == 2 then Outer[1] = Points[1]; Outer[2] = Points[2]; return 2 end
-    table.sort(Points, function(PointA, PointB)
-        return PointA.X < PointB.X or (PointA.X == PointB.X and PointA.Y < PointB.Y)
-    end)
-    local Size = 0
-    for Index = 1, PointCount do
-        local Point = Points[Index]
-        while Size >= 2 and CrossDimension(Outer[Size - 1].X, Outer[Size - 1].Y, Outer[Size].X, Outer[Size].Y, Point.X, Point.Y) <= 0 do
-            Size = Size - 1
-        end
-        Size = Size + 1
-        Outer[Size] = Point
+    local address = tonumber(folder.Data)
+    local list = address and ReadU64(address, childrenOffset)
+    local first = list and ReadU64(list, 0)
+    local last = list and ReadU64(list, childrenEndOffset)
+    if not first or not last or last < first or last - first > 0x10 * 5000 then
+        return folder:GetChildren()
     end
-    local LowerHullSize = Size
-    for Index = PointCount - 1, 1, -1 do
-        local Point = Points[Index]
-        while Size > LowerHullSize and CrossDimension(Outer[Size - 1].X, Outer[Size - 1].Y, Outer[Size].X, Outer[Size].Y, Point.X, Point.Y) <= 0 do
-            Size = Size - 1
-        end
-        Size = Size + 1
-        Outer[Size] = Point
-    end
-    return Size - 1
-end
 
-local function ProjectPartCorners(Part, WriteOffset)
-    local PositionX = Part.Position.X
-    local PositionY = Part.Position.Y
-    local PositionZ = Part.Position.Z
-    local HalfSizeX = Part.Size.X * 0.5
-    local HalfSizeY = Part.Size.Y * 0.5
-    local HalfSizeZ = Part.Size.Z * 0.5
-    local RightVector = Part.RightVector
-    local UpVector = Part.UpVector
-    local LookVector = Part.LookVector
-    local RightX = RightVector.X * HalfSizeX
-    local RightY = RightVector.Y * HalfSizeX
-    local RightZ = RightVector.Z * HalfSizeX
-    local UpX = UpVector.X * HalfSizeY
-    local UpY = UpVector.Y * HalfSizeY
-    local UpZ = UpVector.Z * HalfSizeY
-    local LookX = LookVector.X * HalfSizeZ
-    local LookY = LookVector.Y * HalfSizeZ
-    local LookZ = LookVector.Z * HalfSizeZ
-    local SignR = 1
-    for _ = 1, 2 do
-        local SignU = 1
-        for _ = 1, 2 do
-            local SignL = 1
-            for _ = 1, 2 do
-                local WorldPoint = Vector3.new(
-                    PositionX + SignR * RightX + SignU * UpX + SignL * LookX,
-                    PositionY + SignR * RightY + SignU * UpY + SignL * LookY,
-                    PositionZ + SignR * RightZ + SignU * UpZ + SignL * LookZ
-                )
-                local ScreenPoint, OnScreen = Camera:WorldToScreenPoint(WorldPoint)
-                if OnScreen then
-                    WriteOffset = WriteOffset + 1
-                    local Slot = Convex.Scratch.Points[WriteOffset]
-                    if Slot then
-                        Slot.X = ScreenPoint.X
-                        Slot.Y = ScreenPoint.Y
-                    else
-                        Convex.Scratch.Points[WriteOffset] = {X = ScreenPoint.X, Y = ScreenPoint.Y}
-                    end
-                end
-                SignL = -1
-            end
-            SignU = -1
-        end
-        SignR = -1
-    end
-    return WriteOffset
-end
-
-local function DrawPolygon(Hull, Size, Color, Opacity)
-    if Size < 3 then return end
-    local Pivot = Vector2.new(Hull[1].X, Hull[1].Y)
-    for Index = 2, Size - 1 do
-        DrawingImmediate.FilledTriangle(Pivot, Vector2.new(Hull[Index].X, Hull[Index].Y), Vector2.new(Hull[Index + 1].X, Hull[Index + 1].Y), Color, Opacity)
-    end
-end
-
-local function DrawOutline(Hull, Size, Color, Opacity, Thickness)
-    if Size < 2 then return end
-    for Index = 1, Size do
-        local Entry = Hull[Index]
-        Convex.Scratch.Poly[Index] = Vector2.new(Entry.X, Entry.Y)
-    end
-    Convex.Scratch.Poly[Size + 1] = Vector2.new(Hull[1].X, Hull[1].Y)
-    Convex.Scratch.Poly[Size + 2] = nil
-    if Size + 1 < Convex.Static.HWMPoly then
-        for Index = Size + 2, Convex.Static.HWMPoly do
-            Convex.Scratch.Poly[Index] = nil
+    local children = {}
+    for pointer = first, last - 0x10, 0x10 do
+        local child = ReadU64(pointer, 0)
+        if child and child ~= 0 then
+            local ok, inst = pcall(pointer_to_userdata, child)
+            if ok and inst then children[#children + 1] = inst end
         end
     end
-    Convex.Static.HWMPoly = math.max(Convex.Static.HWMPoly, Size + 1)
-    DrawingImmediate.Polyline(Convex.Scratch.Poly, Color, 0.5, 2)
+    return children
 end
 
-local function Highlight(inst, color)
-    local PointCount = 0
-    PointCount = ProjectPartCorners(inst, PointCount)
-    Convex.Static.HWMPoints = TruncateBuffer(Convex.Scratch.Points, PointCount, Convex.Static.HWMPoints)
-    local Size = CalculateConvexHull(Convex.Scratch.Points, PointCount, Convex.Scratch.Hull)
-    Convex.Static.HWMHull = TruncateBuffer(Convex.Scratch.Hull, Size, Convex.Static.HWMHull)
-    DrawPolygon(Convex.Scratch.Hull, Size, color, 0.2)
-    DrawOutline(Convex.Scratch.Hull, Size, color, 0.7, 0.7)
+local function SetLine(id, text, color)
+    local line = LineById[id]
+    if line then
+        line.Text = text
+        line.Color = color
+        return
+    end
+    line = {Text = text, Color = color}
+    LineById[id] = line
+    Lines[#Lines + 1] = line
 end
 
-local function Render()
-    if _G.Ghost_ESP then
-        for i, inst in pairs(BodyParts) do
-            if Ghost:FindFirstChild(inst) then
-                Highlight(Ghost[inst], _G.Ghost_ESP_Color)
-            end
+local function RemoveLine(id)
+    local line = LineById[id]
+    if not line then return end
+    LineById[id] = nil
+    table.remove(Lines, table.find(Lines, line))
+end
+
+local function Notify(text)
+    if bNotify then send_notification(text, "warning") end
+end
+
+local function Near(a, b)
+    return math.abs(a - b) < .02
+end
+
+local function ShowType(name)
+    if typeFound then return end
+    typeFound = true
+    RemoveLine("GhostFoundPartial")
+    local text = "Ghost type found: " .. name
+    Notify(text)
+    SetLine("GhostFound", text, Colors.Red)
+end
+
+local function CheckEvidence()
+    if typeFound then return end
+
+    local count = 0
+    local code = ""
+    for _, key in EvidenceOrder do
+        if Evidence[key] then
+            count += 1
+            code ..= key
         end
     end
 
-    if _G.UV_ESP then
-        for i, inst in pairs(workspace.Handprints:GetChildren()) do
-            Highlight(inst, _G.UV_ESP_Color)
+    if count >= 4 then
+        ShowType("Skinwalker")
+    elseif count == 3 and not skinwalkerPartial then
+        if code == "OrbFreezeInscript" or code == "SpiritBoxOrbInscript" then
+            ShowType("Skinwalker")
+        elseif code == "SpiritBoxOrbFreeze" then
+            skinwalkerPartial = true
+            Notify("Ghost type found: Ghoul")
+            SetLine("GhostFoundPartial", "Ghost type found: Ghoul, WARNING: Possibly Skinwalker, try ruling out inscription", Colors.Red)
+        elseif GhostCodes[code] then
+            ShowType(GhostCodes[code])
         end
     end
 end
 
-local SpeedBool = true
-local TextLabelBool = true
-local DefaultSpeed = tonumber(workspace:GetAttribute("DefaultWalkSpeed"))
-local MaxStamina = workspace:GetAttribute("MaxStamina")
-local CustomDif = workspace:GetAttribute("Difficulty") == "Custom"
-local LocalSpeed
-local GhostSpeed
-
-if tostring(_G.WalkspeedOffset) == "0" then
-    SpeedBool = false
-    LocalSpeed = -1
-    GhostSpeed = -1
-else
-    LocalSpeed = memory.readf32(LocalPlayer.Character.Humanoid, tonumber(_G.WalkspeedOffset, 16))
-    GhostSpeed = memory.readf32(Ghost.Humanoid, tonumber(_G.WalkspeedOffset, 16))
+local function ShowEvidence(key, label)
+    if Evidence[key] then return end
+    Evidence[key] = true
+    local text = label .. " evidence found"
+    Notify(text)
+    SetLine(key, text, Colors.Green)
+    CheckEvidence()
 end
 
-local GhostSpeedText = "Ghost\'s speed: " .. tostring(math.floor(GhostSpeed * 100) / 100)
-local SirenSpeedDebuffs = {
-    math.floor((DefaultSpeed * 0.8) * 100) / 100,
-    math.floor((DefaultSpeed * 1.28) * 100) / 100,
-    math.floor((DefaultSpeed * 0.4) * 100) / 100
-}
+local customDifficulty = workspace:GetAttribute("Difficulty") == "Custom"
+local defaultSpeed = tonumber(workspace:GetAttribute("DefaultWalkSpeed"))
+local maxStamina = tonumber(workspace:GetAttribute("MaxStamina"))
+local SirenSpeeds = defaultSpeed and {defaultSpeed * .8, defaultSpeed * 1.28, defaultSpeed * .4} or {}
+local energy = tonumber(LocalPlayer:GetAttribute("Energy"))
+local favoriteRoom = Ghost:GetAttribute("FavoriteRoom")
 
-if GhostSpeed < 0 or GhostSpeed > 50 then
-    SpeedBool = false
-    print("Memory offsets outdated! Speed tracker and spirit box tracker is disabled.")
+local function EnergyColor(value)
+    if value == 0 then return Colors.Red end
+    if value and value < 20 then return Colors.Orange end
+    return Colors.White
 end
 
-if SpeedBool then
-    local GhostSpeedColor = Colors.White
-    if not CustomDif or TestMode then
-        if math.floor(GhostSpeed * 100) / 100 ~= 11 then
-            GhostSpeedColor = Colors.Orange
-        end
+local function SetHuntLine()
+    if ghostHunting then
+        SetLine("Hunt", "Ghost is currently hunting", Colors.Red)
+    else
+        SetLine("Hunt", "Ghost is not hunting", Colors.Blue)
     end
-    AddText("GhostSpeed", GhostSpeedText, GhostSpeedColor)
 end
 
-if tostring(_G.TextLabelOffset) == "0" then
-    TextLabelBool = false
-end
-
-local Energy = tonumber(LocalPlayer:GetAttribute("Energy"))
-local EnergyText = "Your energy: " .. tostring(Energy)
-local EnergyColor = Colors.White
-
-if Energy == 0 then
-    EnergyColor = Colors.Red
-elseif Energy < 20 then
-    EnergyColor = Colors.Orange
-end
-
-AddText("Energy", EnergyText, EnergyColor)
-
-local FavRoomRaw = Ghost:GetAttribute("FavoriteRoom")
-local FavRoom = "Ghost's favorite room: " .. FavRoomRaw
-local FavRoomInst = Rooms:FindFirstChild(FavRoomRaw)
-
-AddText("FavRoom", FavRoom, Colors.Blue)
-
-local GhostHunting = false
-
-if Ghost:GetAttribute("Hunting") == "true" then
-    GhostHunting = true
-    AddText("Hunt", "Ghost is currently hunting", Colors.Red)
-else
-    AddText("Hunt", "Ghost is not hunting", Colors.Blue)
-end
+if speedEnabled then SetLine("GhostSpeed", "Ghost's speed: ?", Colors.White) end
+SetLine("Energy", "Your energy: " .. tostring(energy), EnergyColor(energy))
+SetLine("FavRoom", "Ghost's favorite room: " .. tostring(favoriteRoom), Colors.Blue)
+ghostHunting = Ghost:GetAttribute("Hunting") == "true"
+SetHuntLine()
 
 if Ghost:GetAttribute("Gender") == "Male" then
-    AddText("Gender", "Keres and Siren can be ruled out", Colors.White)
+    SetLine("Gender", "Keres and Siren can be ruled out", Colors.White)
 end
 
 if workspace:FindFirstChild("GhostOrb") then
-    Evidence.Orb = true
-    send_notification("Ghost Orb evidence found", "warning")
-    AddText("OrbEvidence", "Ghost orb evidence found", Colors.Green)
+    ShowEvidence("Orb", "Ghost orb")
 else
-    AddText("OrbEvidence", "No ghost orb evidence, can be ruled out", Colors.White)
+    SetLine("OrbEvidence", "No ghost orb evidence, can be ruled out", Colors.White)
 end
 
-local function ShowType(ghost)
-    if Evidence.TypeFound then return end
-    if SkinwalkerPartiallyFound then RemoveText("GhostFoundPartial") end
-    Evidence.TypeFound = true
-    local OutputText = "Ghost type found: " .. ghost
-    send_notification(OutputText, "warning")
-    AddText("GhostFound", OutputText, Colors.Red)
-end
-
-local function ShowEvidence(textshort, text)
-    if Evidence[textshort] then return end
-    Evidence[textshort] = true
-    local OutputText = text .. " evidence found"
-    send_notification(OutputText, "warning")
-    AddText(textshort, OutputText, Colors.Green)
-end
-
-if Ghost:GetAttribute("Headless") then
+if Ghost:GetAttribute("Headless") == "true" then
     ShowType("Dullahan")
 end
 
@@ -403,192 +259,331 @@ if not Ghost:FindFirstChild("GhostFootsteps") then
     ShowType("Umbra")
 end
 
-local function Main()
-    if not Ghost:FindFirstChild("Humanoid") then return end
-    if not LocalPlayer.Character then return end
-    if not LocalPlayer.Character:FindFirstChild("Humanoid") then return end
-    if not LocalPlayer:FindFirstChild("PlayerGui") then return end
-    if not LocalPlayer.PlayerGui:FindFirstChild("Subtitles") then return end
-    if not LocalPlayer.PlayerGui.Subtitles:FindFirstChild("Holder") then return end
-    if not LocalPlayer.PlayerGui.Subtitles.Holder:FindFirstChild("TextLabel") then return end
+local function RefreshRefs()
+    GhostHumanoid = Ghost:FindFirstChild("Humanoid")
 
-    local EnergyAttribute = tonumber(LocalPlayer:GetAttribute("Energy"))
-    local FavRoomAttribute = Ghost:GetAttribute("FavoriteRoom")
-    local HuntingAttribute = Ghost:GetAttribute("Hunting") == "true"
-    local LaserAttribute = Ghost:GetAttribute("LaserVisible") == "true"
-    local EMFAttribute = Ghost:GetAttribute("LastEMFLevel5Time")
-    local HandprintInst = workspace.Handprints:FindFirstChildOfClass("Part")
-    local InscriptInst = workspace.ScratchText:FindFirstChildOfClass("Model")
-    local Subtitle = LocalPlayer.PlayerGui.Subtitles.Holder.TextLabel
+    local char = LocalPlayer.Character
+    LocalHumanoid = char and memory.rtti(char) == "RBX::ModelInstance" and char:FindFirstChild("Humanoid") or nil
 
-    if SpeedBool then
-        local NewGhostSpeed = memory.readf32(Ghost.Humanoid, tonumber(_G.WalkspeedOffset, 16))
-        if GhostSpeed ~= NewGhostSpeed then
-            GhostSpeed = NewGhostSpeed
-            local TruncatedSpeed = math.floor(GhostSpeed * 100) / 100
-            if not CustomDif or TestMode then
-                if GhostSpeed == 11 then
-                    Texts["GhostSpeed"].Color = Colors.White
-                else
-                    Texts["GhostSpeed"].Color = Colors.Orange
-                end
-                if TruncatedSpeed == 8.25 then
+    local gui = LocalPlayer:FindFirstChild("PlayerGui")
+    local subtitles = gui and gui:FindFirstChild("Subtitles")
+    local holder = subtitles and subtitles:FindFirstChild("Holder")
+    Subtitle = textOffset and holder and holder:FindFirstChild("TextLabel") or nil
+
+    viewportY = Camera.ViewportSize.Y
+end
+
+local function ScanGhostParts()
+    local parts = {}
+    for _, name in BodyParts do
+        local part = Ghost:FindFirstChild(name)
+        if part then parts[#parts + 1] = {Part = part, Size = part.Size} end
+    end
+    GhostParts = parts
+end
+
+local function ScanHandprints()
+    if not Handprints then return end
+
+    local parts = {}
+    local classes = {}
+    for _, inst in MemoryChildren(Handprints) do
+        local id = InstId(inst)
+        local isPart = HandprintClass[id]
+        if isPart == nil then isPart = inst.ClassName == "Part" end
+        classes[id] = isPart
+        if isPart then
+            parts[id] = HandprintParts[id] or {Part = inst, Size = inst.Size}
+        end
+    end
+    HandprintClass = classes
+    HandprintParts = parts
+
+    if next(parts) then ShowEvidence("UV", "UV handprints") end
+end
+
+local function UpdateSpeeds()
+    if not speedEnabled then return end
+
+    if GhostHumanoid then
+        local speed = memory.readf32(GhostHumanoid, walkspeedOffset)
+        if ghostSpeed == nil and (speed < 0 or speed > 50) then
+            speedEnabled = false
+            RemoveLine("GhostSpeed")
+            print("Walkspeed offset looks wrong, speed tracking is disabled")
+            return
+        end
+
+        if speed ~= ghostSpeed then
+            ghostSpeed = speed
+            local color = Colors.White
+            if not customDifficulty then
+                if not Near(speed, 10.5) then color = Colors.Orange end
+                if Near(speed, 7.88) then
                     ShowType("Aswang")
-                elseif TruncatedSpeed == 8.8 then
+                elseif Near(speed, 8.4) then
                     ShowType("Umbra")
-                elseif TruncatedSpeed == 13.5 and not Evidence.TypeFound then
-                    if Evidence.Orb then
-                        ShowType("Phantom")
-                    else
-                        ShowType("Oni")
-                    end
-                elseif TruncatedSpeed ~= 3 and TruncatedSpeed ~= 8.25 and TruncatedSpeed ~= 8.8 and TruncatedSpeed ~= 11 and TruncatedSpeed ~= 13.5 then
-                    ShowType("Wendigo")
+                elseif Near(speed, 14) then
+                    ShowType(Evidence.Orb and "Phantom" or "Oni")
+                elseif not Near(speed, 3) then
+                    ShowType("Wretch")
                 end
             end
-            GhostSpeedText = "Ghost\'s speed: " .. tostring(TruncatedSpeed)
-            Texts["GhostSpeed"].Text = GhostSpeedText
-        end
-        LocalSpeed = math.floor(memory.readf32(LocalPlayer.Character.Humanoid, tonumber(_G.WalkspeedOffset, 16)) * 100) / 100
-    end
-
-    if TextLabelBool then
-        local SubtitleText = memory.readstring(Subtitle, tonumber(_G.TextLabelTextOffset, 16))
-
-        for i, inst in pairs(SpiritBoxResponses) do
-            if SubtitleText == inst then
-                ShowEvidence("SpiritBox", "Spirit Box")
-            end
-        end
-
-        if SubtitleText == "- HUMMING -" then
-            ShowType("Siren")
-        end
-
-        if SubtitleText == "> Ghost Wail <" and GhostHunting then
-            ShowType("Banshee")
+            SetLine("GhostSpeed", "Ghost's speed: " .. tostring(math.floor(speed * 100 + .5) / 100), color)
         end
     end
 
-    if EnergyAttribute ~= Energy then
-        Energy = EnergyAttribute
-        EnergyText = "Your energy: " .. tostring(Energy)
-        Texts["Energy"].Text = EnergyText
-        if Energy == 0 then
-            Texts["Energy"].Color = Colors.Red
-        elseif Energy < 20 then
-            if Texts["Energy"].Color ~= Colors.Orange then
-                Texts["Energy"].Color = Colors.Orange
-            end
-        else
-            if Texts["Energy"].Color ~= Colors.White then
-                Texts["Energy"].Color = Colors.White
-            end
+    if LocalHumanoid and not typeFound then
+        local localSpeed = memory.readf32(LocalHumanoid, walkspeedOffset)
+        for _, sirenSpeed in SirenSpeeds do
+            if Near(localSpeed, sirenSpeed) then ShowType("Siren") end
         end
-    end
-
-    if _G.Inf_Stamina then
-        LocalPlayer:SetAttribute("Stamina", MaxStamina)
-    end
-
-    if FavRoomAttribute ~= FavRoomRaw then
-        send_notification("Ghost\'s favorite room changed", "warning")
-        FavRoomRaw = FavRoomAttribute
-        FavRoom = "Ghost's favorite room: " .. FavRoomRaw
-        FavRoomInst = Rooms:FindFirstChild(FavRoomRaw)
-        Texts["FavRoom"].Text = FavRoom
-    end
-
-    if HuntingAttribute and not GhostHunting then
-        GhostHunting = true
-        Texts["Hunt"].Text = "Ghost is currently hunting"
-        Texts["Hunt"].Color = Colors.Red
-    elseif not HuntingAttribute and GhostHunting then
-        GhostHunting = false
-        Texts["Hunt"].Text = "Ghost is not hunting"
-        Texts["Hunt"].Color = Colors.Blue
-    end
-
-    if HandprintInst then ShowEvidence("UV", "UV handprints") end
-    if InscriptInst then ShowEvidence("Inscript", "Inscription") end
-    if LaserAttribute then ShowEvidence("Laser", "Laser projector") end
-    if EMFAttribute then ShowEvidence("EMF", "EMF level 5") end
-
-    for i, inst in pairs(Rooms:GetChildren()) do
-        local RoomTemp = tonumber(inst:GetAttribute("Temperature"))
-        if RoomTemp < 0 then ShowEvidence("Freeze", "Freezing temperatures") end
-    end
-
-    for i, inst in pairs(workspace.Items:GetChildren()) do
-        local ItemName = inst:GetAttribute("ItemName")
-        local RewardBool = inst:GetAttribute("PhotoRewardAvailable") == "true"
-        local ReadingLevel = inst:GetAttribute("ReadingLevel") or 1
-        local RewardType = inst:GetAttribute("PhotoRewardType") or "Nil"
-
-        if ItemName == "Spirit Book" and RewardBool and RewardType == "Inscription" then
-            ShowEvidence("Inscript", "Inscription")
-        end
-
-        if ItemName == "Flower Pot" and RewardBool and RewardType == "WitheredFlowers" then
-            ShowEvidence("Wither", "Wither")
-        end
-    end
-
-    for i, inst in pairs(Players:GetChildren()) do
-        if not inst.Character then continue end
-        local Humanoid = inst.Character:FindFirstChild("Humanoid")
-        if not Humanoid then continue end
-
-        if SpeedBool and not Evidence.TypeFound then
-            for j, val in pairs(SirenSpeedDebuffs) do
-                if LocalSpeed == val then
-                    ShowType("Siren")
-                end
-            end
-        end
-    end
-
-    if Evidence.TypeFound then return end
-
-    local c = 0
-    local code = ""
-
-    local function AddCode(string)
-        c += 1
-        code = code .. string
-    end
-
-    if Evidence.EMF then AddCode("EMF") end
-    if Evidence.UV then AddCode("UV") end
-    if Evidence.SpiritBox then AddCode("SpiritBox") end
-    if Evidence.Orb then AddCode("Orb") end
-    if Evidence.Freeze then AddCode("Freeze") end
-    if Evidence.Inscript then AddCode("Inscript") end
-    if Evidence.Laser then AddCode("Laser") end
-    if Evidence.Wither then AddCode("Wither") end
-
-    if c == 3 then
-        if not SkinwalkerPartiallyFound then
-            if code == "OrbFreezeInscript" or code == "SpiritBoxOrbInscript" then
-                ShowType("Skinwalker")
-            elseif code == "SpiritBoxOrbFreeze" then
-                SkinwalkerPartiallyFound = true
-                send_notification("Ghost type found: Ghoul", "warning")
-                AddText("GhostFoundPartial", "Ghost type found: Ghoul, WARNING: Possibly Skinwalker, try ruling out inscription", Colors.Red)
-            end
-
-            if GhostCodes[code] then
-                ShowType(GhostCodes[code])
-            end
-        end
-    elseif c == 4 then
-        ShowType("Skinwalker")
     end
 end
 
+local function UpdateSubtitle()
+    if not Subtitle then return end
+
+    local text = memory.readstring(Subtitle, textOffset)
+    if SpiritBoxResponses[text] then
+        ShowEvidence("SpiritBox", "Spirit Box")
+    elseif text == "- HUMMING -" then
+        ShowType("Siren")
+    elseif text == "> Ghost Wail <" and ghostHunting then
+        ShowType("Banshee")
+    end
+end
+
+local function UpdateGhost()
+    local hunting = Ghost:GetAttribute("Hunting") == "true"
+    if hunting ~= ghostHunting then
+        ghostHunting = hunting
+        SetHuntLine()
+    end
+
+    local room = Ghost:GetAttribute("FavoriteRoom")
+    if room ~= favoriteRoom then
+        favoriteRoom = room
+        Notify("Ghost's favorite room changed")
+        SetLine("FavRoom", "Ghost's favorite room: " .. tostring(room), Colors.Blue)
+    end
+
+    if not Evidence.Laser and Ghost:GetAttribute("LaserVisible") == "true" then
+        ShowEvidence("Laser", "Laser projector")
+    end
+
+    if not Evidence.EMF then
+        local emfTime = Ghost:GetAttribute("LastEMFLevel5Time")
+        if emfTime and tonumber(emfTime) ~= 0 then ShowEvidence("EMF", "EMF level 5") end
+    end
+end
+
+local function UpdateEnergy()
+    local value = tonumber(LocalPlayer:GetAttribute("Energy"))
+    if value == energy then return end
+    energy = value
+    SetLine("Energy", "Your energy: " .. tostring(value), EnergyColor(value))
+end
+
+local function CheckRooms()
+    if Evidence.Freeze or #RoomList == 0 then return end
+
+    for _ = 1, 2 do
+        roomIndex = roomIndex % #RoomList + 1
+        local temperature = tonumber(RoomList[roomIndex]:GetAttribute("Temperature"))
+        if temperature and temperature < 0 then
+            ShowEvidence("Freeze", "Freezing temperatures")
+            return
+        end
+    end
+end
+
+local function CheckItems()
+    if not ItemsFolder or (Evidence.Inscript and Evidence.Wither) then return end
+
+    local names = {}
+    for _, inst in MemoryChildren(ItemsFolder) do
+        local id = InstId(inst)
+        local name = ItemNames[id]
+        if name == nil then name = inst:GetAttribute("ItemName") or false end
+        names[id] = name
+
+        local wanted = (name == "Spirit Book" and not Evidence.Inscript and "Inscription") or (name == "Flower Pot" and not Evidence.Wither and "WitheredFlowers")
+        if wanted and inst:GetAttribute("PhotoRewardAvailable") == "true" and inst:GetAttribute("PhotoRewardType") == wanted then
+            if wanted == "Inscription" then
+                ShowEvidence("Inscript", "Inscription")
+            else
+                ShowEvidence("Wither", "Wither")
+            end
+        end
+    end
+    ItemNames = names
+end
+
+local function CheckStatic()
+    if not Evidence.Inscript and ScratchText and ScratchText:FindFirstChildOfClass("Model") then
+        ShowEvidence("Inscript", "Inscription")
+    end
+
+    if not Evidence.Orb and workspace:FindFirstChild("GhostOrb") then
+        RemoveLine("OrbEvidence")
+        ShowEvidence("Orb", "Ghost orb")
+    end
+end
+
+local function SyncFlags()
+    for flag, apply in FlagSetters do
+        local value = window:get(flag)
+        if value ~= AppliedFlags[flag] then
+            AppliedFlags[flag] = value
+            apply(value)
+        end
+    end
+end
+
+local function Due(name, interval, now)
+    if now < Timers[name] then return false end
+    Timers[name] = now + interval
+    return true
+end
+
+local function PreLocal()
+    SyncFlags()
+
+    local now = os.clock()
+    if now - lastTick > 1 then
+        HandprintParts = {}
+        HandprintClass = {}
+        for name in Timers do Timers[name] = 0 end
+    end
+    lastTick = now
+
+    if Due("Refs", .5, now) then RefreshRefs() end
+    if Due("Parts", 2, now) then ScanGhostParts() end
+    if Due("Handprints", .25, now) then ScanHandprints() end
+
+    UpdateSpeeds()
+    UpdateSubtitle()
+
+    if Due("Ghost", .25, now) then UpdateGhost() end
+    if Due("Energy", .5, now) then UpdateEnergy() end
+    if Due("RoomList", 10, now) then RoomList = Rooms:GetChildren() end
+    if Due("Rooms", .1, now) then CheckRooms() end
+    if Due("Items", 1, now) then CheckItems() end
+    if Due("Static", 1, now) then CheckStatic() end
+
+    if bInfStamina and maxStamina and Due("Stamina", .1, now) then
+        LocalPlayer:SetAttribute("Stamina", maxStamina)
+    end
+
+    lastData = os.clock()
+end
+
+local pose = {Parent = true}
+
+local function HighlightEntry(entry, color)
+    local part = entry.Part
+    pose.Position = part.Position
+    pose.RightVector = part.RightVector
+    pose.UpVector = part.UpVector
+    pose.LookVector = part.LookVector
+    pose.PartSize = entry.Size
+    Highlight(pose, color, .2, .7, 1)
+end
+
+local function Render()
+    local fresh = os.clock() - lastData < .5
+
+    if bGhostESP and fresh then
+        for _, entry in GhostParts do
+            HighlightEntry(entry, ghostColor)
+        end
+    end
+
+    if bHandprintESP and fresh then
+        for _, entry in HandprintParts do
+            HighlightEntry(entry, handprintColor)
+        end
+    end
+
+    if bInfoText then
+        local y = viewportY - 25
+        for i = 1, #Lines do
+            local line = Lines[i]
+            y -= 20
+            DrawingImmediate.OutlinedText(vector.create(25, y, 0), 20, line.Color, 1, line.Text, false, "Nunito")
+        end
+    end
+end
+
+window = UI.new({
+    Title = "Andris: Demonology",
+    Subtitle = "Evidence | ESP",
+    Version = "2.0.1",
+    Folder = "AndrisDemonology",
+    Footer = "This script is discontinued!",
+    UpdateNotice = {"V2.0.1", "This script now uses ok0f's V2 UI library."},
+    OnUnload = function()
+        preLocalConnect:Disconnect()
+        renderConnect:Disconnect()
+    end,
+    OnReload = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Games/refs/heads/main/Demonology.lua"))()
+    end,
+})
+
+do
+    local visual = window:tab("Visual")
+    local esp = visual:section("ESP")
+
+    esp:toggle({Name = "Ghost ESP", Flag = "GhostESP", Default = true})
+    FlagSetters.GhostESP = function(val)
+        bGhostESP = val
+    end
+
+    esp:color({Name = "Ghost color", Flag = "GhostColor", Default = ghostColor})
+    FlagSetters.GhostColor = function(val)
+        ghostColor = val
+    end
+
+    esp:toggle({Name = "UV handprint ESP", Flag = "HandprintESP", Default = true})
+    FlagSetters.HandprintESP = function(val)
+        bHandprintESP = val
+    end
+
+    esp:color({Name = "Handprint color", Flag = "HandprintColor", Default = handprintColor})
+    FlagSetters.HandprintColor = function(val)
+        handprintColor = val
+    end
+
+    local info = visual:section("INFO")
+
+    info:toggle({Name = "Show evidence and ghost info", Flag = "InfoText", Default = true})
+    FlagSetters.InfoText = function(val)
+        bInfoText = val
+    end
+
+    info:toggle({Name = "Notifications", Flag = "Notify", Default = true})
+    FlagSetters.Notify = function(val)
+        bNotify = val
+    end
+
+    local player = window:tab("Player")
+    local movement = player:section("MOVEMENT")
+
+    movement:toggle({Name = "Infinite stamina", Flag = "InfStamina", Default = true})
+    FlagSetters.InfStamina = function(val)
+        bInfStamina = val
+    end
+end
+
+window:start()
+
+preLocalConnect = RunService.PreLocal:Connect(PreLocal)
+renderConnect = RunService.Render:Connect(Render)
+
 print("Loaded")
 
-RunService.Render:Connect(Render)
-RunService.PostLocal:Connect(Main)
-
+else
+    print("Not in a Demonology match")
 end
