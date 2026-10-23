@@ -1,7 +1,7 @@
 --!strict
 --!optimize 2
 
-if game.GameId == 6170143659 and workspace:FindFirstChild("Ghost") then
+if game.GameId == 6170143659 then
 
 local RobloxVersion = _G.RobloxVersion or game:GetClientVersion()
 local offsetsOk, offsetsData = pcall(crypt.json.decode, game:HttpGet("https://offsets.imtheo.lol/" .. RobloxVersion .. "/offsets.json"))
@@ -20,8 +20,25 @@ local Highlight = loadstring(game:HttpGet("https://raw.githubusercontent.com/And
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local Camera = workspace.CurrentCamera
 local LocalPlayer = Players.LocalPlayer
+
+local function MatchReady()
+    local ghost = workspace:FindFirstChild("Ghost")
+    local map = workspace:FindFirstChild("Map")
+    local char = LocalPlayer.Character
+    local ok, className = pcall(memory.rtti, char)
+    return ghost ~= nil and ghost:FindFirstChild("Humanoid") ~= nil
+        and map ~= nil and map:FindFirstChild("Rooms") ~= nil
+        and ok and className == "RBX::ModelInstance" and char:FindFirstChild("Humanoid") ~= nil
+        and ghost:GetAttribute("FavoriteRoom") ~= nil
+end
+
+if not MatchReady() then
+    print("Waiting for the match to load")
+    repeat task.wait(.5) until MatchReady()
+end
+
+local Camera = workspace.CurrentCamera
 local Ghost = workspace.Ghost
 local Rooms = workspace.Map.Rooms
 local Handprints = workspace:FindFirstChild("Handprints")
@@ -283,6 +300,7 @@ local function ScanGhostParts()
 end
 
 local function ScanHandprints()
+    Handprints = Handprints or workspace:FindFirstChild("Handprints")
     if not Handprints then return end
 
     local parts = {}
@@ -399,6 +417,7 @@ local function CheckRooms()
 end
 
 local function CheckItems()
+    ItemsFolder = ItemsFolder or workspace:FindFirstChild("Items")
     if not ItemsFolder or (Evidence.Inscript and Evidence.Wither) then return end
 
     local names = {}
@@ -421,6 +440,7 @@ local function CheckItems()
 end
 
 local function CheckStatic()
+    ScratchText = ScratchText or workspace:FindFirstChild("ScratchText")
     if not Evidence.Inscript and ScratchText and ScratchText:FindFirstChildOfClass("Model") then
         ShowEvidence("Inscript", "Inscription")
     end
