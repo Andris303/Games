@@ -3694,10 +3694,10 @@ end
 window = UI.new({
     Title = "Andris: Forsaken",
     Subtitle = "Support | Exploits",
-    Version = "3.4.1",
+    Version = "3.5.0",
     Folder = "AndrisForsaken",
     Footer = "This script is in active development! New features releasing soon",
-    UpdateNotice = {"V3.4.1", "This script now uses ok0f's V2 UI library."},
+    UpdateNotice = {"V3.5.0", "Added John doe spikes aimbot.", "Generator ESP now shows the generator type."},
     OnUnload = function()
         preLocalConnect:Disconnect()
         preDataConnect:Disconnect()
