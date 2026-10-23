@@ -9,6 +9,16 @@ _G.BattleBricksRun = runId
 
 local Units = {}
 local Labels = {}
+local DeletedRemotes = {}
+local lastDepriverCheck = 0
+local depriverCheckDelay = .1
+local bAutoShoot = true
+local shootClickDelay = .1
+local shootTolerance = 8
+local ShootPriority = {SuperStar = 1, BigStar = 2, Monitor = 3, SorcusBlade = 4, Core = 5}
+local defaultShootPriority = 6
+local currentShootTarget = nil
+local nextShootClick = 0
 local BoundsCache = {}
 local boundsCount = 0
 
@@ -20,10 +30,13 @@ local textSize = 20
 local statTextSize = 16
 local lineGap = 2
 local separator = " | "
+local cooldownHoldTime = .25
+local nodeRetryDelay = 1
 
 local ArmorColor = Color3.fromRGB(135, 150, 170)
 local ResistColor = Color3.fromRGB(90, 160, 255)
 local SeparatorColor = Color3.fromRGB(200, 200, 200)
+local CooldownColor = Color3.fromRGB(255, 255, 255)
 
 local function InstId(inst)
     if not inst or not inst.Parent then return nil end
@@ -111,15 +124,15 @@ local function SearchNode(node, wantedName)
     local first, packed = ReadU64(node, 0x8), ReadU64(node, 0x10)
     if first and packed then
         local entry, valid = SearchEntries(first, packed, wantedName)
-        if entry or valid then return entry end
+        if entry or valid then return entry, valid end
     end
 
     packed, first = ReadU64(node, 0x8), ReadU64(node, 0x18)
     if first and packed then
-        return (SearchEntries(first, packed, wantedName))
+        return SearchEntries(first, packed, wantedName)
     end
 
-    return nil
+    return nil, false
 end
 
 local function FindAttributeEntry(address, wantedName)
@@ -138,7 +151,7 @@ local function FindAttributeEntry(address, wantedName)
             visited[node] = true
 
             local entry = SearchNode(node, wantedName)
-            if entry then return entry end
+            if entry then return entry, node end
 
             for _, offset in {0x0, 0x10} do
                 local pointer = ReadU64(node, offset)
@@ -152,6 +165,14 @@ local function FindAttributeEntry(address, wantedName)
     return nil
 end
 
+local function ReadEntryNumber(entry)
+    local ok, value = pcall(memory.readf64, entry + attributeValueOffset)
+    if not ok or type(value) ~= "number" or value ~= value or math.abs(value) > 1e9 then
+        return nil
+    end
+    return value
+end
+
 local function ReadStat(inst, name)
     local okAddress, address = pcall(function()
         return tonumber(inst.Data)
@@ -160,12 +181,29 @@ local function ReadStat(inst, name)
 
     local entry = FindAttributeEntry(address, name)
     if not entry then return nil end
+    return ReadEntryNumber(entry)
+end
 
-    local ok, value = pcall(memory.readf64, entry + attributeValueOffset)
-    if not ok or type(value) ~= "number" or value ~= value or math.abs(value) > 1e9 then
+local function ReadCooldown(unit, inst, now)
+    if not unit.AttributeNode then
+        if unit.NodeTriedAt and now - unit.NodeTriedAt < nodeRetryDelay then return nil end
+        unit.NodeTriedAt = now
+        local address = tonumber(inst.Data)
+        if not address then return nil end
+        local _, node = FindAttributeEntry(address, "Armor")
+        unit.AttributeNode = node
+        if not node then return nil end
+    end
+
+    local entry, valid = SearchNode(unit.AttributeNode, "WaitToMove")
+    if not valid then
+        unit.AttributeNode = nil
         return nil
     end
-    return value
+    if not entry then return nil end
+
+    local value = ReadEntryNumber(entry)
+    return value and math.max(value, 0)
 end
 
 local function HealthColor(ratio)
@@ -200,6 +238,12 @@ local function ScanFolder(folder, now, seen, labels, budget)
             if not unit.Root or not unit.Humanoid then continue end
         end
 
+        local ok, pos, health, maxhealth = pcall(function()
+            return unit.Root.Position, unit.Humanoid.Health, unit.Humanoid.MaxHealth
+        end)
+        if not ok or not pos or not health or not maxhealth then continue end
+        if health <= 0 then continue end
+
         if not unit.StatsRead and budget.Left > 0 and now - unit.FirstSeen >= statDelay then
             budget.Left -= 1
             unit.StatsRead = true
@@ -210,16 +254,26 @@ local function ScanFolder(folder, now, seen, labels, budget)
             unit.ResistText = FormatStat(resist) .. (resist and "%" or "")
         end
 
-        local ok, pos, health, maxhealth = pcall(function()
-            return unit.Root.Position, unit.Humanoid.Health, unit.Humanoid.MaxHealth
-        end)
-        if not ok or not pos or not health or not maxhealth then continue end
-
         health = math.floor(health * 100) / 100
         maxhealth = math.floor(maxhealth * 100) / 100
         local ratio = maxhealth > 0 and math.clamp(health / maxhealth, 0, 1) or 0
 
+        local cooldown = ReadCooldown(unit, inst, now)
+        if cooldown then
+            if unit.LastCooldown and cooldown < unit.LastCooldown then
+                unit.LastDropAt = now
+            elseif unit.LastCooldown and cooldown > unit.LastCooldown then
+                unit.LastDropAt = nil
+            end
+            unit.LastCooldown = cooldown
+        end
+        if not cooldown or cooldown <= 0 or not unit.LastDropAt or now - unit.LastDropAt > cooldownHoldTime then
+            cooldown = nil
+        end
+
         labels[#labels + 1] = {
+            Root = unit.Root,
+            CooldownText = cooldown and string.format("%.1fs", cooldown),
             Position = vector.create(pos.x, pos.y + 3, pos.z),
             Text = tostring(health) .. " / " .. tostring(maxhealth),
             Color = HealthColor(ratio),
@@ -278,6 +332,15 @@ local function Render()
             x += separatorWidth
             DrawingImmediate.OutlinedText(Vector2.new(x, statY), statTextSize, ResistColor, 1, label.ResistText, false, font)
         end
+
+        local cooldownText = label.CooldownText
+        if cooldownText then
+            local rootPoint, rootVisible = Camera:WorldToScreenPoint(label.Root.Position)
+            if rootVisible then
+                local cooldownWidth = TextWidth(cooldownText, textSize)
+                DrawingImmediate.OutlinedText(Vector2.new(rootPoint.x - cooldownWidth / 2, rootPoint.y - textSize / 2), textSize, CooldownColor, 1, cooldownText, false, font)
+            end
+        end
     end
 end
 
@@ -288,6 +351,100 @@ task.spawn(function()
     end
 end)
 
+local function DisableDeprivers()
+    if _G.BattleBricksRun ~= runId then return end
+    local now = os.clock()
+    if now - lastDepriverCheck < depriverCheckDelay then return end
+    lastDepriverCheck = now
+
+    local ui = LocalPlayer.PlayerGui:FindFirstChild("ChustUI")
+    local remote = ui and ui:FindFirstChild("RemoteEvent")
+    local id = InstId(remote)
+    if id and not DeletedRemotes[id] then
+        DeletedRemotes[id] = true
+        remote:Destroy()
+        print("Deleted a depriver remote")
+    end
+end
+
+local function AimPart(inst)
+    if inst:IsA("BasePart") then return inst end
+    if inst:IsA("Model") then return inst.PrimaryPart end
+    return nil
+end
+
+local function ShootPoint(inst)
+    if not inst or not inst.Parent then return nil end
+    local part = AimPart(inst)
+    if not part then return nil end
+    local point, visible = Camera:WorldToScreenPoint(part.Position)
+    if not visible then return nil end
+    local viewport = Camera.ViewportSize
+    if point.x < 0 or point.y < 0 or point.x > viewport.x or point.y > viewport.y then return nil end
+    return point
+end
+
+local function ShootRank(inst)
+    return ShootPriority[inst.Name] or defaultShootPriority
+end
+
+local function PickShootTarget(folder, currentId)
+    local best, bestRank, bestPoint = nil, math.huge, nil
+    local current, currentPoint = nil, nil
+    for _, inst in folder:GetChildren() do
+        local point = ShootPoint(inst)
+        if point then
+            local rank = ShootRank(inst)
+            if rank < bestRank then
+                best, bestRank, bestPoint = inst, rank, point
+            end
+            if currentId and InstId(inst) == currentId then
+                current, currentPoint = inst, point
+            end
+        end
+    end
+    return best, bestPoint, current, currentPoint
+end
+
+local function AutoShoot()
+    if not bAutoShoot or not isrbxactive() then return end
+    local folder = workspace:FindFirstChild("Shootable")
+    if not folder then
+        currentShootTarget = nil
+        return
+    end
+
+    local best, bestPoint, current, point = PickShootTarget(folder, currentShootTarget)
+    if not current or (best and ShootRank(best) < ShootRank(current)) then
+        current, point = best, bestPoint
+    end
+    currentShootTarget = current and InstId(current)
+    if not point then return end
+
+    local mouse = getmouseposition()
+    local dx, dy = point.x - mouse.x, point.y - mouse.y
+    if math.abs(dx) > shootTolerance or math.abs(dy) > shootTolerance then
+        mousemoverel(math.floor(dx + .5), math.floor(dy + .5))
+        return
+    end
+
+    local now = os.clock()
+    if now - nextShootClick > shootClickDelay then
+        nextShootClick = now
+    end
+    if now >= nextShootClick then
+        nextShootClick += shootClickDelay
+        mouse1click()
+    end
+end
+
+local function OnPreLocal()
+    if _G.BattleBricksRun ~= runId then return end
+    DisableDeprivers()
+    AutoShoot()
+end
+
 print("Loaded")
 
 RunService.Render:Connect(Render)
+RunService.PreLocal:Connect(OnPreLocal)
