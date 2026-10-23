@@ -2,141 +2,102 @@
 --!optimize 2
 
 local RobloxVersion = _G.RobloxVersion or game:GetClientVersion()
-local O = crypt.json.decode(game:HttpGet("https://offsets.imtheo.lol/" .. RobloxVersion .. "/offsets.json")).Offsets
-local ActiveAnimations = O.Animator.ActiveAnimations
-local TrackAnimation = O.AnimationTrack.Animation
-local TrackAnimator = O.AnimationTrack.Animator
-local LabelText = O.GuiObject.Text
-local AnimationId = O.Misc.AnimationId
+local offsetsOk, offsetsData = pcall(crypt.json.decode, game:HttpGet("https://offsets.imtheo.lol/" .. RobloxVersion .. "/offsets.json"))
+local O = offsetsOk and type(offsetsData) == "table" and offsetsData.Offsets or {}
+local activeAnimationsOffset = O.Animator and O.Animator.ActiveAnimations
+local trackAnimationOffset = O.AnimationTrack and O.AnimationTrack.Animation
+local trackAnimatorOffset = O.AnimationTrack and O.AnimationTrack.Animator
+local labelTextOffset = O.GuiObject and O.GuiObject.Text
+local animationIdOffset = O.Misc and O.Misc.AnimationId
+local childrenOffset = O.Instance and O.Instance.ChildrenStart
+local childrenEndOffset = O.Instance and O.Instance.ChildrenEnd
+local animationsReady = activeAnimationsOffset and trackAnimationOffset and trackAnimatorOffset and animationIdOffset and labelTextOffset
+
+if not animationsReady then
+    print("No live offsets for " .. tostring(RobloxVersion) .. ", auto block is disabled")
+end
+
+local ESP = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/ESP.lua"))()
+local UI = loadstring(game:HttpGet("https://gitlab.com/okdude42/severe-scripts/-/raw/main/uilib2/SevereUI.luau?ref_type=heads"))()
 
 local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
 local RunService = game:GetService("RunService")
-local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
 
 local bAutoBlock = false
 local bNoSwingCD = false
+local maximumStamina = 100
+local appliedStamina
 local blockBusy = false
-local swingStates = {}
-local list = {}
-local SetSwingCD
-local SetEjectCD
-local lchar
-local oldmaxstam = 100
-local maximumstam = 100
+local heldKey
+local blockKey
+local KillerFolder
+local LocalChar
+local LocalRoot
+local localTeam
+local SwingStates = {}
+local KillerCache = {}
+local Registered = {}
+local Timers = {Refs = 0, Players = 0, Attributes = 0}
+local lastTick = 0
 
-local ATTACK_DURATION = .35
-local START_WIDTH = 7.5
-local MAX_WIDTH = 13
-local WIDTH_POINT = .75
-local END_WIDTH = 5
-local EXTRA_FORWARD = 4
-local HEIGHT = 6
-local ATTACK_LENGTH = 7.5
-local EXTRA_HEIGHT = 1
-local CLOSE_RADIUS = 3
-local MIN_WIDTH_MULTIPLIER = .85
+local window
+local preLocalConnect
+local FlagSetters = {}
+local AppliedFlags = {}
 
-local ESP = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/ESP.lua"))()
-local UI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Libraries/refs/heads/main/UI.lua"))()
+local attackDuration = .35
+local startWidth = 7.5
+local maxWidth = 13
+local widthPoint = .75
+local endWidth = 5
+local baseExtraForward = 4
+local height = 6
+local attackLength = 7.5
+local extraHeight = 1
+local closeRadius = 3
+local minWidthMultiplier = .85
 
-local function GetActiveAnimations(animator)
-    local result = {}
-    local animatorPtr = tonumber(animator.Data)
-    local head = memory.readu64(animator, ActiveAnimations)
-    local count = memory.readu64(animator, ActiveAnimations + 0x8)
-    if not head or head == 0 or not count or count == 0 then return result end
-
-    local node = memory.readu64(head)
-    for _ = 1, count do
-        if not node or node == 0 or node == head then break end
-        local trackPtr = memory.readu64(node + 0x10)
-        if trackPtr and trackPtr > 0x100000000 then
-            local trackAnimator = memory.readu64(trackPtr + TrackAnimator)
-            if trackAnimator == animatorPtr then
-                local animationPtr = memory.readu64(trackPtr + TrackAnimation)
-                if animationPtr and animationPtr > 0x100000000 then
-                    local animation = pointer_to_userdata(animationPtr)
-                    result[#result + 1] = {Track = trackPtr, Name = animation.Name, AnimationId = memory.readstring(animationPtr, AnimationId),}
-                end
-            end
-        end
-        node = memory.readu64(node)
-    end
-    return result
+local function InstId(inst)
+    return tostring(tonumber(inst.Data))
 end
 
-local function ShouldBlock(kp, kl, lp, prog)
-    local forward = vector.create(kl.x, 0, kl.z)
-    if vector.magnitude(forward) == 0 then return false end
-
-    forward = forward / vector.magnitude(forward)
-    local offset = lp - kp
-    local horizontalOffset = vector.create(offset.x, 0, offset.z)
-    local horizontalDistance = vector.magnitude(horizontalOffset)
-    if horizontalDistance <= CLOSE_RADIUS and math.abs(offset.y) <= (HEIGHT / 2 + EXTRA_HEIGHT) then return true end
-
-    local forwardDistance = vector.dot(offset, forward)
-    if forwardDistance < -1 then return false end
-
-    local extraForward = EXTRA_FORWARD
-    if prog > .5 then extraForward = EXTRA_FORWARD - (2 * (prog - .5) / .5) end
-
-    local maxForward = ATTACK_LENGTH + extraForward
-    if forwardDistance > maxForward then return false end
-
-    local startHalfWidth = START_WIDTH / 2
-    local maxHalfWidth = MAX_WIDTH / 2
-    local endHalfWidth = END_WIDTH / 2
-    local midDistance = maxForward * WIDTH_POINT
-    local allowedHalfWidth
-
-    if forwardDistance <= midDistance then
-        local alpha = math.clamp(forwardDistance / midDistance, 0, 1)
-        allowedHalfWidth = startHalfWidth + (maxHalfWidth - startHalfWidth) * alpha
-    else
-        local alpha = math.clamp((forwardDistance - midDistance) / (maxForward - midDistance), 0, 1 )
-        allowedHalfWidth = maxHalfWidth + (endHalfWidth - maxHalfWidth) * alpha
-    end
-
-    if prog > .5 then
-        local narrowAlpha = (prog - .5) / .5
-        local widthMultiplier = 1 - ((1 - MIN_WIDTH_MULTIPLIER) * narrowAlpha)
-        allowedHalfWidth *= widthMultiplier
-    end
-
-    if math.abs(offset.y) > (HEIGHT / 2 + EXTRA_HEIGHT) then return false end
-    local right = vector.create(-forward.z, 0, forward.x)
-    local sideDistance = math.abs(vector.dot(offset, right))
-    return sideDistance <= allowedHalfWidth
+local function IsPointer(value)
+    return type(value) == "number" and value > 0x100000000
 end
 
-local function GetBlockKey()
-    local ok, text = pcall(function()
-        local label = LocalPlayer.PlayerGui.MainGui.RoundUI.PlayerUI.Abilities.Folder.Block.Input
-        return memory.readstring(label.Data, LabelText)
-    end)
-    if not ok or not text then return nil end
+local function ReadU64(address, offset)
+    local ok, value = pcall(memory.readu64, address, offset)
+    return ok and value or nil
+end
 
-    text = tostring(text):upper()
-    if #text == 1 then return string.byte(text) end
+local function ValidCharacter(char)
+    if not char then return nil end
+    local ok, className = pcall(memory.rtti, char)
+    if ok and className == "RBX::ModelInstance" then return char end
     return nil
 end
 
-local function Block()
-    if blockBusy then return false end
-    local key = GetBlockKey()
-    if not key then return false end
-    blockBusy = true
+local function MemoryChildren(folder)
+    if not childrenOffset or not childrenEndOffset then return folder:GetChildren() end
 
-    task.spawn(function()
-        pcall(keypress, key)
-        task.wait(.08)
-        pcall(keyrelease, key)
-        task.wait(.12)
-        blockBusy = false
-    end)
-    return true
+    local address = tonumber(folder.Data)
+    local list = address and ReadU64(address, childrenOffset)
+    local first = list and ReadU64(list, 0)
+    local last = list and ReadU64(list, childrenEndOffset)
+    if not first or not last or last < first or last - first > 0x10 * 5000 then
+        return folder:GetChildren()
+    end
+
+    local children = {}
+    for pointer = first, last - 0x10, 0x10 do
+        local child = ReadU64(pointer, 0)
+        if child and child ~= 0 then
+            local ok, inst = pcall(pointer_to_userdata, child)
+            if ok and inst then children[#children + 1] = inst end
+        end
+    end
+    return children
 end
 
 local function NormalizeAnimationId(id)
@@ -148,151 +109,307 @@ end
 local function BuildAnimationNames(char)
     local names = {}
     local folder = char:FindFirstChild("Animations")
-    if not folder then return names end
+    if not folder then return names, false end
 
     for _, anim in folder:GetDescendants() do
         if anim:IsA("Animation") then
-            local id = NormalizeAnimationId(memory.readstring(anim.Data, AnimationId))
+            local id = NormalizeAnimationId(memory.readstring(anim.Data, animationIdOffset))
             if id then names[id] = anim.Name end
         end
     end
-    return names
+    return names, true
 end
 
-local function PreData()
-    for _, inst in Players:GetChildren() do
-        local char = inst.Character
-        if not char then continue end
-        if not char:FindFirstChildOfClass("Humanoid") then continue end
-        if not ESP.IsTracked(char) then ESP.AddPlayer(char, {Player = inst, TeamType = "Parent",}) end
-    end
-end
+local function FindSwing(animator, names)
+    local animatorAddress = tonumber(animator.Data)
+    local head = ReadU64(animatorAddress, activeAnimationsOffset)
+    local count = ReadU64(animatorAddress, activeAnimationsOffset + 0x8)
+    if not IsPointer(head) or not count or count == 0 or count > 256 then return nil end
 
-local function PreLocal()
-    local templist = {}
-    local lchar = LocalPlayer.Character
-    local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
+    local node = ReadU64(head, 0)
+    for _ = 1, count do
+        if not IsPointer(node) or node == head then break end
 
-    for _, char in workspace.GameAssets.Teams.Killer:GetChildren() do
-        local humanoid = char:FindFirstChildOfClass("Humanoid")
-        local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
-        local swing
-
-        if animator then
-            local animationNames = BuildAnimationNames(char)
-            for _, animation in GetActiveAnimations(animator) do
-                local id = NormalizeAnimationId(animation.AnimationId)
-                local name = animationNames[id] or animation.Name
-                if name == "Swing" then swing = animation break end
+        local track = ReadU64(node, 0x10)
+        if IsPointer(track) and ReadU64(track, trackAnimatorOffset) == animatorAddress then
+            local animation = ReadU64(track, trackAnimationOffset)
+            if IsPointer(animation) then
+                local id = NormalizeAnimationId(memory.readstring(animation, animationIdOffset))
+                local name = names[id]
+                if not name then
+                    local ok, inst = pcall(pointer_to_userdata, animation)
+                    name = ok and inst and inst.Name
+                end
+                if name == "Swing" then return track end
             end
         end
 
+        node = ReadU64(node, 0)
+    end
+    return nil
+end
+
+local function ShouldBlock(kp, kl, lp, prog)
+    local forward = vector.create(kl.x, 0, kl.z)
+    if vector.magnitude(forward) == 0 then return false end
+
+    forward = vector.normalize(forward)
+    local offset = lp - kp
+    local horizontalDistance = vector.magnitude(vector.create(offset.x, 0, offset.z))
+    if horizontalDistance <= closeRadius and math.abs(offset.y) <= (height / 2 + extraHeight) then return true end
+
+    local forwardDistance = vector.dot(offset, forward)
+    if forwardDistance < -1 then return false end
+
+    local extraForward = baseExtraForward
+    if prog > .5 then extraForward = baseExtraForward - (2 * (prog - .5) / .5) end
+
+    local maxForward = attackLength + extraForward
+    if forwardDistance > maxForward then return false end
+
+    local startHalfWidth = startWidth / 2
+    local maxHalfWidth = maxWidth / 2
+    local endHalfWidth = endWidth / 2
+    local midDistance = maxForward * widthPoint
+    local allowedHalfWidth
+
+    if forwardDistance <= midDistance then
+        local alpha = math.clamp(forwardDistance / midDistance, 0, 1)
+        allowedHalfWidth = startHalfWidth + (maxHalfWidth - startHalfWidth) * alpha
+    else
+        local alpha = math.clamp((forwardDistance - midDistance) / (maxForward - midDistance), 0, 1)
+        allowedHalfWidth = maxHalfWidth + (endHalfWidth - maxHalfWidth) * alpha
+    end
+
+    if prog > .5 then
+        local narrowAlpha = (prog - .5) / .5
+        allowedHalfWidth *= 1 - ((1 - minWidthMultiplier) * narrowAlpha)
+    end
+
+    if math.abs(offset.y) > (height / 2 + extraHeight) then return false end
+    local right = vector.create(-forward.z, 0, forward.x)
+    return math.abs(vector.dot(offset, right)) <= allowedHalfWidth
+end
+
+local function Block()
+    if blockBusy or not blockKey then return false end
+    local key = blockKey
+    blockBusy = true
+    heldKey = key
+
+    task.spawn(function()
+        keypress(key)
+        task.wait(.08)
+        keyrelease(key)
+        heldKey = nil
+        task.wait(.12)
+        blockBusy = false
+    end)
+    return true
+end
+
+local function RefreshRefs()
+    LocalChar = ValidCharacter(LocalPlayer.Character)
+    LocalRoot = LocalChar and LocalChar:FindFirstChild("HumanoidRootPart")
+    local parent = LocalChar and LocalChar.Parent
+    localTeam = parent and parent.Name
+
+    local assets = workspace:FindFirstChild("GameAssets")
+    local teams = assets and assets:FindFirstChild("Teams")
+    KillerFolder = teams and teams:FindFirstChild("Killer")
+
+    local label = LocalPlayer:FindFirstChild("PlayerGui")
+    for _, name in {"MainGui", "RoundUI", "PlayerUI", "Abilities", "Folder", "Block", "Input"} do
+        label = label and label:FindFirstChild(name)
+    end
+    local blockLabel = labelTextOffset and label or nil
+
+    blockKey = nil
+    if blockLabel then
+        local text = tostring(memory.readstring(blockLabel.Data, labelTextOffset)):upper()
+        if #text == 1 then blockKey = string.byte(text) end
+    end
+end
+
+local function RegisterPlayers()
+    local current = {}
+
+    for _, player in Players:GetChildren() do
+        local char = ValidCharacter(player.Character)
+        local charId = char and InstId(char)
+        if charId then
+            current[charId] = true
+            if not Registered[charId] and char:FindFirstChildOfClass("Humanoid") then
+                Registered[charId] = true
+                ESP.AddPlayer(char, {Player = player, TeamType = "Parent"})
+            end
+        end
+    end
+
+    for id in Registered do
+        if not current[id] then
+            Registered[id] = nil
+            ESP.RemovePlayer(id)
+        end
+    end
+end
+
+local function UpdateAttributes()
+    if not LocalChar then return end
+
+    if localTeam == "Killer" or localTeam == "Survivor" then
+        local charId = InstId(LocalChar)
+        if appliedStamina ~= charId .. ":" .. maximumStamina then
+            appliedStamina = charId .. ":" .. maximumStamina
+            LocalChar:SetAttribute("MaxStamina", maximumStamina)
+        end
+    end
+
+    if bNoSwingCD and localTeam == "Killer" then
+        LocalChar:SetAttribute("SwingCooldown", "")
+        LocalChar:SetAttribute("EjectCooldown", "")
+    end
+end
+
+local function GetKiller(char, id, now)
+    local entry = KillerCache[id]
+    if entry and (entry.Complete or now < entry.Retry) then return entry end
+
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local names, complete = BuildAnimationNames(char)
+    entry = {Animator = animator, Root = root, Names = names, Complete = complete and animator ~= nil and root ~= nil, Retry = now + 1}
+    KillerCache[id] = entry
+    return entry
+end
+
+local function UpdateAutoBlock(now)
+    if not animationsReady or not KillerFolder then return end
+
+    local seen = {}
+    for _, char in MemoryChildren(KillerFolder) do
+        local id = InstId(char)
+        seen[id] = true
+
+        local killer = GetKiller(char, id, now)
+        local swing = killer.Animator and FindSwing(killer.Animator, killer.Names)
         if not swing then
-            swingStates[char] = nil
+            SwingStates[id] = nil
             continue
         end
 
-        templist[#templist + 1] = char
-        local state = swingStates[char]
-
-        if not state or state.Track ~= swing.Track then
-            state = {Track = swing.Track, Started = os.clock(), Progress = 0, Blocked = false,}
-            swingStates[char] = state
+        local state = SwingStates[id]
+        if not state or state.Track ~= swing then
+            state = {Track = swing, Started = now, Blocked = false}
+            SwingStates[id] = state
         end
 
-        state.Progress = math.clamp((os.clock() - state.Started) / ATTACK_DURATION, 0, 1)
-        if not bAutoBlock or state.Blocked or not lroot then continue end
+        if state.Blocked or not LocalRoot or not killer.Root then continue end
 
-        local kroot = char:FindFirstChild("HumanoidRootPart")
-        if not kroot then continue end
-
-        local ok, shouldBlock = pcall(function()
-            return ShouldBlock(kroot.Position, kroot.LookVector, lroot.Position, state.Progress)
-        end)
-        if ok and shouldBlock and Block() then state.Blocked = true end
+        local progress = math.clamp((now - state.Started) / attackDuration, 0, 1)
+        if ShouldBlock(killer.Root.Position, killer.Root.LookVector, LocalRoot.Position, progress) and Block() then
+            state.Blocked = true
+        end
     end
 
-    list = templist
+    for id in KillerCache do
+        if not seen[id] then
+            KillerCache[id] = nil
+            SwingStates[id] = nil
+        end
+    end
 end
 
-task.spawn(function()
-    while true do
-        local newlchar = LocalPlayer.Character
-        local changedCharacter = newlchar ~= lchar
-
-        if changedCharacter then
-            lchar = newlchar
+local function SyncFlags()
+    for flag, apply in FlagSetters do
+        local value = window:get(flag)
+        if value ~= AppliedFlags[flag] then
+            AppliedFlags[flag] = value
+            apply(value)
         end
-
-        if lchar and lchar.Parent then
-            local team = lchar.Parent.Name
-
-            if team == "Killer" or team == "Survivor" then
-                if changedCharacter or oldmaxstam ~= maximumstam then
-                    oldmaxstam = maximumstam
-                    lchar:SetAttribute("MaxStamina", maximumstam)
-                end
-            end
-
-            if team == "Killer" then
-                SetSwingCD = lchar:SetAttribute("SwingCooldown", "")
-                SetEjectCD = lchar:SetAttribute("EjectCooldown", "")
-            end
-        end
-
-        task.wait(.05)
     end
-end)
+end
 
-local window = UI:createwindow({
-    Title = "Die of Death | Andris",
-    Version = "VX",
-    Keybind = "RightShift",
-    ConfigFolder = "AndrisDOD",
-    CustomResolution = Vector2.new(580, 360),
-    DPIScale = _G.DPIScale or 1.0,
-    CompactSettings = false,
-    DefaultTab = "Main",
-    TabAlignment = "Center",
-    DefaultColor = Color3.fromRGB(28, 27, 31),
-    DefaultAccent = Color3.fromRGB(208, 188, 255),
-    DefaultSnowfall = true,
-    DefaultScale = 1.0,
-    DefaultFont = 0,
+local function Due(name, interval, now)
+    if now < Timers[name] then return false end
+    Timers[name] = now + interval
+    return true
+end
+
+local function PreLocal()
+    SyncFlags()
+
+    local now = os.clock()
+    if now - lastTick > 1 then
+        table.clear(SwingStates)
+        table.clear(KillerCache)
+        for name in Timers do Timers[name] = 0 end
+    end
+    lastTick = now
+
+    if Due("Refs", .5, now) then RefreshRefs() end
+    if Due("Players", .5, now) then RegisterPlayers() end
+    if Due("Attributes", .05, now) then UpdateAttributes() end
+
+    if bAutoBlock then UpdateAutoBlock(now) end
+end
+
+window = UI.new({
+    Title = "Andris: Die of Death",
+    Subtitle = "Support | Exploits",
+    Version = "2.0.1",
+    Folder = "AndrisDOD",
+    Footer = "This script is in discontinued.",
+    UpdateNotice = {"V2.0.0", "This script now uses ok0f's V2 UI library."},
+    OnUnload = function()
+        preLocalConnect:Disconnect()
+        if heldKey then keyrelease(heldKey) end
+        ESP.Clear()
+        clear_model_data()
+    end,
+    OnReload = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Andris303/Games/refs/heads/main/DieOfDeath.lua"))()
+    end,
 })
 
-local tabMain = window:createtab("Main")
+do
+    local main = window:tab("Main")
+    local combat = main:section("COMBAT")
 
-window:createtoggle(tabMain, {
-    Name = "Auto Block",
-    Col = 1,
-    Default = false,
-    Callback = function(val)
+    combat:toggle({Name = "Auto Block", Flag = "AutoBlock", Default = false})
+    FlagSetters.AutoBlock = function(val)
         bAutoBlock = val
-        if not val then table.clear(swingStates) end
+        if not val then table.clear(SwingStates) end
     end
-})
 
-window:createtoggle(tabMain, {
-    Name = "No killer M1 cooldown",
-    Col = 1,
-    Default = false,
-    Callback = function(val)
+    combat:toggle({Name = "No killer M1 cooldown", Flag = "NoSwingCD", Default = false})
+    FlagSetters.NoSwingCD = function(val)
         bNoSwingCD = val
     end
-})
 
-window:createslider(tabMain, {
-    Name = "Maximum stamina",
-    Col = 2, 
-    Min = 10, Max = 1000, Default = 100,
-    Step = 5,
-    Callback = function(val)
-        maximumstam = val
+    local movement = main:section("MOVEMENT")
+
+    movement:slider({Name = "Maximum stamina", Flag = "MaxStamina", Min = 10, Max = 1000, Default = 100, Step = 5})
+    FlagSetters.MaxStamina = function(val)
+        maximumStamina = val
     end
-})
+
+    local visual = window:tab("Visual")
+    local esp = visual:section("ESP")
+
+    esp:label("ESP support requires ESP to be enabled in severe")
+
+    esp:toggle({Name = "Enable ESP support", Flag = "ESP", Default = true})
+    FlagSetters.ESP = function(val)
+        ESP.SetEnabled(val)
+    end
+end
+
+window:start()
+
+preLocalConnect = RunService.PreLocal:Connect(PreLocal)
+
+clear_model_data()
 
 print("Loaded")
-
-RunService.PreLocal:Connect(PreLocal)
-RunService.PreData:Connect(PreData)
