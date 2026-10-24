@@ -2436,6 +2436,169 @@ do
     end
 end
 
+local Reach = {Enabled = false, Forward = 8}
+
+do
+    local delay = .15
+    local hold = .05
+    local settle = .035
+    local maxSpeed = 120
+    local speedWindow = .1
+    local swingWindow = .25
+    local revertJump = 4
+    local revertRadius = 3
+    local stableTime = .3
+    local guardTime = 1.5
+    local killerDelays = {
+        Slasher = {Slash = .16, Behead = .40, GashingWound = .28},
+        c00lkidd = {Tag = .07},
+        JohnDoe = {Slash = .30},
+        Noli = {Stab = .29},
+        ["1x1x1x1"] = {Slash = .36},
+        Sixer = {["Carving Slash"] = .25},
+        Nosferatu = {Slash = .24},
+        Azure = {Slash = .18},
+    }
+    local wasPressed = false
+    local busy = false
+    local cooldowns = {}
+    local cooldownKiller
+    local nextButtonScan = 0
+
+    local function Flat(v)
+        return vector.create(v.X, 0, v.Z)
+    end
+
+    local function Place(lroot, pos, facing)
+        lroot.CFrame = CFrame.lookAt(pos, vector.create(facing.X, pos.Y, facing.Z))
+    end
+
+    local function WaitForSwing(lroot)
+        local known = {}
+        for _, child in MemoryChildren(lroot) do
+            known[tostring(tonumber(child.Data))] = true
+        end
+
+        local start = os.clock()
+        while os.clock() - start < swingWindow do
+            task.wait()
+            for _, child in MemoryChildren(lroot) do
+                local id = tostring(tonumber(child.Data))
+                if not known[id] then
+                    known[id] = true
+                    if child.ClassName == "Sound" then return os.clock() end
+                end
+            end
+        end
+        return nil
+    end
+
+    local function Attack(lroot, swingAt, moveDelay)
+        local samples = {{Time = os.clock(), Position = lroot.Position}}
+        while os.clock() - swingAt < moveDelay do
+            task.wait()
+            samples[#samples + 1] = {Time = os.clock(), Position = lroot.Position}
+        end
+
+        local startPos = lroot.Position
+        local startTime = os.clock()
+        local from = samples[1]
+        for _, sample in samples do
+            if startTime - sample.Time >= speedWindow then from = sample end
+        end
+        local elapsed = startTime - from.Time
+        local velocity = elapsed > 0 and (Flat(startPos) - Flat(from.Position)) / elapsed or vector.zero
+        local speed = vector.magnitude(velocity)
+        if speed > maxSpeed then velocity = velocity / speed * maxSpeed end
+
+        local look = lroot.LookVector
+        local back = vector.normalize(vector.create(look.X, 0, look.Z))
+        local movedPos = startPos + back * Reach.Forward
+        repeat
+            Place(lroot, movedPos, movedPos + back)
+            task.wait()
+        until os.clock() - startTime >= hold
+
+        local returnPos = startPos + velocity * (os.clock() - startTime + settle)
+        Place(lroot, returnPos, returnPos + back)
+        local lastGood = returnPos
+        local returnedAt = os.clock()
+        local stableSince = returnedAt
+        while os.clock() - returnedAt < guardTime and os.clock() - stableSince < stableTime do
+            task.wait()
+            local pos = lroot.Position
+            if vector.magnitude(Flat(pos) - Flat(lastGood)) > revertJump and vector.magnitude(Flat(pos) - Flat(movedPos)) < revertRadius then
+                Place(lroot, lastGood, lastGood + back)
+                stableSince = os.clock()
+            else
+                lastGood = pos
+            end
+        end
+    end
+
+    local function RunSwing(lroot)
+        busy = true
+        local swingAt = WaitForSwing(lroot)
+        if swingAt then Attack(lroot, swingAt, delay) end
+        busy = false
+    end
+
+    local function RunAbility(lroot, usedAt, moveDelay)
+        busy = true
+        Attack(lroot, usedAt, moveDelay)
+        busy = false
+    end
+
+    local function ScanCooldowns(delays)
+        local gui = LocalPlayer:FindFirstChild("PlayerGui")
+        local main = gui and gui:FindFirstChild("MainUI")
+        local container = main and main:FindFirstChild("AbilityContainer")
+        local found = {}
+        if container then
+            for name in delays do
+                local button = container:FindFirstChild(name)
+                local label = button and button:FindFirstChild("CooldownTime")
+                if label then
+                    local old = cooldowns[name]
+                    found[name] = {Label = label, Ready = old and old.Label == label and old.Ready}
+                end
+            end
+        end
+        cooldowns = found
+    end
+
+    function Reach.Update(lchar)
+        local now = os.clock()
+        local lroot = lchar:FindFirstChild("HumanoidRootPart")
+        if not lroot then return end
+
+        local killer = lchar.Name
+        local delays = killerDelays[killer]
+        if not delays then
+            local pressed = isrbxactive() and isleftpressed()
+            if pressed and not wasPressed and not busy then task.spawn(RunSwing, lroot) end
+            wasPressed = pressed
+            return
+        end
+
+        if now >= nextButtonScan or killer ~= cooldownKiller then
+            nextButtonScan = now + 1
+            if killer ~= cooldownKiller then cooldowns = {} end
+            cooldownKiller = killer
+            ScanCooldowns(delays)
+        end
+
+        for name, cooldown in cooldowns do
+            local ok, text = pcall(memory.readstring, cooldown.Label, offset)
+            if ok and text then
+                local ready = text == ""
+                if cooldown.Ready and not ready and not busy then task.spawn(RunAbility, lroot, now, delays[name]) end
+                cooldown.Ready = ready
+            end
+        end
+    end
+end
+
 local function GetStam()
     return memory.readstring(LocalPlayer.PlayerGui.TemporaryUI.PlayerInfo.Bars.Stamina.Amount, offset)
 end
@@ -3147,6 +3310,10 @@ local function PreLocal()
         CorruptAim.Clear()
     end
 
+    if Reach.Enabled and bKill and lchar then
+        Reach.Update(lchar)
+    end
+
     if bChanceAimbot and lname == "Chance" then
         local f = lchar:FindFirstChild("SpeedMultipliers")
         local chanceRoot = lchar:FindFirstChild("HumanoidRootPart")
@@ -3510,7 +3677,7 @@ local function ScanItems()
     end
     NonItems = nonItems
 
-    local killers = Killers:GetChildren()
+    local killers = MemoryChildren(Killers)
     local killerCount = #killers
 
     for _, inst in killers do
@@ -3694,10 +3861,10 @@ end
 window = UI.new({
     Title = "Andris: Forsaken",
     Subtitle = "Support | Exploits",
-    Version = "3.5.0",
+    Version = "3.6.0",
     Folder = "AndrisForsaken",
     Footer = "This script is in active development! New features releasing soon",
-    UpdateNotice = {"V3.5.0", "Added John doe spikes aimbot.", "Generator ESP now shows the generator type."},
+    UpdateNotice = {"V3.6.0", "Added killer hitbox manipulation", "V3.5.1", "Added John doe corrupt energy aimbot", "Generators ESP now shows gen type"},
     OnUnload = function()
         preLocalConnect:Disconnect()
         preDataConnect:Disconnect()
@@ -3780,7 +3947,8 @@ do
         bAutoStab = val
     end
 
-    local johnDoe = window:tab("Killer"):section("JOHN DOE")
+    local killer = window:tab("Killer")
+    local johnDoe = killer:section("JOHN DOE")
 
     johnDoe:label("Turns you toward survivors while Corrupt Energy fires")
 
@@ -3798,6 +3966,20 @@ do
     })
     FlagSetters.CorruptAimMode = function(val)
         CorruptAim.Mode = val
+    end
+
+    local reach = killer:section("REACH")
+
+    reach:label("Teleports your hitbox for a moment during M1, then back")
+
+    reach:toggle({Name = "Attack reach", Flag = "Reach", Default = false})
+    FlagSetters.Reach = function(val)
+        Reach.Enabled = val
+    end
+
+    reach:slider({Name = "Forward distance", Flag = "ReachForward", Min = 2, Max = 14, Default = 8, Step = 1})
+    FlagSetters.ReachForward = function(val)
+        Reach.Forward = val
     end
 
     local visual = window:tab("Visual")
