@@ -41,7 +41,6 @@ local bChanceAimbot = false
 local bStopStam = false
 local bShowTimer = false
 local bAutoGen = false
-local bAutoStab = false
 local TempAutoGen = false
 local AutoGenTime = 1.75
 local AutoGenRandom = .5
@@ -1336,7 +1335,7 @@ local function Parry(lchar)
     end
 end
 
-local AutoStabBlacklist, RenderActiveLines, UpdateActiveLines
+local RenderActiveLines, UpdateActiveLines
 
 do
     local function DrawWorldLine(startPos, endPos)
@@ -1553,8 +1552,6 @@ do
 
         return now - data.StillSince >= .2
     end
-
-    AutoStabBlacklist = {"Walkspeed Override", "Entanglement", "Mass Infection", "Corrupt Energy", "Voidrush", "Demonic Pursuit", "Ascension", "Bloodhook", "Enstrangle"}
 
     local ascensionFeetOffset = 3
 
@@ -2436,10 +2433,11 @@ do
     end
 end
 
-local Reach = {Enabled = false, Forward = 8}
+local Reach = {Enabled = false, Forward = 8, Mode = "Forward", SurvivorEnabled = false, SurvivorForward = 8, SurvivorMode = "Forward"}
 
 do
     local delay = .15
+    local extraDelay = .03
     local hold = .05
     local settle = .035
     local maxSpeed = 120
@@ -2459,10 +2457,20 @@ do
         Nosferatu = {Slash = .24},
         Azure = {Slash = .18},
     }
+    local survivorDelays = {
+        Shedletsky = {Slash = .51},
+        TwoTime = {Dagger = {Default = .245, TwoTimeCrouching = .20}},
+        JaneDoe = {Axe = .68},
+        Guest1337 = {Punch = .56},
+    }
+    local behindCharacters = {TwoTime = 10}
+    local gap = 2
+    local targetLead = .1
+    local movingSpeed = 2
     local wasPressed = false
     local busy = false
     local cooldowns = {}
-    local cooldownKiller
+    local cooldownCharacter
     local nextButtonScan = 0
 
     local function Flat(v)
@@ -2493,29 +2501,86 @@ do
         return nil
     end
 
-    local function Attack(lroot, swingAt, moveDelay)
+    local function PickTarget(folder, lpos, range)
+        local centerX = viewport.X / 2
+        local best
+        local bestOffset
+        for _, char in MemoryChildren(folder) do
+            local root = char:FindFirstChild("HumanoidRootPart")
+            local humanoid = root and char:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health > 0 then
+                local pos = root.Position
+                if vector.magnitude(Flat(pos) - Flat(lpos)) <= range then
+                    local screen, visible = Camera:WorldToScreenPoint(pos)
+                    local offset = math.abs(screen.X - centerX)
+                    if visible and (not bestOffset or offset < bestOffset) then
+                        best = root
+                        bestOffset = offset
+                    end
+                end
+            end
+        end
+        return best
+    end
+
+    local function Destination(startPos, target, behind, targetVelocity)
+        local tpos = target.Position + targetVelocity * targetLead
+        if behind then
+            local heading = targetVelocity
+            if vector.magnitude(heading) < movingSpeed then
+                local look = target.LookVector
+                heading = vector.create(look.X, 0, look.Z)
+            end
+            local targetBack = vector.normalize(heading)
+            local pos = vector.create(tpos.X, startPos.Y, tpos.Z) - targetBack * behind
+            return pos, pos + targetBack
+        end
+        local offset = Flat(tpos) - Flat(startPos)
+        local dist = vector.magnitude(offset)
+        if dist < .01 then return startPos, tpos end
+        return startPos + offset / dist * math.max(dist - gap, 0), tpos
+    end
+
+    local function Velocity(samples, now, current)
+        local from = samples[1]
+        for _, sample in samples do
+            if now - sample.Time >= speedWindow then from = sample end
+        end
+        local elapsed = now - from.Time
+        local velocity = elapsed > 0 and (Flat(current) - Flat(from.Position)) / elapsed or vector.zero
+        local speed = vector.magnitude(velocity)
+        if speed > maxSpeed then velocity = velocity / speed * maxSpeed end
+        return velocity
+    end
+
+    local function Attack(lroot, swingAt, moveDelay, settings)
+        local target = settings.Auto and PickTarget(settings.Folder, lroot.Position, settings.Forward + gap)
+        if settings.Auto and not target then return end
         local samples = {{Time = os.clock(), Position = lroot.Position}}
-        while os.clock() - swingAt < moveDelay do
+        local targetSamples = target and {{Time = os.clock(), Position = target.Position}}
+        while os.clock() - swingAt < moveDelay + extraDelay do
             task.wait()
-            samples[#samples + 1] = {Time = os.clock(), Position = lroot.Position}
+            local now = os.clock()
+            samples[#samples + 1] = {Time = now, Position = lroot.Position}
+            if target then targetSamples[#targetSamples + 1] = {Time = now, Position = target.Position} end
         end
 
         local startPos = lroot.Position
         local startTime = os.clock()
-        local from = samples[1]
-        for _, sample in samples do
-            if startTime - sample.Time >= speedWindow then from = sample end
-        end
-        local elapsed = startTime - from.Time
-        local velocity = elapsed > 0 and (Flat(startPos) - Flat(from.Position)) / elapsed or vector.zero
-        local speed = vector.magnitude(velocity)
-        if speed > maxSpeed then velocity = velocity / speed * maxSpeed end
+        local velocity = Velocity(samples, startTime, startPos)
+        local targetVelocity = target and Velocity(targetSamples, startTime, target.Position)
 
         local look = lroot.LookVector
         local back = vector.normalize(vector.create(look.X, 0, look.Z))
-        local movedPos = startPos + back * Reach.Forward
+        local movedPos = startPos + back * settings.Forward
         repeat
-            Place(lroot, movedPos, movedPos + back)
+            if target then
+                local pos, facing = Destination(startPos, target, settings.Behind, targetVelocity)
+                movedPos = pos
+                Place(lroot, movedPos, facing)
+            else
+                Place(lroot, movedPos, movedPos + back)
+            end
             task.wait()
         until os.clock() - startTime >= hold
 
@@ -2536,16 +2601,16 @@ do
         end
     end
 
-    local function RunSwing(lroot)
+    local function RunSwing(lroot, settings)
         busy = true
         local swingAt = WaitForSwing(lroot)
-        if swingAt then Attack(lroot, swingAt, delay) end
+        if swingAt then Attack(lroot, swingAt, delay, settings) end
         busy = false
     end
 
-    local function RunAbility(lroot, usedAt, moveDelay)
+    local function RunAbility(lroot, usedAt, moveDelay, settings)
         busy = true
-        Attack(lroot, usedAt, moveDelay)
+        Attack(lroot, usedAt, moveDelay, settings)
         busy = false
     end
 
@@ -2567,24 +2632,32 @@ do
         cooldowns = found
     end
 
-    function Reach.Update(lchar)
+    function Reach.Update(lchar, isKiller)
         local now = os.clock()
         local lroot = lchar:FindFirstChild("HumanoidRootPart")
         if not lroot then return end
 
-        local killer = lchar.Name
-        local delays = killerDelays[killer]
+        local character = lchar.Name
+        local settings = {
+            Forward = isKiller and Reach.Forward or Reach.SurvivorForward,
+            Auto = (isKiller and Reach.Mode or Reach.SurvivorMode) == "Auto",
+            Folder = isKiller and Survivors or Killers,
+            Behind = behindCharacters[character],
+        }
+        local delays = (isKiller and killerDelays or survivorDelays)[character]
         if not delays then
-            local pressed = isrbxactive() and isleftpressed()
-            if pressed and not wasPressed and not busy then task.spawn(RunSwing, lroot) end
-            wasPressed = pressed
+            if isKiller then
+                local pressed = isrbxactive() and isleftpressed()
+                if pressed and not wasPressed and not busy then task.spawn(RunSwing, lroot, settings) end
+                wasPressed = pressed
+            end
             return
         end
 
-        if now >= nextButtonScan or killer ~= cooldownKiller then
+        if now >= nextButtonScan or character ~= cooldownCharacter then
             nextButtonScan = now + 1
-            if killer ~= cooldownKiller then cooldowns = {} end
-            cooldownKiller = killer
+            if character ~= cooldownCharacter then cooldowns = {} end
+            cooldownCharacter = character
             ScanCooldowns(delays)
         end
 
@@ -2592,7 +2665,21 @@ do
             local ok, text = pcall(memory.readstring, cooldown.Label, offset)
             if ok and text then
                 local ready = text == ""
-                if cooldown.Ready and not ready and not busy then task.spawn(RunAbility, lroot, now, delays[name]) end
+                if cooldown.Ready and not ready and not busy then
+                    local moveDelay = delays[name]
+                    if type(moveDelay) == "table" then
+                        local states = moveDelay
+                        moveDelay = states.Default
+                        local multipliers = lchar:FindFirstChild("SpeedMultipliers")
+                        if multipliers then
+                            for _, child in MemoryChildren(multipliers) do
+                                local stateDelay = states[child.Name]
+                                if stateDelay then moveDelay = stateDelay end
+                            end
+                        end
+                    end
+                    task.spawn(RunAbility, lroot, now, moveDelay, settings)
+                end
                 cooldown.Ready = ready
             end
         end
@@ -3134,69 +3221,6 @@ do
     end
 end
 
-local function IsKillerAbilityActive(kroot, abilityTable)
-    local lines = ActiveLines[kroot]
-    if not lines then return false end
-
-    for _, data in lines do
-        if table.find(abilityTable, data.Name) then
-            return true
-        end
-    end
-
-    return false
-end
-
-local function CanBackstab(localPos, killerPos, killerLook, range)
-    local offset = Vector3.new(localPos.X - killerPos.X, 0, localPos.Z - killerPos.Z)
-
-    local distance = vector.magnitude(offset)
-    if distance == 0 or distance > range then
-        return false
-    end
-
-    local direction = offset / distance
-    local look = Vector3.new(killerLook.X, 0, killerLook.Z)
-
-    local lookMagnitude = vector.magnitude(look)
-    if lookMagnitude == 0 then
-        return false
-    end
-
-    look /= lookMagnitude
-    local dot = vector.dot(look, direction)
-
-    return dot <= -.55
-end
-
-local function BackstabHandler(killer, lroot, kroot, lrootp, krootp, krootlv)
-    if not CanBackstab(lrootp, krootp, krootlv, 6) then return end
-
-    local okImmune, immune = pcall(function()
-        return killer:GetAttribute("Invincible") or killer:GetAttribute("StunnedDisabled")
-    end)
-    if not okImmune or immune then return end
-
-    local s, b = pcall(function()
-        local time = LocalPlayer.PlayerGui.MainUI.AbilityContainer.Dagger.CooldownTime
-        return memory.readstring(time, offset)
-    end)
-    if not s or b ~= "" then return end
-
-    keypress(blockKey)
-    task.wait(.05)
-    keyrelease(blockKey)
-    task.wait(.1695)
-
-    local s10, p10, kp10 = pcall(function()
-        return lroot.Position, kroot.Position
-    end)
-    if s10 then
-        lroot.CFrame = CFrame.lookAt(p10, Vector3.new(kp10.X, p10.Y, kp10.Z))
-    end
-end
-
-
 local function SyncFlags()
     for flag, apply in FlagSetters do
         local value = window:get(flag)
@@ -3310,8 +3334,8 @@ local function PreLocal()
         CorruptAim.Clear()
     end
 
-    if Reach.Enabled and bKill and lchar then
-        Reach.Update(lchar)
+    if lchar and ((Reach.Enabled and bKill) or (Reach.SurvivorEnabled and bSurv)) then
+        Reach.Update(lchar, bKill)
     end
 
     if bChanceAimbot and lname == "Chance" then
@@ -3377,7 +3401,7 @@ local function PreLocal()
     local newSnapshot = {}
     local lroot
 
-    if bInRound and (active or bShowBlock or bAutoStab or bAutoParry or bChanceAimbot) then
+    if bInRound and (active or bShowBlock or bAutoParry or bChanceAimbot) then
         lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
         LocalRoot = lroot
         LocalPos = lroot and lroot.Position
@@ -3444,18 +3468,6 @@ local function PreLocal()
                             KillerAbTime[id] = AbTime
                         end
                     end
-                end
-            end
-
-            if bAutoStab and lname == "TwoTime" and lroot and kroot and not IsKillerAbilityActive(kroot, AutoStabBlacklist) and not kroot:FindFirstChild("InvincibleFX") then
-                local s69, lrootp, krootp, krootlv = pcall(function()
-                    return lroot.Position, kroot.Position, kroot.LookVector
-                end)
-
-                if s69 then
-                    local StabPredictedLocal = PredictPosition(lroot, lrootp, .185)
-                    local StabPredictedKiller = PredictPosition(kroot, krootp, .185)
-                    task.spawn(BackstabHandler, inst, lroot, kroot, StabPredictedLocal, StabPredictedKiller, krootlv)
                 end
             end
         end
@@ -3782,7 +3794,7 @@ local function PreData()
         bInRound = inRound
     end
 
-    if bInRound and (bShowLine or bAutoStab) then
+    if bInRound and bShowLine then
         if now - LastAttackScan >= .03 then
             LastAttackScan = now
             pcall(UpdateActiveLines)
@@ -3861,10 +3873,10 @@ end
 window = UI.new({
     Title = "Andris: Forsaken",
     Subtitle = "Support | Exploits",
-    Version = "3.6.0",
+    Version = "3.6.1",
     Folder = "AndrisForsaken",
     Footer = "This script is in active development! New features releasing soon",
-    UpdateNotice = {"V3.6.0", "Added killer hitbox manipulation", "V3.5.1", "Added John doe corrupt energy aimbot", "Generators ESP now shows gen type"},
+    UpdateNotice = {"V3.6.1", "Added killer and survivor hitbox manipulation", "V3.5.1", "Added John doe corrupt energy aimbot", "Generators ESP now shows gen type"},
     OnUnload = function()
         preLocalConnect:Disconnect()
         preDataConnect:Disconnect()
@@ -3942,9 +3954,24 @@ do
         bChanceAimbot = val
     end
 
-    abilities:toggle({Name = "Two time auto backstab", Flag = "AutoStab", Default = false})
-    FlagSetters.AutoStab = function(val)
-        bAutoStab = val
+
+    local survivorReach = survivor:section("REACH")
+
+    survivorReach:label("Teleports your hitbox for a moment during attacks, then back. Auto goes to the killer in range nearest your screen centre (TwoTime: behind them)")
+
+    survivorReach:toggle({Name = "Survivor attack reach", Flag = "SurvivorReach", Default = false})
+    FlagSetters.SurvivorReach = function(val)
+        Reach.SurvivorEnabled = val
+    end
+
+    survivorReach:dropdown({Name = "Survivor attack reach mode", Flag = "SurvivorReachMode", Values = {"Forward", "Auto"}, Default = "Forward"})
+    FlagSetters.SurvivorReachMode = function(val)
+        Reach.SurvivorMode = val
+    end
+
+    survivorReach:slider({Name = "Survivor forward distance", Flag = "SurvivorReachForward", Min = 2, Max = 14, Default = 8, Step = 1})
+    FlagSetters.SurvivorReachForward = function(val)
+        Reach.SurvivorForward = val
     end
 
     local killer = window:tab("Killer")
@@ -3970,11 +3997,16 @@ do
 
     local reach = killer:section("REACH")
 
-    reach:label("Teleports your hitbox for a moment during M1, then back")
+    reach:label("Teleports your hitbox for a moment during attacks, then back. Auto goes to the survivor in range nearest your screen centre")
 
     reach:toggle({Name = "Attack reach", Flag = "Reach", Default = false})
     FlagSetters.Reach = function(val)
         Reach.Enabled = val
+    end
+
+    reach:dropdown({Name = "Attack reach mode", Flag = "ReachMode", Values = {"Forward", "Auto"}, Default = "Forward"})
+    FlagSetters.ReachMode = function(val)
+        Reach.Mode = val
     end
 
     reach:slider({Name = "Forward distance", Flag = "ReachForward", Min = 2, Max = 14, Default = 8, Step = 1})
