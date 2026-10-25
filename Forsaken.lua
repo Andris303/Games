@@ -292,6 +292,8 @@ local c = {
     neutral = Color3.fromRGB(109,129,150),
     generator = Color3.fromRGB(234,162,33),
     cola = Color3.fromRGB(45,104,196),
+    rare = Color3.fromRGB(155,17,30),
+    gear = Color3.fromRGB(112,128,144),
     medkit = Color3.fromRGB(255,29,141),
     trap = Color3.fromRGB(179,27,27),
     azure = Color3.fromRGB(127,0,255),
@@ -304,7 +306,7 @@ local c = {
 
 local Names = {shockwave = true, Shockwave = true, Swords = true, SpikeCollision = true, HumanoidRootProjectile = true, Voidstar = true, Bats = true, Shadow = true, VineModel = true, GroundBulbModel = true, GroundBulb = true, BuildermanDispenser = true, BuildermanSentry = true, ["007n7"] = true, Pizza = true, GraffitiCL = true, CrystalProjectile = true, Medkit = true, BloxyCola = true, MisterBeast = true, Noli = true}
 local SNames = {BuildermanDispenser = true, BuildermanSentry = true, Pizza = true, GraffitiCL = true, CrystalProjectile = true, TaphTripwire = true, SubspaceTripmine = true}
-local KNames = {FakeGenerator = true, SpikeCollision = true, Shadow = true, VineModel = true, GroundBulbModel = true, GroundBulb = true, Medkit = true, BloxyCola = true, MisterBeast = true, Noli = true, Puddle = true}
+local KNames = {FakeGenerator = true, SpikeCollision = true, Shadow = true, VineModel = true, GroundBulbModel = true, GroundBulb = true, Medkit = true, BloxyCola = true, MisterBeast = true, Noli = true, Puddle = true, SprayBottle = true, Ghostburger = true, Epicsauce = true, WitchesBrew = true, Slateskin = true, Fruit = true, Point = true, Gear = true}
 local PNames = {"TaphTripwire", "SubspaceTripmine", "Puddle", "Shockwave"}
 
 local NameColors = {
@@ -337,6 +339,13 @@ local NameColors = {
     CrystalProjectile = "danger",
     Medkit = "medkit",
     BloxyCola = "cola",
+    SprayBottle = "cola",
+    Ghostburger = "rare",
+    Epicsauce = "rare",
+    WitchesBrew = "rare",
+    Slateskin = "rare",
+    Fruit = "rare",
+    Gear = "gear",
 }
 
 local FullNames = {
@@ -358,6 +367,13 @@ local FullNames = {
     Noli = "Fake Noli",
     Medkit = "Medkit",
     BloxyCola = "Cola",
+    SprayBottle = "Spray Bottle",
+    Ghostburger = "Ghostburger",
+    Epicsauce = "Epicsauce",
+    WitchesBrew = "Witches Brew",
+    Slateskin = "Slateskin",
+    Point = "Graffiti",
+    Gear = "Gear",
 }
 
 local BodyData = {"Head", "Torso", "Right Arm", "Right Leg", "Left Arm", "Left Leg"}
@@ -474,7 +490,7 @@ local function GetNameInfo(Name)
         Display = display,
         IsItem = Names[Name] == true or pattern,
         IsTrailFolder = string.find(Name, "JohnDoeTrail") ~= nil or string.find(Name, "Shadows") ~= nil,
-        Hidden = Name == "JaneGhost" or string.find(Name, "Spray") ~= nil,
+        Hidden = Name == "JaneGhost" or (string.find(Name, "Spray") ~= nil and Name ~= "SprayBottle"),
         SurvHidden = SNames[Name] == true or string.find(Name, "TaphTripwire") ~= nil or string.find(Name, "SubspaceTripmine") ~= nil,
         KillHidden = KNames[Name] == true or string.find(Name, "Puddle") ~= nil or string.find(Name, "Shockwave") ~= nil,
     }
@@ -489,9 +505,21 @@ local function GetNameInfo(Name)
     return info
 end
 
-local GeneratorText
+local GeneratorText, FruitText
 
 do
+    local fruitTexts = {}
+
+    function FruitText(inst, id)
+        local text = fruitTexts[id]
+        if text then return text end
+
+        local fruit = inst:GetAttribute("Fruit")
+        text = type(fruit) == "string" and fruit ~= "" and fruit or "Fruit"
+        fruitTexts[id] = text
+        return text
+    end
+
     local puzzleNames = {
         LockServerMinigame = "Padlock",
         GearServerMinigame = "Gears",
@@ -574,6 +602,14 @@ local function BuildItemRenderInfo(id, inst, now)
         return
     end
 
+    if Name == "Point" then
+        local prompt = inst:FindFirstChild("ProximityPrompt")
+        if not prompt or memory.readu8(prompt, O.ProximityPrompt.Enabled) == 0 then
+            ItemRenderCache[id] = nil
+            return
+        end
+    end
+
     local humanoid = inst:FindFirstChild("Humanoid")
     if humanoid and (tonumber(humanoid.Health) or 1) <= 0 then
         ItemRenderCache[id] = nil
@@ -581,6 +617,7 @@ local function BuildItemRenderInfo(id, inst, now)
     end
 
     local color = info.ColorKey and c[info.ColorKey] or c.yellow
+    local text = Name == "Fruit" and FruitText(inst, id) or info.Display
 
     local Parts = PartCache[id]
     local refresh = false
@@ -629,7 +666,7 @@ local function BuildItemRenderInfo(id, inst, now)
             Torso = torsoPart,
             Humanoid = humanoid,
             Color = color,
-            Text = info.Display or "Minion",
+            Text = text or "Minion",
         }
     elseif Parts then
         ItemRenderCache[id] = {
@@ -637,7 +674,7 @@ local function BuildItemRenderInfo(id, inst, now)
             Part = Parts,
             Humanoid = humanoid,
             Color = color,
-            Text = info.Display,
+            Text = text,
         }
     else
         ItemRenderCache[id] = nil
@@ -3497,6 +3534,8 @@ end
 
 
 local ItemLabels = {BloxyCola = "COLA"}
+local MapItems = {FakeGenerator = true, BloxyCola = true, Medkit = true, Ghostburger = true, Epicsauce = true, WitchesBrew = true, Slateskin = true}
+local MapItemFolders = {BottleSpawns = "SprayBottle", Graffiti = "Point", GearsTest = "Gear", OrangeFruits = "Fruit"}
 
 local function GetCarriedItems(player, char)
     local items = {}
@@ -3739,12 +3778,25 @@ local function ScanItems()
                         AddItem(id, inst)
                     end
                 end
-            elseif name == "FakeGenerator" or name == "BloxyCola" or name == "Medkit" then
+            elseif MapItems[name] then
                 local id = InstId(inst)
                 if id then
                     present[id] = true
                     if not ItemCache[id] then
                         AddItem(id, inst)
+                    end
+                end
+            elseif MapItemFolders[name] then
+                local itemName = MapItemFolders[name]
+                for _, item in MemoryChildren(inst) do
+                    if item.Name == itemName then
+                        local id = InstId(item)
+                        if id then
+                            present[id] = true
+                            if not ItemCache[id] then
+                                AddItem(id, item)
+                            end
+                        end
                     end
                 end
             end
@@ -3873,10 +3925,10 @@ end
 window = UI.new({
     Title = "Andris: Forsaken",
     Subtitle = "Support | Exploits",
-    Version = "3.6.1",
+    Version = "3.6.2",
     Folder = "AndrisForsaken",
     Footer = "This script is in active development! New features releasing soon",
-    UpdateNotice = {"V3.6.1", "Added killer and survivor hitbox manipulation", "V3.5.1", "Added John doe corrupt energy aimbot", "Generators ESP now shows gen type"},
+    UpdateNotice = {"V3.6.2", "ESP now highlights map and generator objectives", "V3.6.1", "Added survivor hitbox manipulation", "V3.6.0", "Added killer hitbox manipulation", "V3.5.1", "Added John doe corrupt energy aimbot", "Generators ESP now shows gen type"},
     OnUnload = function()
         preLocalConnect:Disconnect()
         preDataConnect:Disconnect()
@@ -4122,6 +4174,8 @@ do
         {2, "Generator color", "generator"},
         {2, "Medkit color", "medkit"},
         {2, "Bloxy cola color", "cola"},
+        {2, "Rare item color", "rare"},
+        {2, "Gear color", "gear"},
         {2, "Show projectile text color", "linesec"},
     } do
         local key = entry[3]
